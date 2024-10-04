@@ -24,6 +24,22 @@
   color: white;
 }
 
+.buttons {
+  width: 100%;
+  background: antiquewhite;
+
+  float: right;
+  position: fixed;
+  right: 0px;
+  top: 0px;
+}
+
+button.buttonControl {
+  float: right;
+  padding: 5px;
+  margin: 5px;
+}
+
 .App-link {
   color: #61dafb;
 }
@@ -32,6 +48,7 @@
   from {
     transform: rotate(0deg);
   }
+
   to {
     transform: rotate(360deg);
   }
