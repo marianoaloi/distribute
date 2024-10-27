@@ -5,13 +5,43 @@ const fs = require("fs");
 const isMac = process.platform === 'darwin'
 
 
-var dto = { mainWindow: undefined, fileGlobal: undefined }
+var menuTemplate = () => [
+    {
+        label: 'File',
+        submenu: [
+            { label: 'Load recursive', click: loadRecursive }
+        ]
+    },
+    {
+        label: 'View',
+        submenu: [
+            { role: 'reload' },
+            { role: 'forceReload' },
+            { role: 'toggleDevTools' },
+        ]
+    },
+    {
+        label: 'Work',
+        submenu: [
+            { label: 'Load buttons by folders', click: loadFolders },
+            {
+                label: 'Zoom In',
+                click: () => zoomImg(+1),
+                accelerator: "numadd"
+            },
+            {
+                label: 'Zoom Out',
+                click: () => zoomImg(-1),
+                accelerator: "numsub"
+            },
+        ]
+    },
 
-const utilMenu = require('./menu')
-
-const menuTemplate = utilMenu.menu(dto)
+]
+var mainWindow
+var fileGlobal
 function createWindow() {
-    dto.mainWindow = new BrowserWindow({
+    mainWindow = new BrowserWindow({
         // width: 1200,
         // height: 600,
         icon: path.join(__dirname, `/build/logo512.png`),
@@ -29,30 +59,30 @@ function createWindow() {
         },
     });
 
-    dto.mainWindow.loadFile(path.join(__dirname, `/build/index.html`));
-    // dto.mainWindow.loadURL(url.format({
+    mainWindow.loadFile(path.join(__dirname, `/build/index.html`));
+    // mainWindow.loadURL(url.format({
     //     pathname: path.join(__dirname, `/build/index.html`),
     //     protocol: 'file:',
     //     slashes: false
     // }))
     // Open the DevTools.
-    dto.//mainWindow.webContents.openDevTools();
+    mainWindow.webContents.openDevTools();
 
-    dto.mainWindow.on("closed", function () {
-        dto.mainWindow = null;
+    mainWindow.on("closed", function () {
+        mainWindow = null;
     });
 
 
 
-    const menu = Menu.buildFromTemplate(menuTemplate)
+    const menu = Menu.buildFromTemplate(menuTemplate())
     Menu.setApplicationMenu(menu)
 
 
     if (process.argv[2]) {
         console.log("File receive folder", process.argv)
-        dto.fileGlobal = process.argv[2]
+        fileGlobal = process.argv[2]
     } else if (process.argv[0].includes("getimage")) {
-        dto.fileGlobal = process.argv[1]
+        fileGlobal = process.argv[1]
     }
 
 
@@ -68,13 +98,13 @@ app.on("window-all-closed", function () {
 });
 
 app.on('before-quit', () => {
-    dto.mainWindow.removeAllListeners('close');
-    dto.mainWindow.close();
+    mainWindow.removeAllListeners('close');
+    mainWindow.close();
 });
 /********************************************** */
 
 app.on("activate", function () {
-    if (dto.mainWindow === null) createWindow();
+    if (mainWindow === null) createWindow();
 });
 
 ipcMain.on("open", () => {
@@ -82,10 +112,10 @@ ipcMain.on("open", () => {
         properties: ["openDirectory", 'promptToCreate'],
         title: "Open folder to choice images",
     };
-    if (dto.fileGlobal) options["defaultPath"] = dto.fileGlobal;
+    if (fileGlobal) options["defaultPath"] = fileGlobal;
     dialog.showOpenDialog(options).then(file => {
         if (!file.canceled) {
-            dto.fileGlobal = file.filePaths[0];
+            fileGlobal = file.filePaths[0];
         }
         openfile();
     }).catch(err => {
@@ -101,7 +131,7 @@ ipcMain.on("process", async (event, data) => {
 })
 
 ipcMain.on("verifyOpen", async () => {
-    if (dto.fileGlobal) {
+    if (fileGlobal) {
         openfile()
     }
 })
@@ -109,7 +139,7 @@ ipcMain.on("verifyOpen", async () => {
 const moveFile = (bol, dest, onlyCopy, data) =>
     data.filter(f => f.checked === bol).forEach(media => {
         // let completeDestine = path.join(path.dirname(media.path), dest);
-        let completeDestine = path.join(dto.fileGlobal, dest);
+        let completeDestine = path.join(fileGlobal, dest);
         if (!fs.existsSync(completeDestine)) {
             fs.mkdirSync(completeDestine)
         }
@@ -123,22 +153,98 @@ const moveFile = (bol, dest, onlyCopy, data) =>
                     if (err) throw err;
                 })
             }
-        // dto.mainWindow.ipcMain.send("delete", media)
+        // mainWindow.ipcMain.send("delete", media)
     });
 
 const transformData = require("./util").transformData
 const openfile = () => {
-    dto.mainWindow.title = `Get Images in ${dto.fileGlobal}`
+    mainWindow.title = `Get Images in ${fileGlobal}`
 
 
-    fs.readdir(dto.fileGlobal, "utf8", (err, data) => {
+    fs.readdir(fileGlobal, "utf8", (err, data) => {
         if (err) console.error(err);
         else {
-            console.log(`Get Images in ${dto.fileGlobal}`, "files", data.length);
-            dto.mainWindow.webContents.send("directoryOpen",
-                transformData(data, dto.fileGlobal, 0)
+            console.log(`Get Images in ${fileGlobal}`, "files", data.length);
+            mainWindow.webContents.send("directoryOpen",
+                transformData(data, fileGlobal, 0)
             );
         }
     });
 };
 
+
+
+
+
+/************************************ MENU */
+
+
+
+
+const zoomImg = async (zoom) => {
+    try {
+
+        mainWindow.webContents.send("zoom", zoom)
+    } catch (error) {
+        console.error("Zoom error", error);
+
+    }
+}
+
+const loadFolders = async () => {
+    try {
+        fs.readdir(fileGlobal, { encoding: "utf8", withFileTypes: true }, (err, data) => {
+            if (err) console.error(err);
+            else {
+                mainWindow.webContents.send("menuOpen",
+
+                    data
+                        .filter(d => d.isDirectory())
+                        .map(d => d.name)
+                );
+
+            }
+        }
+        )
+    } catch (error) {
+        console.error("Error in load folders", error);
+
+    }
+
+}
+
+
+const loadRecursive = async () => {
+
+    let options = {
+        properties: ["openDirectory", 'promptToCreate'],
+        title: "Open folder recursive to choice medias",
+    };
+    if (fileGlobal) options["defaultPath"] = fileGlobal;
+    dialog.showOpenDialog(options).then(file => {
+        if (!file.canceled) {
+            openfileRecursive(file.filePaths[0]);
+
+            mainWindow.title = `Get Images in ${fileGlobal} recursive in ${file.filePaths[0]}`
+        }
+    }).catch(err => {
+        console.error(err);
+    });
+}
+
+var counter = 0
+const openfileRecursive = (folderPath) => {
+
+
+    fs.readdir(folderPath, "utf8", (err, data) => {
+        if (err) console.error(err);
+        let qtdFiles = data.map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isFile()).length
+        data.map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isDirectory()).forEach(item => openfileRecursive(item))
+
+        if (qtdFiles > 0)
+            mainWindow.webContents.send("loadMedias",
+                transformData(data, folderPath, counter).sort((a, b) => a.id - b.id, { id: 0 })
+            );
+        counter += qtdFiles
+    })
+}
