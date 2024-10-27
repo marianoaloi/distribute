@@ -1,16 +1,16 @@
 import styled from "@emotion/styled";
-import { Check, CheckBox } from "@mui/icons-material";
 import { Typography } from "@mui/material";
+
 
 
 export const title = styled(Typography)`
 
 `
 
-export const ImageMaloi = styled.img`
-    max-width: 200px;
-    max-height: 200px;
-`
+export const ImageMaloi = styled.img<{ size: number }>((props: any) => `
+    max-width: ${props.size}px;
+    max-height: ${props.size}px;
+`)
 
 export const CheckBoxSelect = styled.input`
   float: right;
@@ -26,7 +26,7 @@ export const ThePhoto = styled.div`
         display: unset;
 `
 
-export const PreviewMedia = styled.div`
+export const PreviewMedia = styled.div<{ isVideo?: boolean }>((props: any) => `
 
   float: right;
   margin-right: -17px;
@@ -35,7 +35,7 @@ export const PreviewMedia = styled.div`
   top: 43px;
   position: relative;
   opacity: 80%;
-  background-color: blue;
+  background-color: ${props.isVideo ? "blue" : "red"};
   color: white;
   padding: 2px;
   width: 20px;
@@ -43,4 +43,4 @@ export const PreviewMedia = styled.div`
   height: 20px;
   font-size: 17px;
 
-`
+`)

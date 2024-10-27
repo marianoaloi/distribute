@@ -1,15 +1,17 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu } = require("electron");
-const url = require("url");
 const path = require("path");
 const fs = require("fs");
 
-const mime = require('mime-types');
-const { execSync } = require('child_process');
-
 const isMac = process.platform === 'darwin'
-var mainWindow;
+
+
+var dto = { mainWindow: undefined, fileGlobal: undefined }
+
+const utilMenu = require('./menu')
+
+const menuTemplate = utilMenu.menu(dto)
 function createWindow() {
-    mainWindow = new BrowserWindow({
+    dto.mainWindow = new BrowserWindow({
         // width: 1200,
         // height: 600,
         icon: path.join(__dirname, `/build/logo512.png`),
@@ -27,41 +29,36 @@ function createWindow() {
         },
     });
 
-    mainWindow.loadFile(path.join(__dirname, `/build/index.html`));
-    // mainWindow.loadURL(url.format({
+    dto.mainWindow.loadFile(path.join(__dirname, `/build/index.html`));
+    // dto.mainWindow.loadURL(url.format({
     //     pathname: path.join(__dirname, `/build/index.html`),
     //     protocol: 'file:',
     //     slashes: false
     // }))
     // Open the DevTools.
-    mainWindow.webContents.openDevTools();
+    dto.//mainWindow.webContents.openDevTools();
 
-    mainWindow.on("closed", function () {
-        mainWindow = null;
+    dto.mainWindow.on("closed", function () {
+        dto.mainWindow = null;
     });
 
-    const template = [
-        {
-            label: 'View',
-            submenu: [
-                { role: 'reload' },
-                { role: 'forceReload' },
-            ]
-        },
 
-    ]
 
-    const menu = Menu.buildFromTemplate(template)
+    const menu = Menu.buildFromTemplate(menuTemplate)
     Menu.setApplicationMenu(menu)
 
 
     if (process.argv[2]) {
         console.log("File receive folder", process.argv)
-        fileGlobal = process.argv[2]
+        dto.fileGlobal = process.argv[2]
     } else if (process.argv[0].includes("getimage")) {
-        fileGlobal = process.argv[1]
+        dto.fileGlobal = process.argv[1]
     }
+
+
 }
+
+
 
 app.on("ready", createWindow);
 
@@ -71,25 +68,24 @@ app.on("window-all-closed", function () {
 });
 
 app.on('before-quit', () => {
-    mainWindow.removeAllListeners('close');
-    mainWindow.close();
+    dto.mainWindow.removeAllListeners('close');
+    dto.mainWindow.close();
 });
 /********************************************** */
 
 app.on("activate", function () {
-    if (mainWindow === null) createWindow();
+    if (dto.mainWindow === null) createWindow();
 });
-var fileGlobal;
 
 ipcMain.on("open", () => {
     let options = {
         properties: ["openDirectory", 'promptToCreate'],
         title: "Open folder to choice images",
     };
-    if (fileGlobal) options["defaultPath"] = fileGlobal;
+    if (dto.fileGlobal) options["defaultPath"] = dto.fileGlobal;
     dialog.showOpenDialog(options).then(file => {
         if (!file.canceled) {
-            fileGlobal = file.filePaths[0];
+            dto.fileGlobal = file.filePaths[0];
         }
         openfile();
     }).catch(err => {
@@ -100,69 +96,47 @@ ipcMain.on("open", () => {
 
 ipcMain.on("process", async (event, data) => {
     if (data) {
-        moveFile(true, "L", data)
-        moveFile(false, "R", data)
+        moveFile(true, data.folder, data.onlyCopy, data.data)
     }
 })
 
 ipcMain.on("verifyOpen", async () => {
-    if (fileGlobal) {
+    if (dto.fileGlobal) {
         openfile()
     }
 })
 
-const moveFile = (bol, dest, data) =>
-    data.filter(f => f.checked === bol).forEach(f => {
-        let completeDestine = path.join(path.dirname(f.path), dest);
+const moveFile = (bol, dest, onlyCopy, data) =>
+    data.filter(f => f.checked === bol).forEach(media => {
+        // let completeDestine = path.join(path.dirname(media.path), dest);
+        let completeDestine = path.join(dto.fileGlobal, dest);
         if (!fs.existsSync(completeDestine)) {
             fs.mkdirSync(completeDestine)
         }
-        fs.rename(f.path, path.join(completeDestine, path.basename(f.path)), (err) => {
-            if (err) throw err;
-        })
+        if (fs.existsSync(media.path))
+            if (onlyCopy) {
+                fs.copyFile(media.path, path.join(completeDestine, path.basename(media.path)), (err) => {
+                    if (err) throw err;
+                })
+            } else {
+                fs.rename(media.path, path.join(completeDestine, path.basename(media.path)), (err) => {
+                    if (err) throw err;
+                })
+            }
+        // dto.mainWindow.ipcMain.send("delete", media)
     });
 
-
+const transformData = require("./util").transformData
 const openfile = () => {
-    mainWindow.title = `Get Images in ${fileGlobal}`
+    dto.mainWindow.title = `Get Images in ${dto.fileGlobal}`
 
-    fs.readdir(fileGlobal, "utf8", (err, data) => {
+
+    fs.readdir(dto.fileGlobal, "utf8", (err, data) => {
         if (err) console.error(err);
         else {
-            console.log(`Get Images in ${fileGlobal}`, "files", data.length);
-            mainWindow.webContents.send("directoryOpen",
-                data.map(item => path.join(fileGlobal, item))
-                    .filter(item => fs.statSync(item)
-                        .isFile()
-                    )
-                    .map(item => {
-                        return { item: item, mime: mime.lookup(item), fileName: item, size: fs.statSync(item).size }
-                    })
-                    .filter(item => {
-                        const mime_type = item.mime
-                        return mime_type && (mime_type.includes('image') || mime_type.includes('video'))
-                    })
-                    .sort((a, b) => b.size - a.size)
-                    .map(item => {
-
-                        const mime_type = item.mime
-                        if (mime_type && mime_type.includes('video')) {
-                            let fileName = `/tmp/${item.item.replaceAll("/", "_")}.jpeg`
-                            item.fileName = fileName
-                            if (!fs.existsSync(fileName)) {
-                                try {
-                                    execSync(`ffmpegthumbnailer -s300 -i '${item.item}' -o '${fileName}' -f `)
-
-                                } catch (error) {
-                                    console.error(error);
-                                    return undefined
-                                }
-                            }
-
-                        }
-                        return item
-
-                    })
+            console.log(`Get Images in ${dto.fileGlobal}`, "files", data.length);
+            dto.mainWindow.webContents.send("directoryOpen",
+                transformData(data, dto.fileGlobal, 0)
             );
         }
     });

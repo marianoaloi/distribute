@@ -16,6 +16,9 @@
                 "<node_internals>/**"
             ],
             "type": "node",
+            "args": [
+                "/mnt/BACKUP/videos/luto2/zip/uncompress/img/hasStrong"
+            ],
         }
     ]
 }

@@ -37,13 +37,16 @@
     "typescript": "^4.9.5"
   },
   "scripts": {
-    "startEle": "nodemon -e ts,tsx --exec npm run buildMaloi ",
+    "startele": "nodemon -e ts,tsx --exec npm run buildMaloi ",
     "start": "BROWSER=none react-scripts start",
     "build": "react-scripts build",
-    "buildMaloi": "react-scripts build --source-map --base-href ",
+    "buildMaloi": "GENERATE_SOURCEMAP=true react-scripts build --source-map --base-href ",
     "test": "react-scripts test",
     "electron": "electron .",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "buildele": "npm run build && ./ExecutableLinux.sh",
+    "deb64": "electron-installer-debian --src dist_resume/getimage-linux-x64/ --dest dist_resume/installers/ --arch amd64",
+    "winBuild": "node winBuild.js"
   },
   "eslintConfig": {
     "extends": [

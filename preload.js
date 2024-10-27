@@ -6,18 +6,30 @@ const ipc = {
     'render': {
         // From render to main.
         'send': ['directoryOpen',
+            'loadMedias',
+            'zoom',
+            'menuOpen',
+            'delete',
             'process',
             'verifyOpen',
             'open',
         ],
         // From main to render.
         'receive': ['directoryOpen',
+            'loadMedias',
+            'zoom',
+            'menuOpen',
+            'delete',
             'process',
             'verifyOpen',
             'open',],
         // From render to main and back again.
         'sendReceive': [
             'directoryOpen',
+            'loadMedias',
+            'zoom',
+            'menuOpen',
+            'delete',
             'process',
             'verifyOpen',
             'open', // Channel name
