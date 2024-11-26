@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import './App.css';
 import { ElectronConnection, OpenDirectory, useDispatch } from './lib/redux';
 import { GridIMGs } from './components/gridImg';
-import { Folders } from './components/folder';
 import { IconButton } from '@mui/material';
 import { FolderOpen, Pause, PlayArrow } from '@mui/icons-material';
 
@@ -105,7 +104,7 @@ function App() {
         </div>
       </header>
       <GridIMGs ref={childRefMethods} />
-      <Folders />
+      
     </div>
   );
 }

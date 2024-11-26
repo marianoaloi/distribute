@@ -6,4 +6,5 @@ export interface Media {
     checked: boolean
     deleted: boolean
     size: number
+    screenIndex: number
 }

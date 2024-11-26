@@ -21,8 +21,12 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
     const [currentPage, setCurrentPage] = useState(0);
     const [postsPerPage, setPostsPerPage] = useState(50);
 
-
-    const mediaSliced = medias.slice(currentPage * postsPerPage, ((currentPage * postsPerPage) + postsPerPage))
+    let counterIndex = 0;
+    const mediaSliced = medias.slice(currentPage * postsPerPage, ((currentPage * postsPerPage) + postsPerPage)).map(item => {
+        const mitem = {...item}
+        mitem.screenIndex = counterIndex++
+    return mitem})
+    
 
     // Expose methods to parent using useImperativeHandle
     useImperativeHandle(ref, () => ({
@@ -52,11 +56,11 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
     const shiftSelect = ($eventClick: Media) => { processSelection($eventClick, true) }
     const shiftControlSelect = ($eventClick: Media) => { processSelection($eventClick, false) }
     const processSelection = ($eventClick: Media, decision: boolean) => {
-        let lastedId = lastClick?.id || -1
-        let minor = Math.min(lastedId, $eventClick.id)
-        let maxer = Math.max(lastedId, $eventClick.id)
+        let lastedId = lastClick?.screenIndex || -1
+        let minor = Math.min(lastedId, $eventClick.screenIndex)
+        let maxer = Math.max(lastedId, $eventClick.screenIndex)
         processChoice(
-            mediaSliced.filter(photo => photo.id >= minor && photo.id <= maxer), decision
+            mediaSliced.filter(photo => photo.screenIndex >= minor && photo.screenIndex <= maxer), decision
         )
 
 
@@ -82,6 +86,15 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
     const qtdPages = Math.trunc(medias.length / postsPerPage)
 
 
+    try {
+        
+        if(currentPage+1 > qtdPages + (hasRest ? 1 : 0) && qtdPages > 0){            
+            setCurrentPage(qtdPages - (hasRest ? 0 : 1))
+        }
+    } catch (error) {
+        console.error(error)
+    }
+
     function selectAll(): void {
 
         processChoice(
@@ -99,7 +112,7 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
     return (
         <>
             <Resume>
-                <Qtd title="Total items no deleted">{medias.length}</Qtd>
+                <Qtd title="Total items not deleted">{medias.length}</Qtd>
                 <select value={postsPerPage} title="How many items for page" onChange={(val) => setPostsPerPage(parseInt(val.currentTarget.value))}>
                     <option value="20">20</option>
                     <option value="50">50</option>
@@ -117,6 +130,9 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
 
                 <IconButton className="buttonControl" onClick={() => selectAll()}><RadioButtonChecked /></IconButton>
                 <IconButton className="buttonControl" onClick={() => unselectAllSelectAll()}><RadioButtonUnchecked /></IconButton>
+                <div>
+                <Folders />
+                </div>
             </Resume>
             <ImgGrid>
                 {mediaSliced.length > 0

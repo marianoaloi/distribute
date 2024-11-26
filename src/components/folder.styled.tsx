@@ -10,9 +10,9 @@ export const FolderGrid = styled.div`
     height: 34px;
     align-content: center;
     padding: 3px;
-
-    position: fixed;
-    bottom: 0px;
+    /* position: fixed; 
+     margin-bottom: 60px; 
+    top: 0px; */
     width: 100%;
 
     display: inline-flex;
