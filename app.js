@@ -36,6 +36,14 @@ var menuTemplate = () => [
             },
         ]
     },
+    {
+        label: 'Order',
+        submenu: [
+            {label:"Sort by Name" , click:sortByName},
+            {label:"Sort by Size" , click:sortBySize},
+            {label:"Sort by Folder" , click:sortByFolder},
+        ]
+    },
 
 ]
 var mainWindow
@@ -86,6 +94,8 @@ function createWindow() {
     }
 
 
+
+
 }
 
 
@@ -131,12 +141,25 @@ ipcMain.on("process", async (event, data) => {
 })
 
 ipcMain.on("verifyOpen", async () => {
+    if(process.env.FixFiles && fs.existsSync(process.env.FixFiles)){
+        fs.readFile(process.env.FixFiles,'utf8',(err,data)=>{
+            let files=data.split("|").filter(filepath => fs.existsSync(filepath))
+            files = util.transformFixedData(files,0,util.sortSize)
+    
+            mainWindow.webContents.send("directoryOpen", files);
+        })
+    }else 
     if (fileGlobal) {
         openfile()
     }
 })
 
-const moveFile = (bol, dest, onlyCopy, data) =>
+const moveFile = (bol, dest, onlyCopy, data) =>{
+    if(process.env.FixFiles){
+        console.log("##MOVEFILE",dest,data.filter(f => f.checked === bol).map(f => f.path).join(","));
+        
+        return;
+    }
     data.filter(f => f.checked === bol).forEach(media => {
         // let completeDestine = path.join(path.dirname(media.path), dest);
         let completeDestine = path.join(fileGlobal, dest);
@@ -155,8 +178,10 @@ const moveFile = (bol, dest, onlyCopy, data) =>
             }
         // mainWindow.ipcMain.send("delete", media)
     });
-
-const transformData = require("./util").transformData
+}
+const util = require("./util")
+const transformData = util.transformData
+var actualSort = util.sortSize
 const openfile = () => {
     mainWindow.title = `Get Images in ${fileGlobal}`
 
@@ -166,7 +191,7 @@ const openfile = () => {
         else {
             console.log(`Get Images in ${fileGlobal}`, "files", data.length);
             mainWindow.webContents.send("directoryOpen",
-                transformData(data, fileGlobal, 0)
+                transformData(data, fileGlobal, 0,actualSort)
             );
         }
     });
@@ -214,6 +239,7 @@ const loadFolders = async () => {
 }
 
 
+ipcMain.on("openRecursive", () => loadRecursive())
 const loadRecursive = async () => {
 
     let options = {
@@ -243,8 +269,12 @@ const openfileRecursive = (folderPath) => {
 
         if (qtdFiles > 0)
             mainWindow.webContents.send("loadMedias",
-                transformData(data, folderPath, counter).sort((a, b) => a.id - b.id, { id: 0 })
+                transformData(data, folderPath, counter,actualSort)
             );
         counter += qtdFiles
     })
 }
+
+const sortByName =  async () =>{actualSort=util.sortName; openfile()}    //mainWindow.webContents.send("sort","sortByName")
+const sortBySize =  async () =>{actualSort=util.sortSize; openfile()}    //mainWindow.webContents.send("sort","sortBySize")
+const sortByFolder =  async () =>{actualSort=util.sortFolder; openfile()}    //mainWindow.webContents.send("sort","sortByFolder")

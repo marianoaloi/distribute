@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import './App.css';
-import { ElectronConnection, OpenDirectory, useDispatch } from './lib/redux';
+import { ElectronConnection, OpenDirectory, OpenDirectoryRecursive, useDispatch } from './lib/redux';
 import { GridIMGs } from './components/gridImg';
 import { IconButton } from '@mui/material';
-import { FolderOpen, Pause, PlayArrow } from '@mui/icons-material';
+import { FolderCopyTwoTone, FolderOpen, Pause, PlayArrow } from '@mui/icons-material';
 
 function App() {
 
@@ -55,6 +55,10 @@ function App() {
     dispatch(OpenDirectory())
   }
 
+  function openDiretoryRecursive(){
+    dispatch(OpenDirectoryRecursive())
+  }
+
 
   function playScrool(): void {
     if (play) {
@@ -99,6 +103,7 @@ function App() {
         {/* <img src={logo} className="App-logo" alt="logo" /> */}
         <div className="buttons">
           <IconButton className="buttonControl" onClick={() => openDiretory()}><FolderOpen /></IconButton>
+          <IconButton className="buttonControl" onClick={() => openDiretoryRecursive()}><FolderCopyTwoTone /></IconButton>
           <input type='text' value={speed} readOnly size={3} ref={inputRef} />
           <IconButton onClick={() => playScrool()}>{play ? <PlayArrow /> : <Pause />}</IconButton>
         </div>

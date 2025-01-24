@@ -12,17 +12,29 @@ import { Media } from "../entity/Media"
 export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: any }> = ({ mediaOnlyCopy, handleExternalClose }) => {
 
     const folders = useSelector(workFolder)
-    const [open, setOpen] = React.useState(false);
+    const [openNewFolder, setOpenNewFolder] = React.useState(false);
+    const [openDelete, setOpenDelete] = React.useState(false);
+    const [folderDelete, setFolderDelete] = React.useState("");
     const [onlyCopy, setOnlyCopy] = React.useState((mediaOnlyCopy === undefined))
 
     const dispatch = useDispatch();
 
-    const handleClickOpen = () => {
-        setOpen(true);
+    const handleClickOpenNewFolder = () => {
+        setOpenNewFolder(true);
     };
 
-    const handleClose = () => {
-        setOpen(false);
+    const handleCloseNewFolder = () => {
+        setOpenNewFolder(false);
+    };
+
+
+    const handleClickOpenDelete = (fol: string) => {
+        setFolderDelete(fol)
+        setOpenDelete(true);
+    };
+
+    const handleCloseDelete = () => {
+        setOpenDelete(false);
     };
 
     const ButtonProcess: React.FC<{ fol: string }> = ({ fol }) => {
@@ -32,7 +44,7 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
         function sendSelected(folder: string): void {
             if (!mediaOnlyCopy) {
 
-                const mediasFilter = medias.filter(m => m.checked).map(m => {
+                const mediasFilter = medias.filter(m => m.checked && !m.deleted).map(m => {
                     const aux = { ...m }
                     aux.deleted = true
                     return aux
@@ -57,18 +69,24 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
                 handleExternalClose();
             }
         }
-        function deleteFolder(fol: string): void {
-            dispatch(removeFolder(fol))
-        }
 
         return <>
             <ButtonFolder variant="contained" onClick={() => sendSelected(fol)} >{fol} </ButtonFolder>
-            <ButtonDelete title={`delete ${fol}`} onClick={() => deleteFolder(fol)}><Delete fontSize="small" /></ButtonDelete>
+            <ButtonDelete title={`delete ${fol}`} onClick={() => handleClickOpenDelete(fol)}><Delete fontSize="small" /></ButtonDelete>
         </>
     }
 
+
+
+    function deleteFolder(): void {
+
+        dispatch(removeFolder(folderDelete))
+        handleCloseDelete()
+
+    }
+
     return <FolderGrid>
-        <AddFolder onClick={handleClickOpen}  >
+        <AddFolder onClick={handleClickOpenNewFolder}  >
             <Add titleAccess="Add folder" />
         </AddFolder>
         {mediaOnlyCopy ?
@@ -79,8 +97,8 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
 
 
             <Dialog
-                open={open}
-                onClose={handleClose}
+                open={openNewFolder}
+                onClose={handleCloseNewFolder}
                 PaperProps={{
                     component: 'form',
                     onSubmit: (event: React.FormEvent<HTMLFormElement>) => {
@@ -90,7 +108,7 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
                         const folder = formJson.folder;
                         console.log(folder);
                         dispatch(addFolder(folder))
-                        handleClose();
+                        handleCloseNewFolder();
                     },
                 }}
             >
@@ -112,8 +130,31 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
                     />
                 </DialogContent>
                 <DialogActions>
-                    <Button onClick={handleClose}>Cancel</Button>
+                    <Button onClick={handleCloseNewFolder}>Cancel</Button>
                     <Button type="submit">Add</Button>
+                </DialogActions>
+            </Dialog>
+
+            <Dialog
+                open={openDelete}
+                onClose={handleCloseDelete}
+                aria-labelledby="alert-dialog-title"
+                aria-describedby="alert-dialog-description"
+            >
+                <DialogTitle id="alert-dialog-title">
+                    {`Do you want delete the folder ${folderDelete} ?`}
+                </DialogTitle>
+                <DialogContent>
+                    <DialogContentText id="alert-dialog-description">
+                        You will delete the {folderDelete} from the application.
+                        But the app not delete phisicaly the folder, only in app.
+                    </DialogContentText>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={handleCloseDelete}>Disagree</Button>
+                    <Button onClick={deleteFolder} autoFocus>
+                        Agree
+                    </Button>
                 </DialogActions>
             </Dialog>
         </React.Fragment>

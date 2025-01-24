@@ -1,12 +1,13 @@
-import { forwardRef, SyntheticEvent, useImperativeHandle, useState } from "react"
+import { forwardRef, SyntheticEvent, useImperativeHandle, useRef, useState } from "react"
 import { selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
-import { ImgGrid, ModalBox, Qtd, Resume } from "./gridImg.styled"
+import { ImgGrid, Qtd, Resume } from "./gridImg.styled"
 import { MediaIMG, prettifySizeF } from "./media"
 import { Media } from "../entity/Media"
 import { useDispatch } from "react-redux"
 import { IconButton, Modal } from "@mui/material"
 import { Folders } from "./folder"
 import { KeyboardArrowLeft, KeyboardArrowRight, KeyboardDoubleArrowLeft, KeyboardDoubleArrowRight, RadioButtonChecked, RadioButtonUnchecked } from "@mui/icons-material"
+import ModalZoom from "./modalZoom"
 
 interface GridMethods {
     scrollPhotos: (qtd: number) => void
@@ -23,10 +24,11 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
 
     let counterIndex = 0;
     const mediaSliced = medias.slice(currentPage * postsPerPage, ((currentPage * postsPerPage) + postsPerPage)).map(item => {
-        const mitem = {...item}
+        const mitem = { ...item }
         mitem.screenIndex = counterIndex++
-    return mitem})
-    
+        return mitem
+    })
+
 
     // Expose methods to parent using useImperativeHandle
     useImperativeHandle(ref, () => ({
@@ -43,7 +45,7 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
 
     const [open, setOpen] = useState(false);
     const handleOpenPreview = (media: Media) => {
-        setLastClick(media)
+        setLastZoom(media)
         setOpen(true)
 
     };
@@ -52,6 +54,8 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
 
 
     const [lastClick, setLastClick] = useState<Media>()
+    const [lastZoom, setLastZoom] = useState<Media>()
+
     const lastClickedEvent = ($eventClick: Media) => { setLastClick($eventClick) }
     const shiftSelect = ($eventClick: Media) => { processSelection($eventClick, true) }
     const shiftControlSelect = ($eventClick: Media) => { processSelection($eventClick, false) }
@@ -79,16 +83,14 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
         ))
     }
 
-    function startVid(event: SyntheticEvent<HTMLVideoElement, Event>): void {
-        event.currentTarget.volume = 0.1
-    }
+
     const hasRest = !((medias.length % postsPerPage) === 0)
     const qtdPages = Math.trunc(medias.length / postsPerPage)
 
 
     try {
-        
-        if(currentPage+1 > qtdPages + (hasRest ? 1 : 0) && qtdPages > 0){            
+
+        if (currentPage + 1 > qtdPages + (hasRest ? 1 : 0) && qtdPages > 0) {
             setCurrentPage(qtdPages - (hasRest ? 0 : 1))
         }
     } catch (error) {
@@ -108,6 +110,7 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
             mediaSliced, false
         )
     }
+
 
     return (
         <>
@@ -131,7 +134,7 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
                 <IconButton className="buttonControl" onClick={() => selectAll()}><RadioButtonChecked /></IconButton>
                 <IconButton className="buttonControl" onClick={() => unselectAllSelectAll()}><RadioButtonUnchecked /></IconButton>
                 <div>
-                <Folders />
+                    <Folders />
                 </div>
             </Resume>
             <ImgGrid>
@@ -156,20 +159,10 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
                 aria-labelledby="modal-modal-title"
                 aria-describedby="modal-modal-description"
             >
-                <ModalBox >
-                    <Folders mediaOnlyCopy={lastClick} handleExternalClose={handleClose} />
-                    {lastClick ?
-                        (
-                            lastClick.mime.includes('video')
-                                ?
-                                <video src={lastClick.media} onLoadStart={startVid} controls autoPlay title={`${lastClick.path}\n${prettifySizeF(lastClick.size)}`} />
-                                :
-                                <img src={lastClick.media} alt={lastClick.path} title={`${lastClick.path}\n${prettifySizeF(lastClick.size)}`} />
+                {lastZoom ?
+                    <ModalZoom lastZoom={lastZoom} handleExternalClose={handleClose}></ModalZoom>
 
-                        )
-
-                        : <p>No Media found</p>}
-                </ModalBox>
+                    : <p>No Media found</p>}
             </Modal>
 
 

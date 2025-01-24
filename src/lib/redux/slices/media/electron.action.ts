@@ -1,5 +1,5 @@
 import { ElectronService } from 'ngx-electron';
-import { addListinActualArray, populateArray, updateArrayItem } from './media.reduce';
+import { addListinActualArray, orderByFolder, orderByName, orderBySize, populateArray, updateArrayItem } from './media.reduce';
 import { example } from './populateExample';
 import { Media } from '../../../../entity/Media';
 import { addFolder } from '../folders';
@@ -48,6 +48,16 @@ export const ElectronConnection = () => {
                 dispatch(zoom > 0 ? zoomIn() : zoomOut())
 
             })
+            ipcRender.on('sort', (e:any,sort:string)=>{
+                switch (sort) {
+                    case 'sortByName': dispatch(orderByName(sort)); break;
+                    case 'sortBySize': dispatch(orderBySize(sort)); break;
+                    case 'sortByFolder': dispatch(orderByFolder(sort)); break;
+                
+                    default:
+                        break;
+                }
+            })
             ipcRender.on('menuOpen', (e: any, folders: string[]) => {
                 folders.forEach(folder => dispatch(addFolder(folder)))
             })
@@ -67,6 +77,19 @@ export const OpenDirectory = () => {
     return (dispatch: any) => {
         if (ipcRender)
             ipcRender.send('open', new Date().toISOString());
+    }
+}
+
+export const OpenDirectoryRecursive = () => {
+
+    if (!isElectronApp) {
+        return (dispatch: any) => { }
+    }
+
+
+    return (dispatch: any) => {
+        if (ipcRender)
+            ipcRender.send('openRecursive', new Date().toISOString());
     }
 }
 

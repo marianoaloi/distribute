@@ -52,7 +52,23 @@ const itemsSlice = createSlice({
                 med => action.payload.find((m: { id: number; }) => m.id === med.id) || med
             )
             return result;
-        }
+        },
+
+        orderByName:(state, action) => ({
+            ...state,
+            medias :state.medias.sort((a:Media,b:Media) => a.media.localeCompare(b.media))
+            
+        }),
+        orderBySize:(state, action) => ({
+            ...state,
+            medias :state.medias.sort((a:Media,b:Media) => a.size-b.size)
+            
+        }),
+        orderByFolder:(state, action) => ({
+            ...state,
+            medias :state.medias.sort((a:Media,b:Media) => a.path.localeCompare(b.path))
+            
+        }),
     }
 })
 
@@ -63,5 +79,9 @@ function transformStringToMedia(paths: FileDTO[]): Media[] {
 
 
 
-export const { populateArray, updateArrayItem, updateManyArrayItem, addListinActualArray, purgeArray } = itemsSlice.actions;
+export const { populateArray, updateArrayItem, updateManyArrayItem, addListinActualArray, purgeArray ,orderByName, orderBySize, orderByFolder} = itemsSlice.actions;
 export default itemsSlice.reducer;
+
+function reIdList(medias: Media[]): Media[] {
+    return medias;
+}

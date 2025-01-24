@@ -12,6 +12,8 @@ const ipc = {
             'delete',
             'process',
             'verifyOpen',
+            'openRecursive',
+            'sort',
             'open',
         ],
         // From main to render.
@@ -22,6 +24,8 @@ const ipc = {
             'delete',
             'process',
             'verifyOpen',
+            'openRecursive',
+            'sort',
             'open',],
         // From render to main and back again.
         'sendReceive': [
@@ -32,6 +36,8 @@ const ipc = {
             'delete',
             'process',
             'verifyOpen',
+            'openRecursive',
+            'sort',
             'open', // Channel name
         ]
     }
