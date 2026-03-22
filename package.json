@@ -9,6 +9,7 @@
     "@emotion/styled": "^11.13.0",
     "@mui/icons-material": "^6.1.2",
     "@mui/material": "^6.1.2",
+    "@reduxjs/toolkit": "^2.11.2",
     "moment-timezone": "^0.5.45",
     "mongodb": "^6.8.0",
     "mongoose": "^8.5.1",

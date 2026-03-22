@@ -32,7 +32,7 @@ export const makeReduxStore = (
 export const reduxStore = configureStore({
     reducer,
     middleware: (getDefaultMiddleware) => {
-        return getDefaultMiddleware().concat(middleware)
+        return getDefaultMiddleware().concat(middleware as any)
     },
 
 })
