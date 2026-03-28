@@ -1,13 +1,14 @@
 import { forwardRef, SyntheticEvent, useImperativeHandle, useRef, useState } from "react"
 import { selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
-import { ImgGrid, Qtd, Resume } from "./gridImg.styled"
+import { FilterBar, ImgGrid, Qtd, Resume } from "./gridImg.styled"
 import { MediaIMG, prettifySizeF } from "./media"
 import { Media } from "../entity/Media"
 import { useDispatch } from "react-redux"
 import { IconButton, Modal } from "@mui/material"
 import { Folders } from "./folder"
-import { KeyboardArrowLeft, KeyboardArrowRight, KeyboardDoubleArrowLeft, KeyboardDoubleArrowRight, RadioButtonChecked, RadioButtonUnchecked } from "@mui/icons-material"
+import { Filter, KeyboardArrowLeft, KeyboardArrowRight, KeyboardDoubleArrowLeft, KeyboardDoubleArrowRight, RadioButtonChecked, RadioButtonUnchecked } from "@mui/icons-material"
 import ModalZoom from "./modalZoom"
+import { configurationsSelector, setMediaType } from "../lib/redux/slices/configurations"
 
 interface GridMethods {
     scrollPhotos: (qtd: number) => void
@@ -18,12 +19,15 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
 
     const dispatch = useDispatch();
 
+    const config = useSelector(configurationsSelector)
     const medias = useSelector(selectMedias).filter(m => !m.deleted)
+        .filter(m => !config.mediaType ? true :m.mime.includes(config.mediaType))
     const [currentPage, setCurrentPage] = useState(0);
     const [postsPerPage, setPostsPerPage] = useState(50);
 
     let counterIndex = 0;
-    const mediaSliced = medias.slice(currentPage * postsPerPage, ((currentPage * postsPerPage) + postsPerPage)).map(item => {
+    const mediaSliced = medias
+        .slice(currentPage * postsPerPage, ((currentPage * postsPerPage) + postsPerPage)).map(item => {
         const mitem = { ...item }
         mitem.screenIndex = counterIndex++
         return mitem
@@ -39,6 +43,9 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
                 setCurrentPage(currentPage + 1);
             else
                 setCurrentPage(0)
+        },
+        closePreview() {
+            setOpen(false)
         }
     }));
 
@@ -111,6 +118,13 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
         )
     }
 
+    const FilterComponent = () => {
+        return <FilterBar>
+            
+            <IconButton onClick={() => dispatch(setMediaType(config.mediaType === "video" ? "image" : !config.mediaType ? "video" : undefined))} color={config.mediaType === "video" ? "primary" : !config.mediaType ? "secondary" : "default" }><Filter /></IconButton>
+        </FilterBar>
+    }
+
 
     return (
         <>
@@ -151,6 +165,7 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
 
 
             </ImgGrid>
+            <FilterComponent />
 
 
             <Modal

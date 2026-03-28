@@ -4,125 +4,95 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is an Electron-based media browser application for viewing and organizing images and videos. The app loads media files from directories, displays them in a paginated grid, and allows users to move/copy files to subfolders for organization. Built with React + TypeScript (renderer) and Node.js (main process).
+Electron-based media browser for viewing and organizing images/videos. Loads media from directories, displays in a paginated grid, and allows moving/copying files to subfolders. Built with React + TypeScript (renderer) and Node.js (main process).
 
 ## Development Commands
 
-### React Development
 ```bash
-npm start                 # Start React dev server (BROWSER=none to skip auto-open)
-npm run build            # Production build of React app to build/
-npm run buildMaloi       # Build with source maps
-npm test                 # Run tests in watch mode
-```
+# React dev server (renderer)
+npm start                 # Starts on localhost:3000 (BROWSER=none to skip auto-open)
+npm run build             # Production build to build/
+npm run buildMaloi        # Build with source maps
 
-### Electron Development
-```bash
-npm run electron         # Launch Electron app (requires prior build)
-npm run startele         # Watch mode: auto-rebuild on .ts/.tsx changes
-```
+# Electron
+npm run electron          # Launch Electron (requires prior build)
+npm run startele          # Watch mode: nodemon rebuilds on .ts/.tsx changes, then launches Electron
 
-### Packaging
-```bash
-npm run buildele         # Build React app and package for Linux
-./ExecutableLinux.sh     # Package Electron app for Linux (disables DevTools)
-npm run deb64           # Create Debian installer from packaged app
-npm run winBuild        # Package for Windows (requires winBuild.js)
+# Full workflow: npm run build && npm run electron
+# Dev workflow:  terminal 1: npm start | terminal 2: npm run electron
+
+# Tests
+npm test                  # Jest in watch mode (react-scripts test)
+
+# Packaging
+npm run buildele          # Build React + package for Linux
+npm run winBuild          # Package for Windows
+npm run deb64             # Create Debian installer
 ```
 
 ## Architecture
 
-### Electron Process Architecture
+### Process Architecture
 
-The app follows standard Electron architecture with main and renderer processes:
+- **Main Process** (`app.js`): File system ops, window management, native menus, directory reading
+- **Renderer Process** (`src/`): React app with Redux state management
+- **Preload Script** (`preload.js`): `contextBridge` with whitelisted IPC channels
+- **Utilities** (`util.js`): Media file processing, sorting, video thumbnail generation (runs in main process)
 
-- **Main Process** ([app.js](app.js)): Handles file system operations, window management, and native menus
-- **Renderer Process** (React app in [src/](src/)): UI and user interactions
-- **Preload Script** ([preload.js](preload.js)): Securely exposes IPC channels via `contextBridge`
+### IPC Communication
 
-### IPC Communication Pattern
+All IPC goes through `preload.js` channel whitelist. Components never call IPC directly — they dispatch Redux actions or call helper functions in `electron.action.ts` which wrap `window.electron.ipcRenderer.send()`.
 
-IPC communication flows through a whitelisted channel system in preload.js:
+Key channels: `open`, `openRecursive`, `directoryOpen`, `loadMedias`, `process`, `zoom`, `menuOpen`, `sort`, `verifyOpen`
 
-1. **Renderer → Main**: `window.electron.ipcRenderer.send(channel, args)`
-2. **Main → Renderer**: `mainWindow.webContents.send(channel, data)`
-3. **Bidirectional handlers** defined in [src/lib/redux/slices/media/electron.action.ts](src/lib/redux/slices/media/electron.action.ts)
+To add a new IPC channel: add it to all three arrays (`send`, `receive`, `sendReceive`) in `preload.js`, handle it in `app.js` with `ipcMain.on()`, and call it from `electron.action.ts`.
 
-Key IPC channels:
-- `open` / `openRecursive`: Trigger folder selection dialogs
-- `directoryOpen` / `loadMedias`: Main sends file data to renderer
-- `process`: Renderer sends move/copy instructions to main
-- `zoom`: Main triggers zoom level changes
-- `menuOpen`: Main sends folder list for organizing files
-- `sort`: Main triggers re-sorting of media files
+### Redux State (RTK)
 
-### Redux State Management
+Three slices in `src/lib/redux/slices/`:
 
-State is organized into three slices ([src/lib/redux/slices/](src/lib/redux/slices/)):
+1. **media** — Uses `createSlice`. Core media array, selection state, sorting. Key reducers: `populateArray`, `addListinActualArray`, `updateArrayItem`, `updateManyArrayItem`
+2. **folders** — Uses `createReducer` + `createAction`. Destination folder list for file organization
+3. **configurations** — Uses `createReducer` + `createAction`. Zoom level, media type filter, scroll speed
 
-1. **media** ([slices/media/](src/lib/redux/slices/media/)): Core media file data and operations
-   - `populateArray`: Replaces all media items (initial load)
-   - `addListinActualArray`: Appends media items (recursive load)
-   - `updateArrayItem` / `updateManyArrayItem`: Toggle checked state or mark deleted
-   - Sorting actions: `orderByName`, `orderBySize`, `orderByFolder`
+Note: `configurations` is NOT re-exported from `slices/index.ts` — import directly from `slices/configurations`.
 
-2. **folders** ([slices/folders/](src/lib/redux/slices/folders/)): Available destination folders for organization
+Store setup in `src/lib/redux/store.ts` uses `redux-logger` middleware in development.
 
-3. **configurations** ([slices/configurations/](src/lib/redux/slices/configurations/)): UI settings like zoom level
+### Styling
 
-### Media Processing Pipeline
+- **Emotion** (`@emotion/styled`) for custom styled components
+- **MUI v6** (`@mui/material`, `@mui/icons-material`) for UI primitives
+- Each component has a companion `.styled.tsx` file (e.g., `gridImg.styled.tsx`)
 
-File processing happens in [util.js](util.js):
+### Component Patterns
 
-1. **transformData()**: Converts file paths to Media objects
-   - Filters to only image/video files (using mime-types)
-   - Generates video thumbnails using `ffmpegthumbnailer` (cached in /tmp/)
-   - Sorts by size/name/folder
-   - Assigns sequential IDs
+- **GridIMGs** uses `forwardRef` + `useImperativeHandle` to expose `scrollPhotos()` to parent (`App.tsx`)
+- **App.tsx** handles global keyboard events and delegates to GridIMGs via ref
+- Media type filtering in GridIMGs: `config.mediaType` filters to "video", "image", or all
 
-2. **Main process** reads directories and passes file lists to util.js
-3. **Renderer** receives Media objects via IPC and stores in Redux
-4. **Grid component** ([src/components/gridImg.tsx](src/components/gridImg.tsx)) paginates and renders
+### Media Processing Pipeline (`util.js`)
 
-### Key UI Components
+1. `transformData(files, folderPath, counter, sortFn)` → filters to image/video by mime-type → sorts → generates video thumbnails
+2. Video thumbnails use `ffmpegthumbnailer` CLI tool, cached by MD5 hash of filepath
+3. Thumbnail cache location: `C:\tmp\ffmpeg\` (hardcoded Windows path — will break on Linux)
+4. Sorting functions: `sortSize` (default), `sortName`, `sortFolder`, `noSort`
 
-- **GridIMGs** ([src/components/gridImg.tsx](src/components/gridImg.tsx)): Main grid with pagination, selection, and organization UI
-  - Selection modes: single click, shift-click for ranges, shift+ctrl for non-contiguous
-  - Exposes `scrollPhotos()` method to parent for keyboard navigation
+### Cross-Platform Considerations
 
-- **MediaIMG** ([src/components/media.tsx](src/components/media.tsx)): Individual media item with thumbnail, checkbox, and metadata
+- `app.js` creates temp dir at `path.join(__dirname, "tmp")` but `util.js` hardcodes `C:\tmp\ffmpeg\` for thumbnail cache — these are inconsistent
+- `ffmpegthumbnailer` must be installed and on PATH for video thumbnail generation
+- Dev mode detection uses `electron-is-dev` package; in dev loads `localhost:3000`, in prod loads `build/index.html`
+- On Windows, `app.on("window-all-closed")` calls `process.exit(0)` instead of `app.quit()`
 
-- **Folders** ([src/components/folder.tsx](src/components/folder.tsx)): Destination folder buttons for moving/copying files
+### Keyboard Shortcuts (handled in App.tsx)
 
-- **ModalZoom** ([src/components/modalZoom.tsx](src/components/modalZoom.tsx)): Full-size media preview
+- `s` — Toggle auto-scroll
+- `a` — Previous page
+- `f` — Next page
+- Mouse wheel on speed input — Adjust scroll speed
+- `numpad +/-` — Zoom in/out (via menu accelerators in app.js)
 
-### File Organization Flow
+### FixFiles Mode
 
-1. User clicks folder button in Folders component
-2. Component dispatches `SendSelectedFiles()` thunk ([electron.action.ts:96](src/lib/redux/slices/media/electron.action.ts#L96))
-3. IPC sends selected media + destination to main process via `process` channel
-4. Main process ([app.js:157](app.js#L157)) moves or copies files to subfolder
-5. Files are removed from view (or marked for tracking)
-
-### Special Features
-
-- **Recursive Loading**: Menu → "Load recursive" scans nested folders and incrementally loads media
-- **Auto-scrolling**: 's' key toggles smooth auto-scroll; mouse wheel over speed input adjusts rate
-- **Keyboard Navigation**: 'a'/'f' keys for previous/next page
-- **Video Thumbnail Generation**: Uses ffmpegthumbnailer (requires Linux installation)
-- **FixFiles Mode**: If `process.env.FixFiles` exists and points to a pipe-delimited file list, app loads those specific files instead of directory browsing
-
-### Menu System
-
-Application menu defined in [app.js:8](app.js#L8):
-- **File**: Load recursive
-- **View**: Reload, Force Reload, Toggle DevTools
-- **Work**: Load folders, Zoom In/Out (numpad +/-)
-- **Order**: Sort by Name/Size/Folder
-
-### TypeScript Configuration
-
-- Target: ES5 for broad compatibility
-- Strict mode enabled
-- React JSX transform
-- Source files limited to [src/](src/) directory only
+If `process.env.FixFiles` points to a file containing pipe-delimited (`|`) paths, the app loads those specific files instead of showing a directory picker. In this mode, the `process` IPC handler logs move operations to console instead of actually moving files.

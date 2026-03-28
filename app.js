@@ -49,6 +49,11 @@ var menuTemplate = () => [
 var mainWindow
 var fileGlobal
 function createWindow() {
+    if (fs.existsSync(path.join(__dirname, "tmp"))) {
+        fs.rmSync(path.join(__dirname, "tmp"), { recursive: true })
+    }
+    fs.mkdirSync(path.join(__dirname, "tmp"))
+    fs.mkdirSync(path.join(__dirname, "tmp/ffmpeg"))
     mainWindow = new BrowserWindow({
         // width: 1200,
         // height: 600,
@@ -182,7 +187,7 @@ const moveFile = (bol, dest, onlyCopy, data) =>{
 const util = require("./util")
 const transformData = util.transformData
 var actualSort = util.sortSize
-const openfile = () => {
+const    openfile = () => {
     mainWindow.title = `Get Images in ${fileGlobal}`
 
 

@@ -34,6 +34,18 @@ export const Qtd = styled(Typography)`
             margin: 0px 12px;
 `
 
+export const FilterBar = styled.div`
+    position: fixed;
+    bottom: 0px;
+    right: 0px;
+    background: antiquewhite;
+    z-index: 2;
+    display: inline-flex;
+    height: 40px;
+    align-items: center;
+    flex-wrap: nowrap;
+    justify-content: space-around;
+`
 
 
 

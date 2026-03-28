@@ -1,9 +1,10 @@
 import { createReducer } from "@reduxjs/toolkit"
-import { zoomIn, zoomOut } from "./thunks"
+import { setMediaType, zoomIn, zoomOut } from "./thunks"
 
 
 interface Config {
     pxzoom: number
+    mediaType?: 'image' | 'video' | undefined
 }
 
 const initialState: Config = {
@@ -19,9 +20,8 @@ export const ConfigReduce = createReducer(initialState, (build) => {
         ...state,
         pxzoom: state.pxzoom - 50
     }))
+    build.addCase(setMediaType, (state, action) => ({
+        ...state,
+        mediaType: action.payload 
+    }))
 })
-
-
-
-
-

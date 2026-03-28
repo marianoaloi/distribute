@@ -16,7 +16,7 @@ function App() {
   const stepSpeed = 1500
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  const childRefMethods = useRef<{ scrollPhotos: (qtd: number) => void }>(null);
+  const childRefMethods = useRef<{ scrollPhotos: (qtd: number) => void , closePreview:()=>void }>(null);
 
   const scrollByAmount = () => {
     if (play) {
@@ -92,6 +92,10 @@ function App() {
 
     if (ev.key === 'f' && childRefMethods.current) {
       childRefMethods.current.scrollPhotos(1); // Call the method in the child component
+    }
+
+    if (ev.key === "Escape" && childRefMethods.current) {
+      childRefMethods.current.closePreview(); // Call the method in the child component
     }
 
   }

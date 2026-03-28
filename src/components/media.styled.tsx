@@ -28,19 +28,19 @@ export const ThePhoto = styled.div`
 
 export const PreviewMedia = styled.div<{ isVideo?: boolean }>((props: any) => `
 
-  float: right;
-  margin-right: -17px;
   /* transform: scale(3); */
-  right: 20px;
-  top: 43px;
-  position: relative;
-  opacity: 80%;
   background-color: ${props.isVideo ? "blue" : "red"};
   color: white;
-  padding: 2px;
-  width: 20px;
-  text-align: center;
-  height: 20px;
+  float: right;
   font-size: 17px;
+  height: 20px;
+  margin-right: -17px;
+  opacity: 80%;
+  padding: 2px;
+  position: relative;
+  right: 20px;
+  text-align: center;
+  top: 43px;
+  width: 20px;
 
 `)
