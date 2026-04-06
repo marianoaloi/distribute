@@ -46,7 +46,9 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
         },
         closePreview() {
             setOpen(false)
-        }
+        },
+        selectAll() { selectAll() },
+        unselectAllSelectAll() { unselectAllSelectAll() }
     }));
 
 
@@ -89,6 +91,20 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
                 })
         ))
     }
+    
+    function selectAll(): void {
+
+        processChoice(
+            mediaSliced, true
+        )
+    }
+
+    function unselectAllSelectAll(): void {
+
+        processChoice(
+            mediaSliced, false
+        )
+    }
 
 
     const hasRest = !((medias.length % postsPerPage) === 0)
@@ -104,23 +120,9 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
         console.error(error)
     }
 
-    function selectAll(): void {
-
-        processChoice(
-            mediaSliced, true
-        )
-    }
-
-    function unselectAllSelectAll(): void {
-
-        processChoice(
-            mediaSliced, false
-        )
-    }
 
     const FilterComponent = () => {
         return <FilterBar>
-            
             <IconButton onClick={() => dispatch(setMediaType(config.mediaType === "video" ? "image" : !config.mediaType ? "video" : undefined))} color={config.mediaType === "video" ? "primary" : !config.mediaType ? "secondary" : "default" }><Filter /></IconButton>
         </FilterBar>
     }
@@ -147,9 +149,8 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
 
                 <IconButton className="buttonControl" onClick={() => selectAll()}><RadioButtonChecked /></IconButton>
                 <IconButton className="buttonControl" onClick={() => unselectAllSelectAll()}><RadioButtonUnchecked /></IconButton>
-                <div>
-                    <Folders />
-                </div>
+                
+            <Folders />
             </Resume>
             <ImgGrid>
                 {mediaSliced.length > 0

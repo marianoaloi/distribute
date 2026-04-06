@@ -44,12 +44,7 @@ export const VideoPresentation = styled.video`
 
 export const ImgPresentation = styled.img`
       position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
       overflow: auto;
-      max-height: 100%;
-      max-width: 100%;
 `
 
 export const ControlSlider = styled(Slider)`
@@ -66,7 +61,7 @@ export const FoldersZoom = styled(Folders)`
 `
 
 export const MediaControllersCSS = styled.div`
-    align-content: flex-start;
+    align-content: flex-end;
     align-items: center;
     background: antiquewhite;
     bottom: 0px;
@@ -74,7 +69,7 @@ export const MediaControllersCSS = styled.div`
     flex-direction: row;
     flex-wrap: nowrap;
     height: 35px;
-    justify-content: flex-start;
+    justify-content: flex-end;
     padding-top: 20px;
     position: absolute;
     width: 100%;

@@ -1,9 +1,12 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, Menu, protocol } = require("electron");
 const path = require("path");
 const fs = require("fs");
 
+const isDev = process.env.NODE_ENV === "development";
 const isMac = process.platform === 'darwin'
-
+protocol.registerSchemesAsPrivileged([
+    { scheme: 'local-media', privileges: { bypassCSP: true, stream: true, supportFetchAPI: true } }
+]);
 
 var menuTemplate = () => [
     {
@@ -72,14 +75,15 @@ function createWindow() {
         },
     });
 
-    mainWindow.loadFile(path.join(__dirname, `/build/index.html`));
-    // mainWindow.loadURL(url.format({
-    //     pathname: path.join(__dirname, `/build/index.html`),
-    //     protocol: 'file:',
-    //     slashes: false
-    // }))
-    // Open the DevTools.
-    mainWindow.webContents.openDevTools();
+   const startURL = isDev
+        ? 'http://localhost:3000'
+        : `file://${path.join(__dirname, `/build/index.html`)}`;
+
+    mainWindow.loadURL(startURL);
+
+    if (isDev) {
+        mainWindow.webContents.openDevTools();
+    }
 
     mainWindow.on("closed", function () {
         mainWindow = null;
@@ -105,7 +109,13 @@ function createWindow() {
 
 
 
-app.on("ready", createWindow);
+app.on("ready", () => {
+    protocol.registerFileProtocol('local-media', (request, callback) => {
+        const filePath = decodeURIComponent(request.url.replace('local-media://', ''));
+        callback({ path: filePath });
+    });
+    createWindow();
+});
 
 app.on("window-all-closed", function () {
     if (isMac) app.quit();

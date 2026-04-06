@@ -11,14 +11,13 @@ export const FolderGrid = styled.div`
         place-content: center flex-start;
         padding: 0px;
         margin: 0px;
-        width: 100%;
+        // width: 100%;
         display: inline-flex;
         flex-wrap: nowrap;
         -webkit-box-pack: start;
         -webkit-box-align: center;
         align-items: center;
-        position: absolute;
-        top: 2px;
+      
 `
 
 export const AddFolder = styled(IconButton)`

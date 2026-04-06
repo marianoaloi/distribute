@@ -3,6 +3,7 @@ import { Media } from "../entity/Media"
 import { CheckBoxSelect, ImageMaloi, PreviewMedia, ThePhoto } from "./media.styled"
 import { updateArrayItem, useDispatch, useSelector } from "../lib/redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
+import { toMediaUrl } from "../lib/mediaUrl"
 
 type TheMediaProps = {
     media: Media
@@ -27,6 +28,8 @@ export const MediaIMG: React.FC<TheMediaProps> = ({ media, lastClickedEvent,
             shiftControlSelect(aux)
         else if (event.shiftKey)
             shiftSelect(aux)
+        else if (event.altKey)
+            openPreview()
         else {
             lastClickedEvent(aux)
             dispatch(updateArrayItem(aux))
@@ -40,7 +43,7 @@ export const MediaIMG: React.FC<TheMediaProps> = ({ media, lastClickedEvent,
     const config = useSelector(configurationsSelector)
     return <ThePhoto>
         {/* <img src={media.media} /> */}
-        <ImageMaloi size={config.pxzoom} width={config.pxzoom} onClick={(val) => changeCkecked(val)} src={media.media} title={`${media.path}\n${prettifySizeF(media.size)} ${media.id} ${media.screenIndex}`}  ></ImageMaloi>
+        <ImageMaloi size={config.pxzoom} width={config.pxzoom} onClick={(val) => changeCkecked(val)} src={toMediaUrl(media.media)}  title={`${media.path}\n${prettifySizeF(media.size)} ${media.id} ${media.screenIndex}`}  ></ImageMaloi>
         <CheckBoxSelect readOnly onClick={(val) => changeCkecked(val)} checked={media.checked} type="checkbox"></CheckBoxSelect>
         <PreviewMedia onClick={openPreview} isVideo={media.mime.includes('video')}>{media.mime.includes('video') ? "V" : "F"}</PreviewMedia>
     </ThePhoto>

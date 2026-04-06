@@ -16,7 +16,13 @@ function App() {
   const stepSpeed = 1500
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  const childRefMethods = useRef<{ scrollPhotos: (qtd: number) => void , closePreview:()=>void }>(null);
+  const childRefMethods = useRef<{
+     scrollPhotos: (qtd: number) => void , 
+     closePreview:()=>void, 
+     selectAll:()=>void, 
+     unselectAllSelectAll:()=>void   
+
+  }>(null);
 
   const scrollByAmount = () => {
     if (play) {
@@ -83,15 +89,11 @@ function App() {
 
   function pressedKeyDown(ev: globalThis.KeyboardEvent): any {
 
-    if (ev.key === 's')
-      playScrool()
-
-    if (ev.key === 'a' && childRefMethods.current) {
-      childRefMethods.current.scrollPhotos(-1); // Call the method in the child component
+    if (ev.key === "a" && childRefMethods.current) {
+      childRefMethods.current.selectAll(); // Call the method in the child component
     }
-
-    if (ev.key === 'f' && childRefMethods.current) {
-      childRefMethods.current.scrollPhotos(1); // Call the method in the child component
+    if (ev.key === "s" && childRefMethods.current) {
+      childRefMethods.current.unselectAllSelectAll(); // Call the method in the child component
     }
 
     if (ev.key === "Escape" && childRefMethods.current) {

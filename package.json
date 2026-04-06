@@ -33,6 +33,7 @@
     "@types/react-dom": "^18.3.0",
     "@types/redux-logger": "3.0.9",
     "electron": "^31.0.1",
+    "electron-builder": "^26.8.1",
     "electron-installer-debian": "^3.2.0",
     "electron-packager": "^17.1.2",
     "redux-logger": "^3.0.6",
@@ -48,7 +49,7 @@
     "eject": "react-scripts eject",
     "buildele": "npm run build && ./ExecutableLinux.sh",
     "deb64": "electron-installer-debian --src dist_resume/getimage-linux-x64/ --dest dist_resume/installers/ --arch amd64",
-    "winBuild": "node winBuild.js"
+    "execWindows": "react-scripts build && electron-builder --win --x64"
   },
   "eslintConfig": {
     "extends": [
