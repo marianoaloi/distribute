@@ -39,6 +39,27 @@
     "redux-logger": "^3.0.6",
     "typescript": "^4.9.5"
   },
+  "build": {
+    "appId": "com.maloi.distribute",
+    "productName": "distribute",
+    "directories": {
+      "output": "../distribute-dist"
+    },
+    "files": [
+      "build/**/*",
+      "app.js",
+      "preload.js",
+      "menu.js",
+      "util.js",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "app.js"
+    },
+    "win": {
+      "target": "portable"
+    }
+  },
   "scripts": {
     "startele": "nodemon -e ts,tsx --exec npm run buildMaloi ",
     "start": "react-scripts start",
@@ -49,7 +70,7 @@
     "eject": "react-scripts eject",
     "buildele": "npm run build && ./ExecutableLinux.sh",
     "deb64": "electron-installer-debian --src dist_resume/getimage-linux-x64/ --dest dist_resume/installers/ --arch amd64",
-    "execWindows": "react-scripts build && electron-builder --win --x64"
+    "execWindows": "react-scripts build && electron-builder --win --x64 --publish never"
   },
   "eslintConfig": {
     "extends": [

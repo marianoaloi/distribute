@@ -2,7 +2,18 @@
   "permissions": {
     "allow": [
       "Bash(npm run:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(taskkill /F /IM electron.exe)",
+      "Bash(taskkill /F /IM distribute.exe)",
+      "Bash(taskkill //F //IM electron.exe)",
+      "Bash(taskkill //F //IM distribute.exe)",
+      "Bash(powershell -Command 'Get-Process | Select-Object Name, Id | Sort-Object Name | Where-Object {$_.Name -match \"electron|distribute|node\"}')",
+      "Bash(cmd //c \"rmdir /s /q \\\\\"C:\\\\Users\\\\maria\\\\prj\\\\electron\\\\distribute-1\\\\dist\\\\\"\")",
+      "Bash(powershell -Command 'Remove-Item -Path \"C:\\\\Users\\\\maria\\\\prj\\\\electron\\\\distribute-1\\\\dist\" -Recurse -Force -ErrorAction SilentlyContinue; Write-Host \"done\"')",
+      "Bash(powershell -Command 'openfiles /query /fo csv 2>&1 | Select-String \"app.asar\"')",
+      "Bash(wmic process:*)",
+      "Bash(powershell -Command 'Get-CimInstance Win32_Process | Where-Object {$_.CommandLine -like \"*distribute*\" -or $_.CommandLine -like \"*app.asar*\"} | Select-Object Name,ProcessId,CommandLine')",
+      "Bash(powershell -Command ':*)"
     ]
   }
 }
