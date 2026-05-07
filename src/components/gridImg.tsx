@@ -1,5 +1,5 @@
-import { forwardRef, SyntheticEvent, useImperativeHandle, useRef, useState } from "react"
-import { selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
+import { forwardRef, SyntheticEvent, useEffect, useImperativeHandle, useRef, useState } from "react"
+import { OpenDirectory, OpenDirectoryRecursive, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
 import { FilterBar, ImgGrid, Qtd, Resume } from "./gridImg.styled"
 import { MediaIMG, prettifySizeF } from "./media"
 import { Media } from "../entity/Media"
@@ -10,6 +10,9 @@ import { Filter, KeyboardArrowLeft, KeyboardArrowRight, KeyboardDoubleArrowLeft,
 import ModalZoom from "./modalZoom"
 import { configurationsSelector, setMediaType } from "../lib/redux/slices/configurations"
 
+
+import { FolderCopyTwoTone, FolderOpen, Pause, PlayArrow } from '@mui/icons-material';
+
 interface GridMethods {
     scrollPhotos: (qtd: number) => void
 }
@@ -17,21 +20,29 @@ interface GridMethods {
 export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
 
 
-    const dispatch = useDispatch();
+    const dispatch = useDispatch<any>();
 
     const config = useSelector(configurationsSelector)
     const medias = useSelector(selectMedias).filter(m => !m.deleted)
-        .filter(m => !config.mediaType ? true :m.mime.includes(config.mediaType))
+        .filter(m => !config.mediaType ? true : m.mime.includes(config.mediaType))
     const [currentPage, setCurrentPage] = useState(0);
     const [postsPerPage, setPostsPerPage] = useState(50);
+
+
+    const [speed, setSpeed] = useState(4);
+    const [play, setPlay] = useState(true)
+    const [scrollIntervalId, setScrollIntervalId] = useState<string | number | NodeJS.Timer | undefined>(undefined);
+
+    const stepSpeed = 1500
+    const inputRef = useRef<HTMLInputElement | null>(null);
 
     let counterIndex = 0;
     const mediaSliced = medias
         .slice(currentPage * postsPerPage, ((currentPage * postsPerPage) + postsPerPage)).map(item => {
-        const mitem = { ...item }
-        mitem.screenIndex = counterIndex++
-        return mitem
-    })
+            const mitem = { ...item }
+            mitem.screenIndex = counterIndex++
+            return mitem
+        })
 
 
     // Expose methods to parent using useImperativeHandle
@@ -91,7 +102,7 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
                 })
         ))
     }
-    
+
     function selectAll(): void {
 
         processChoice(
@@ -121,12 +132,70 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
     }
 
 
+    useEffect(() => {
+        const inputElement = inputRef.current;
+
+        if (inputElement) {
+            const handleWheel = (ev: globalThis.WheelEvent) => {
+                ev.preventDefault();
+                setSpeed(Math.trunc((ev.deltaY * -0.01) + speed));
+            };
+
+            // Add non-passive event listener
+            inputElement.addEventListener('wheel', (ev) => handleWheel(ev), { passive: false });
+
+            return () => {
+                // Clean up the event listener
+                inputElement.removeEventListener('wheel', (ev) => handleWheel(ev));
+            };
+        }
+    }, [scrollIntervalId, speed]);
+
+    useEffect(() => {
+        // Clean up the interval when the component unmounts
+        return () => {
+            if (scrollIntervalId) {
+                clearInterval(scrollIntervalId);
+            }
+        };
+    }, [scrollIntervalId]);
+
     const FilterComponent = () => {
         return <FilterBar>
-            <IconButton onClick={() => dispatch(setMediaType(config.mediaType === "video" ? "image" : !config.mediaType ? "video" : undefined))} color={config.mediaType === "video" ? "primary" : !config.mediaType ? "secondary" : "default" }><Filter /></IconButton>
+            <IconButton onClick={() => dispatch(setMediaType(config.mediaType === "video" ? "image" : !config.mediaType ? "video" : undefined))} color={config.mediaType === "video" ? "primary" : !config.mediaType ? "secondary" : "default"}><Filter /></IconButton>
         </FilterBar>
     }
 
+
+    const scrollByAmount = () => {
+        if (play) {
+
+            window.scrollBy({
+                top: speed * 50,
+                behavior: 'smooth' // Smooth scroll behavior
+            });
+        }
+    };
+
+    function openDiretory() {
+        dispatch(OpenDirectory())
+    }
+
+    function openDiretoryRecursive() {
+        dispatch(OpenDirectoryRecursive())
+    }
+
+
+    function playScrool(): void {
+        if (play) {
+
+            setScrollIntervalId(setInterval(scrollByAmount, stepSpeed));
+        } else {
+            clearInterval(scrollIntervalId);
+            setScrollIntervalId(undefined);
+        }
+        setPlay(!play)
+    }
 
     return (
         <>
@@ -149,8 +218,14 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
 
                 <IconButton className="buttonControl" onClick={() => selectAll()}><RadioButtonChecked /></IconButton>
                 <IconButton className="buttonControl" onClick={() => unselectAllSelectAll()}><RadioButtonUnchecked /></IconButton>
-                
-            <Folders />
+
+                <Folders />
+                <div className="buttons">
+                    <IconButton className="buttonControl" onClick={() => openDiretory()}><FolderOpen /></IconButton>
+                    <IconButton className="buttonControl" onClick={() => openDiretoryRecursive()}><FolderCopyTwoTone /></IconButton>
+                    <input type='text' value={speed} readOnly size={3} ref={inputRef} />
+                    <IconButton onClick={() => playScrool()}>{play ? <PlayArrow /> : <Pause />}</IconButton>
+                </div>
             </Resume>
             <ImgGrid>
                 {mediaSliced.length > 0

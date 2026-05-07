@@ -42,9 +42,9 @@ var menuTemplate = () => [
     {
         label: 'Order',
         submenu: [
-            {label:"Sort by Name" , click:sortByName},
-            {label:"Sort by Size" , click:sortBySize},
-            {label:"Sort by Folder" , click:sortByFolder},
+            { label: "Sort by Name", click: sortByName },
+            { label: "Sort by Size", click: sortBySize },
+            { label: "Sort by Folder", click: sortByFolder },
         ]
     },
 
@@ -52,11 +52,15 @@ var menuTemplate = () => [
 var mainWindow
 var fileGlobal
 function createWindow() {
-    if (fs.existsSync(path.join(__dirname, "tmp"))) {
-        fs.rmSync(path.join(__dirname, "tmp"), { recursive: true })
+    try {
+        if (fs.existsSync(path.join(__dirname, "tmp"))) {
+            fs.rmSync(path.join(__dirname, "tmp"), { recursive: true })
+        }
+        fs.mkdirSync(path.join(__dirname, "tmp"))
+        fs.mkdirSync(path.join(__dirname, "tmp/ffmpeg"))
+    } catch (error) {
+        console.error("Error creating tmp folder", error);
     }
-    fs.mkdirSync(path.join(__dirname, "tmp"))
-    fs.mkdirSync(path.join(__dirname, "tmp/ffmpeg"))
     mainWindow = new BrowserWindow({
         // width: 1200,
         // height: 600,
@@ -75,11 +79,18 @@ function createWindow() {
         },
     });
 
-   const startURL = isDev
-        ? 'http://localhost:3000'
-        : `file://${path.join(__dirname, `/build/index.html`)}`;
+    try {
 
-    mainWindow.loadURL(startURL);
+        const startURL = isDev
+            ? 'http://localhost:3000'
+            : `file://${path.join(__dirname, `/build/index.html`)}`;
+
+        mainWindow.loadURL(startURL);
+    } catch (error) {
+        console.error(`Error loading URL: ${error} 
+            IsDev: ${isDev}
+            Start URL: ${startURL}`);
+    }
 
     if (isDev) {
         mainWindow.webContents.openDevTools();
@@ -91,15 +102,23 @@ function createWindow() {
 
 
 
-    const menu = Menu.buildFromTemplate(menuTemplate())
-    Menu.setApplicationMenu(menu)
+    try {
+        const menu = Menu.buildFromTemplate(menuTemplate())
+        Menu.setApplicationMenu(menu)
+    } catch (error) {
+        console.error("Error setting application menu", error);
+    }
 
 
-    if (process.argv[2]) {
-        console.log("File receive folder", process.argv)
-        fileGlobal = process.argv[2]
-    } else if (process.argv[0].includes("getimage")) {
-        fileGlobal = process.argv[1]
+    try {
+        if (process.argv[2]) {
+            console.log("File receive folder", process.argv)
+            fileGlobal = process.argv[2]
+        } else if (process.argv[0].includes("getimage")) {
+            fileGlobal = process.argv[1]
+        }
+    } catch (error) {
+        console.error("Error processing command line arguments", error);
     }
 
 
@@ -156,23 +175,23 @@ ipcMain.on("process", async (event, data) => {
 })
 
 ipcMain.on("verifyOpen", async () => {
-    if(process.env.FixFiles && fs.existsSync(process.env.FixFiles)){
-        fs.readFile(process.env.FixFiles,'utf8',(err,data)=>{
-            let files=data.split("|").filter(filepath => fs.existsSync(filepath))
-            files = util.transformFixedData(files,0,util.sortSize)
-    
+    if (process.env.FixFiles && fs.existsSync(process.env.FixFiles)) {
+        fs.readFile(process.env.FixFiles, 'utf8', (err, data) => {
+            let files = data.split("|").filter(filepath => fs.existsSync(filepath))
+            files = util.transformFixedData(files, 0, util.sortSize)
+
             mainWindow.webContents.send("directoryOpen", files);
         })
-    }else 
-    if (fileGlobal) {
-        openfile()
-    }
+    } else
+        if (fileGlobal) {
+            openfile()
+        }
 })
 
-const moveFile = (bol, dest, onlyCopy, data) =>{
-    if(process.env.FixFiles){
-        console.log("##MOVEFILE",dest,data.filter(f => f.checked === bol).map(f => f.path).join(","));
-        
+const moveFile = (bol, dest, onlyCopy, data) => {
+    if (process.env.FixFiles) {
+        console.log("##MOVEFILE", dest, data.filter(f => f.checked === bol).map(f => f.path).join(","));
+
         return;
     }
     data.filter(f => f.checked === bol).forEach(media => {
@@ -197,7 +216,7 @@ const moveFile = (bol, dest, onlyCopy, data) =>{
 const util = require("./util")
 const transformData = util.transformData
 var actualSort = util.sortSize
-const    openfile = () => {
+const openfile = () => {
     mainWindow.title = `Get Images in ${fileGlobal}`
 
 
@@ -206,7 +225,7 @@ const    openfile = () => {
         else {
             console.log(`Get Images in ${fileGlobal}`, "files", data.length);
             mainWindow.webContents.send("directoryOpen",
-                transformData(data, fileGlobal, 0,actualSort)
+                transformData(data, fileGlobal, 0, actualSort)
             );
         }
     });
@@ -284,12 +303,12 @@ const openfileRecursive = (folderPath) => {
 
         if (qtdFiles > 0)
             mainWindow.webContents.send("loadMedias",
-                transformData(data, folderPath, counter,actualSort)
+                transformData(data, folderPath, counter, actualSort)
             );
         counter += qtdFiles
     })
 }
 
-const sortByName =  async () =>{actualSort=util.sortName; openfile()}    //mainWindow.webContents.send("sort","sortByName")
-const sortBySize =  async () =>{actualSort=util.sortSize; openfile()}    //mainWindow.webContents.send("sort","sortBySize")
-const sortByFolder =  async () =>{actualSort=util.sortFolder; openfile()}    //mainWindow.webContents.send("sort","sortByFolder")
+const sortByName = async () => { actualSort = util.sortName; openfile() }    //mainWindow.webContents.send("sort","sortByName")
+const sortBySize = async () => { actualSort = util.sortSize; openfile() }    //mainWindow.webContents.send("sort","sortBySize")
+const sortByFolder = async () => { actualSort = util.sortFolder; openfile() }    //mainWindow.webContents.send("sort","sortByFolder")

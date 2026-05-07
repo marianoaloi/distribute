@@ -1,16 +1,20 @@
-import { SyntheticEvent, useRef } from "react"
+import { SyntheticEvent, useRef, useState } from "react"
 import { Media } from "../entity/Media"
 import { prettifySizeF } from "./media"
 import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, MediaControllersCSS, FoldersZoom } from "./modalZoom.styled"
 import { IconButton, Slider } from "@mui/material"
 import { toMediaUrl } from "../lib/mediaUrl"
 import { CleaningServices } from "@mui/icons-material"
+import { updateArrayItem, useDispatch } from "../lib/redux"
+import { set } from "mongoose"
 
 
 
 const ModalZoom: React.FC<{ lastZoom: Media, handleExternalClose?: any }> = ({ lastZoom: mediaWithPreview, handleExternalClose }) => {
 
     const imgRef = useRef<HTMLImageElement | null>(null)
+    const videoRef = useRef<HTMLVideoElement | null>(null)
+    const dispatch = useDispatch();
 
 
     var zoonNow = 1
@@ -53,25 +57,79 @@ const ModalZoom: React.FC<{ lastZoom: Media, handleExternalClose?: any }> = ({ l
     }
 
     function startVid(event: SyntheticEvent<HTMLVideoElement, Event>): void {
-        event.currentTarget.volume = 0.1
+        event.currentTarget.volume = 0.05
     }
 
+    function dragControlVideo(event: any): void {
+        const duration = videoRef.current ? videoRef.current.duration : 0
+        if (event.altKey && videoRef.current && !isNaN(duration)) {
+            const video = videoRef.current
+            try {
+                video.currentTime = (event.clientX / window.innerWidth) * duration
+            } catch (error) {
+                console.info(`Error trying to change video time: ${error} 
+                        currentTime: ${video.currentTime},
+                        clientWidth: ${video.clientWidth},
+                        duration: ${video.duration},
+                        event.clientX: ${event.clientX}`)
+            }
+            event.stopPropagation();
+        }
+    }
+
+
     const MediaConstPresentation = () => {
+
+
+        const zoomImage = (event: any, imgInZoom: any): void => {
+
+            if (!imgInZoom)
+                return
+            if (event.altKey) {
+                zoonNow += event.deltaY > 0 ? zoonNow > 0.3 ? -0.2 : 0 : 0.2
+                imgInZoom.style.zoom = (zoonNow).toString()
+                event.stopPropagation();
+            }
+        }
+
+        const controlVolumeByAltPresed = (event: any): void => {
+            const videoInZoom: any = videoRef.current
+            if (!videoInZoom)
+                return
+            if (event.altKey) {
+                if (event.deltaY > 0 && videoInZoom.volume > 0.001) {
+                    videoInZoom.volume -= videoInZoom.volume <= 0.01 ? 0.001 : 0.01
+                } else if (event.deltaY < 0 && videoInZoom.volume < 0.99) {
+                    videoInZoom.volume += videoInZoom.volume <= 0.01 ? 0.001 : 0.01
+                }
+                event.stopPropagation();
+            }
+        }
+
+
+
         return (
             <MediaPresentation>
                 {
                     mediaWithPreview.mime.includes('video')
                         ?
-                        <VideoPresentation src={toMediaUrl(mediaWithPreview.path)} onLoadStart={startVid} controls autoPlay title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></VideoPresentation>
+                        <VideoPresentation ref={videoRef} src={toMediaUrl(mediaWithPreview.path)}
+
+                            onPlay={(ev) => ev.currentTarget.blur()}
+                            onLoadStart={startVid}
+                            onDoubleClick={changeCheckbox}
+
+                            onWheel={controlVolumeByAltPresed}
+                            controls autoPlay title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></VideoPresentation>
                         :
-                        <ImgPresentation ref={imgRef} src={toMediaUrl(mediaWithPreview.path)} alt={mediaWithPreview.path} title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></ImgPresentation>
+                        <ImgPresentation
+                            onDoubleClick={changeCheckbox}
+                            onWheel={(ev) => zoomImage(ev, imgRef.current)}
+                            ref={imgRef} src={toMediaUrl(mediaWithPreview.path)}
+                            alt={mediaWithPreview.path} title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></ImgPresentation>
 
                 }
             </MediaPresentation>)
-    }
-
-    const selectMedia = (event: React.ChangeEvent<HTMLInputElement>): void => {
-        mediaWithPreview.checked = !mediaWithPreview.checked
     }
 
     const MediaControllers = () => {
@@ -79,9 +137,29 @@ const ModalZoom: React.FC<{ lastZoom: Media, handleExternalClose?: any }> = ({ l
 
             <IconButton onClick={imageUnset}><CleaningServices /></IconButton>
             {mediaWithPreview.mime.includes('video') ?
-                <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
+                <>
+                    <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
+                    <input style={{ zoom: 2 }} type="checkbox" onClick={changeCheckbox} id="selectMedia" defaultChecked={mediaWithPreview.checked} />
+
+                </>
                 :
                 <>
+                    <Slider
+                        aria-label="Zoom"
+                        defaultValue={1}
+                        //   getAriaValueText={valuetext}
+                        valueLabelDisplay="auto"
+                        shiftStep={0.5}
+                        step={0.1}
+                        min={0.3}
+                        max={10}
+                        onChange={(event: Event, newValue: number | number[]) => {
+                            const imgInZoom: any = imgRef.current
+                            if (!imgInZoom)
+                                return
+                            imgInZoom.style.zoom = (newValue).toString()
+                        }}
+                    />
                     <Slider
                         aria-label="Contrast"
                         defaultValue={1}
@@ -112,11 +190,18 @@ const ModalZoom: React.FC<{ lastZoom: Media, handleExternalClose?: any }> = ({ l
         </MediaControllersCSS>
     }
 
+    function changeCheckbox(event: any): void {
+        const aux = { ...mediaWithPreview }
+        aux.checked = !mediaWithPreview.checked
+        dispatch(updateArrayItem(aux))
+        handleExternalClose();
+    }
+
     return (
 
-        <ModalBox >
+        <ModalBox onMouseMove={(ev) => dragControlVideo(ev)} >
             <div>
-                <input style={{ zoom: 2 }} type="checkbox"  id="selectMedia" checked={mediaWithPreview.checked} />
+                <input style={{ zoom: 2 }} type="checkbox" onClick={changeCheckbox} id="selectMedia" defaultChecked={mediaWithPreview.checked} />
                 <label htmlFor="selectMedia">Select</label>
                 <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
             </div>

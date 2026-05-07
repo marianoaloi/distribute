@@ -10,6 +10,7 @@ export const title = styled(Typography)`
 export const ImageMaloi = styled.img<{ size: number }>((props: any) => `
     max-width: ${props.size}px;
     max-height: ${props.size}px;
+    min-height: ${props.size/1.3}px;
 `)
 
 export const CheckBoxSelect = styled.input`
