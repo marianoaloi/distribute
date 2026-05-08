@@ -13,8 +13,7 @@ import { configurationsSelector, setMediaType } from "../lib/redux/slices/config
 
 import { FolderCopyTwoTone, FolderOpen, Pause, PlayArrow } from '@mui/icons-material';
 
-interface GridMethods {
-    scrollPhotos: (qtd: number) => void
+interface GridMethods {    
 }
 
 export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
@@ -59,8 +58,16 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
             setOpen(false)
         },
         selectAll() { selectAll() },
-        unselectAllSelectAll() { unselectAllSelectAll() }
+        unselectAllSelectAll() { unselectAllSelectAll() },
+        chamgeImageClass: () => modalZoomRefMethods.current?.chamgeImageClass(),
+        fullScreenVideo: () => modalZoomRefMethods.current?.fullScreenVideo()
     }));
+
+    const modalZoomRefMethods = useRef<{
+        chamgeImageClass: () => void,
+        fullScreenVideo: () => void
+    
+      }>(null);
 
 
     const [open, setOpen] = useState(false);
@@ -243,19 +250,12 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
             </ImgGrid>
             <FilterComponent />
 
+ {lastZoom ?
+           
+                    <ModalZoom mediaWithPreview={lastZoom} handleExternalClose={handleClose} openModal={open} ref={modalZoomRefMethods}></ModalZoom>
 
-            <Modal
-                open={open}
-                onClose={handleClose}
-                aria-labelledby="modal-modal-title"
-                aria-describedby="modal-modal-description"
-            >
-                {lastZoom ?
-                    <ModalZoom lastZoom={lastZoom} handleExternalClose={handleClose}></ModalZoom>
 
                     : <p>No Media found</p>}
-            </Modal>
-
 
         </>)
 })

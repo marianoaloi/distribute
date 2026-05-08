@@ -13,7 +13,9 @@ function App() {
     scrollPhotos: (qtd: number) => void,
     closePreview: () => void,
     selectAll: () => void,
-    unselectAllSelectAll: () => void
+    unselectAllSelectAll: () => void,
+    chamgeImageClass: () => void,
+    fullScreenVideo: () => void
 
   }>(null);
 
@@ -40,6 +42,13 @@ function App() {
       childRefMethods.current.closePreview(); // Call the method in the child component
     }
 
+    if (ev.key === "f" && childRefMethods.current) {
+      childRefMethods.current.fullScreenVideo(); // Call the method in the child component
+    }
+
+    if (ev.key === "'" && childRefMethods.current) {
+      childRefMethods.current.chamgeImageClass(); // Call the method in the child component
+    }
   }
 
   // window.onkeydown = (ev) => pressedKeyDown(ev)

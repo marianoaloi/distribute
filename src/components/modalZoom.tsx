@@ -1,20 +1,43 @@
-import { SyntheticEvent, useRef, useState } from "react"
+import { forwardRef, SyntheticEvent, useImperativeHandle, useRef, useState } from "react"
 import { Media } from "../entity/Media"
 import { prettifySizeF } from "./media"
 import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, MediaControllersCSS, FoldersZoom } from "./modalZoom.styled"
-import { IconButton, Slider } from "@mui/material"
+import { IconButton, Slider, Modal } from "@mui/material"
 import { toMediaUrl } from "../lib/mediaUrl"
 import { CleaningServices } from "@mui/icons-material"
 import { updateArrayItem, useDispatch } from "../lib/redux"
 import { set } from "mongoose"
 
+interface ModalZoomMethods {
+    chamgeImageClass: () => void,
+    fullScreenVideo: () => void
+}
 
+interface ModalZoomProps {
+    mediaWithPreview: Media,
+    handleExternalClose?: any,
+    openModal?: boolean
+}
 
-const ModalZoom: React.FC<{ lastZoom: Media, handleExternalClose?: any }> = ({ lastZoom: mediaWithPreview, handleExternalClose }) => {
+const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
+        ({ mediaWithPreview, handleExternalClose, openModal }, ref) => {
 
     const imgRef = useRef<HTMLImageElement | null>(null)
     const videoRef = useRef<HTMLVideoElement | null>(null)
     const dispatch = useDispatch();
+
+
+    useImperativeHandle(ref, () => ({
+        chamgeImageClass() {            
+            if (imgRef.current) 
+                imageUnset()
+        },
+        fullScreenVideo() {
+            if (videoRef.current)
+                videoRef.current.requestFullscreen()    
+            }
+    }));
+
 
 
     var zoonNow = 1
@@ -26,6 +49,8 @@ const ModalZoom: React.FC<{ lastZoom: Media, handleExternalClose?: any }> = ({ l
         imgInZoom.style.zoom = (zoonNow).toString()
 
     }
+
+
 
     const filters: any = {}
 
@@ -113,17 +138,21 @@ const ModalZoom: React.FC<{ lastZoom: Media, handleExternalClose?: any }> = ({ l
                 {
                     mediaWithPreview.mime.includes('video')
                         ?
-                        <VideoPresentation ref={videoRef} src={toMediaUrl(mediaWithPreview.path)}
+                        <>
+                            <VideoPresentation ref={videoRef} src={toMediaUrl(mediaWithPreview.path)}
 
-                            onPlay={(ev) => ev.currentTarget.blur()}
-                            onLoadStart={startVid}
-                            onDoubleClick={changeCheckbox}
+                                onPlay={(ev) => ev.currentTarget.blur()}
+                                onLoadStart={startVid}
+                                onDoubleClick={changeCheckbox}
 
-                            onWheel={controlVolumeByAltPresed}
-                            controls autoPlay title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></VideoPresentation>
+                                onWheel={controlVolumeByAltPresed}
+                                controls
+                                autoPlay title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></VideoPresentation>
+
+                        </>
                         :
                         <ImgPresentation
-                            onDoubleClick={changeCheckbox}
+                            onDoubleClick={changeCheckbox} className="imageAddaptScreen"
                             onWheel={(ev) => zoomImage(ev, imgRef.current)}
                             ref={imgRef} src={toMediaUrl(mediaWithPreview.path)}
                             alt={mediaWithPreview.path} title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></ImgPresentation>
@@ -197,19 +226,30 @@ const ModalZoom: React.FC<{ lastZoom: Media, handleExternalClose?: any }> = ({ l
         handleExternalClose();
     }
 
-    return (
+  
 
-        <ModalBox onMouseMove={(ev) => dragControlVideo(ev)} >
-            <div>
-                <input style={{ zoom: 2 }} type="checkbox" onClick={changeCheckbox} id="selectMedia" defaultChecked={mediaWithPreview.checked} />
-                <label htmlFor="selectMedia">Select</label>
-                <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
-            </div>
-            <MediaConstPresentation></MediaConstPresentation>
-            <MediaControllers />
-        </ModalBox>
+    return (
+        <Modal
+            open={!!openModal}
+            onClose={handleExternalClose}
+            aria-labelledby="modal-modal-title"
+            aria-describedby="modal-modal-description"
+            onMouseMove={(ev: any) => dragControlVideo(ev)}
+        >
+
+            <ModalBox >
+                <div>
+                    <input style={{ zoom: 2 }} type="checkbox" onClick={changeCheckbox} id="selectMedia" defaultChecked={mediaWithPreview.checked} />
+                    <label htmlFor="selectMedia">Select</label>
+                    <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
+                </div>
+                <MediaConstPresentation></MediaConstPresentation>
+                <MediaControllers />
+            </ModalBox>
+
+        </Modal>
     )
 
-}
+})
 
 export default ModalZoom

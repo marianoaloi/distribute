@@ -8,6 +8,9 @@ protocol.registerSchemesAsPrivileged([
     { scheme: 'local-media', privileges: { bypassCSP: true, stream: true, supportFetchAPI: true } }
 ]);
 
+
+const os = require('os');
+
 var menuTemplate = () => [
     {
         label: 'File',
@@ -53,11 +56,11 @@ var mainWindow
 var fileGlobal
 function createWindow() {
     try {
-        if (fs.existsSync(path.join(__dirname, "tmp"))) {
-            fs.rmSync(path.join(__dirname, "tmp"), { recursive: true })
+        if (fs.existsSync(path.join(os.tmpdir(), "tmp"))) {
+            fs.rmSync(path.join(os.tmpdir(), "tmp"), { recursive: true })
         }
-        fs.mkdirSync(path.join(__dirname, "tmp"))
-        fs.mkdirSync(path.join(__dirname, "tmp/ffmpeg"))
+        fs.mkdirSync(path.join(os.tmpdir(), "tmp"))
+        fs.mkdirSync(path.join(os.tmpdir(), "tmp/ffmpeg"))
     } catch (error) {
         console.error("Error creating tmp folder", error);
     }
