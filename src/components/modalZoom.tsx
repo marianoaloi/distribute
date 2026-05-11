@@ -79,6 +79,8 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             imgCurrent.classList.remove("imageAddaptScreen")
         else imgCurrent.classList.add("imageAddaptScreen")
 
+        imgCurrent.focus()
+
     }
 
     function startVid(event: SyntheticEvent<HTMLVideoElement, Event>): void {
@@ -87,7 +89,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
 
     function dragControlVideo(event: any): void {
         const duration = videoRef.current ? videoRef.current.duration : 0
-        if (event.altKey && videoRef.current && !isNaN(duration)) {
+        if (event.ctrlKey && videoRef.current && !isNaN(duration)) {
             const video = videoRef.current
             try {
                 video.currentTime = (event.clientX / window.innerWidth) * duration
@@ -110,7 +112,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
 
             if (!imgInZoom)
                 return
-            if (event.altKey) {
+            if (event.ctrlKey) {
                 zoonNow += event.deltaY > 0 ? zoonNow > 0.3 ? -0.2 : 0 : 0.2
                 imgInZoom.style.zoom = (zoonNow).toString()
                 event.stopPropagation();
@@ -121,7 +123,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             const videoInZoom: any = videoRef.current
             if (!videoInZoom)
                 return
-            if (event.altKey) {
+            if (event.ctrlKey) {
                 if (event.deltaY > 0 && videoInZoom.volume > 0.001) {
                     videoInZoom.volume -= videoInZoom.volume <= 0.01 ? 0.001 : 0.01
                 } else if (event.deltaY < 0 && videoInZoom.volume < 0.99) {

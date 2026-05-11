@@ -28,7 +28,7 @@ export const MediaIMG: React.FC<TheMediaProps> = ({ media, lastClickedEvent,
             shiftControlSelect(aux)
         else if (event.shiftKey)
             shiftSelect(aux)
-        else if (event.altKey)
+        else if (event.ctrlKey)
             openPreview()
         else {
             lastClickedEvent(aux)
@@ -38,7 +38,7 @@ export const MediaIMG: React.FC<TheMediaProps> = ({ media, lastClickedEvent,
     }
 
     const mouseMoveOpen = (event: React.MouseEvent<HTMLDivElement, MouseEvent>) => {
-        if (event.altKey)
+        if (event.ctrlKey)
             openPreview()
     }
 
