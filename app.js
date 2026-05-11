@@ -125,7 +125,7 @@ function createWindow() {
     }
 
 
-
+    mainWindow.focus()
 
 }
 
@@ -315,3 +315,6 @@ const openfileRecursive = (folderPath) => {
 const sortByName = async () => { actualSort = util.sortName; openfile() }    //mainWindow.webContents.send("sort","sortByName")
 const sortBySize = async () => { actualSort = util.sortSize; openfile() }    //mainWindow.webContents.send("sort","sortBySize")
 const sortByFolder = async () => { actualSort = util.sortFolder; openfile() }    //mainWindow.webContents.send("sort","sortByFolder")
+
+
+app.focus()
