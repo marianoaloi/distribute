@@ -97,6 +97,7 @@ function createWindow() {
 
     if (isDev) {
         mainWindow.webContents.openDevTools();
+
     }
 
     mainWindow.on("closed", function () {
@@ -327,3 +328,12 @@ const sortByFolder = async () => { actualSort = util.sortFolder; openfile() }   
 
 
 app.focus()
+
+if (isDev) {
+    // Source - https://stackoverflow.com/a/30638448
+    // Posted by aestrro, modified by community. See post 'Timeline' for change history
+    // Retrieved 2026-05-12, License - CC BY-SA 4.0
+
+    app.commandLine.appendSwitch('remote-debugging-port', '8315');
+    app.commandLine.appendSwitch('host-rules', 'MAP * 127.0.0.1');
+}

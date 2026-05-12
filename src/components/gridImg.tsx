@@ -13,7 +13,9 @@ import { configurationsSelector, setMediaType } from "../lib/redux/slices/config
 
 import { FolderCopyTwoTone, FolderOpen, Pause, PlayArrow } from '@mui/icons-material';
 
-interface GridMethods {    
+interface GridMethods {
+    nextMedia: () => void,
+    prevMedia: () => void
 }
 
 export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
@@ -60,7 +62,25 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
         selectAll() { selectAll() },
         unselectAllSelectAll() { unselectAllSelectAll() },
         chamgeImageClass: () => modalZoomRefMethods.current?.chamgeImageClass(),
-        fullScreenVideo: () => modalZoomRefMethods.current?.fullScreenVideo()
+        fullScreenVideo: () => modalZoomRefMethods.current?.fullScreenVideo(),
+        nextMedia() {
+            if (!lastZoom) return;
+            const absIdx = medias.findIndex(m => m.id === lastZoom!.id);
+            if (absIdx === -1 || absIdx >= medias.length - 1) return;
+            const newIdx = absIdx + 1;
+            const newPage = Math.floor(newIdx / postsPerPage);
+            setCurrentPage(newPage);
+            setLastZoom({ ...medias[newIdx], screenIndex: newIdx % postsPerPage });
+        },
+        prevMedia() {
+            if (!lastZoom) return;
+            const absIdx = medias.findIndex(m => m.id === lastZoom!.id);
+            if (absIdx <= 0) return;
+            const newIdx = absIdx - 1;
+            const newPage = Math.floor(newIdx / postsPerPage);
+            setCurrentPage(newPage);
+            setLastZoom({ ...medias[newIdx], screenIndex: newIdx % postsPerPage });
+        }
     }));
 
     const modalZoomRefMethods = useRef<{
@@ -251,8 +271,23 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
             <FilterComponent />
 
  {lastZoom ?
-           
-                    <ModalZoom mediaWithPreview={lastZoom} handleExternalClose={handleClose} openModal={open} ref={modalZoomRefMethods}></ModalZoom>
+
+                    <ModalZoom mediaWithPreview={lastZoom} handleExternalClose={handleClose} openModal={open} ref={modalZoomRefMethods}
+                        onPrev={() => {
+                            const absIdx = medias.findIndex(m => m.id === lastZoom.id);
+                            if (absIdx <= 0) return;
+                            const newIdx = absIdx - 1;
+                            setCurrentPage(Math.floor(newIdx / postsPerPage));
+                            setLastZoom({ ...medias[newIdx], screenIndex: newIdx % postsPerPage });
+                        }}
+                        onNext={() => {
+                            const absIdx = medias.findIndex(m => m.id === lastZoom.id);
+                            if (absIdx === -1 || absIdx >= medias.length - 1) return;
+                            const newIdx = absIdx + 1;
+                            setCurrentPage(Math.floor(newIdx / postsPerPage));
+                            setLastZoom({ ...medias[newIdx], screenIndex: newIdx % postsPerPage });
+                        }}
+                    ></ModalZoom>
 
 
                     : <p>No Media found</p>}

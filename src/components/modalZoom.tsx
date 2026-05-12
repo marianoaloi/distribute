@@ -4,7 +4,7 @@ import { prettifySizeF } from "./media"
 import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, MediaControllersCSS, FoldersZoom } from "./modalZoom.styled"
 import { IconButton, Slider, Modal } from "@mui/material"
 import { toMediaUrl } from "../lib/mediaUrl"
-import { CleaningServices } from "@mui/icons-material"
+import { ArrowBackIos, ArrowForwardIos, CleaningServices } from "@mui/icons-material"
 import { updateArrayItem, useDispatch } from "../lib/redux"
 import { set } from "mongoose"
 
@@ -16,11 +16,13 @@ interface ModalZoomMethods {
 interface ModalZoomProps {
     mediaWithPreview: Media,
     handleExternalClose?: any,
-    openModal?: boolean
+    openModal?: boolean,
+    onNext?: () => void,
+    onPrev?: () => void
 }
 
 const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
-        ({ mediaWithPreview, handleExternalClose, openModal }, ref) => {
+        ({ mediaWithPreview, handleExternalClose, openModal, onNext, onPrev }, ref) => {
 
     const imgRef = useRef<HTMLImageElement | null>(null)
     const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -154,7 +156,9 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                         </>
                         :
                         <ImgPresentation
-                            onDoubleClick={changeCheckbox} className="imageAddaptScreen"
+                            onDoubleClick={changeCheckbox}
+                            draggable={false}
+                            // className="imageAddaptScreen"
                             onWheel={(ev) => zoomImage(ev, imgRef.current)}
                             ref={imgRef} src={toMediaUrl(mediaWithPreview.path)}
                             alt={mediaWithPreview.path} title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></ImgPresentation>
@@ -241,6 +245,8 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
 
             <ModalBox >
                 <div>
+                    {onPrev && <IconButton onClick={onPrev}><ArrowBackIos /></IconButton>}
+                    {onNext && <IconButton onClick={onNext}><ArrowForwardIos /></IconButton>}
                     <input style={{ zoom: 2 }} type="checkbox" onClick={changeCheckbox} id="selectMedia" defaultChecked={mediaWithPreview.checked} />
                     <label htmlFor="selectMedia">Select</label>
                     <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />

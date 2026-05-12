@@ -15,7 +15,9 @@ function App() {
     selectAll: () => void,
     unselectAllSelectAll: () => void,
     chamgeImageClass: () => void,
-    fullScreenVideo: () => void
+    fullScreenVideo: () => void,
+    nextMedia: () => void,
+    prevMedia: () => void
 
   }>(null);
 
@@ -48,6 +50,13 @@ function App() {
 
     if (ev.key === "'" && childRefMethods.current) {
       childRefMethods.current.chamgeImageClass(); // Call the method in the child component
+    }
+
+    if (ev.key === "ArrowRight" && childRefMethods.current) {
+      childRefMethods.current.nextMedia();
+    }
+    if (ev.key === "ArrowLeft" && childRefMethods.current) {
+      childRefMethods.current.prevMedia();
     }
   }
 
