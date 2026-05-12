@@ -10,16 +10,12 @@ const sortName = (a, b) => path.basename(b.item) - path.basename(a.item)
 const sortFolder = (a, b) => b.size - a.size
 const noSort = (a, b) => 0
 
-module.exports = {
-    transformData: (data, folderOpened, counter, sortFiles) => transformData(data, folderOpened, counter, sortFiles),
-    transformFixedData: (data, counter, sortFiles) => transformFixedData(data, counter, sortFiles),
-    sortSize: sortSize, sortName: sortName, sortFolder: sortFolder, noSort: noSort,
-}
+
 
 
 
 const mime = require('mime-types');
-const { execSync, execFileSync } = require('child_process');
+const { execSync, execFileSync, execFile } = require('child_process');
 const { quote } = require('shell-quote');
 
 const transformData = (data, folderOpened, counter, sortFiles = sortSize) => {
@@ -167,9 +163,68 @@ const execCommandFFMPEG = (input, output) => {
         execFileSync('ffmpegthumbnailer', ['-s300', '-i', input, '-o', output, '-f'], { encoding: 'UTF-8' })
     } catch (error) {
         console.error("FFMPEG error", error.message, "\nCommand: ", `ffmpegthumbnailer -s300 -i "${input}" -o "${output}" -f `);
-        throw error; // Rethrow the error after logging it
+        throw error;
     }
 }
+
+const execCommandFFMPEGAsync = (input, output) => new Promise((resolve, reject) => {
+    execFile('ffmpegthumbnailer', ['-s300', '-i', input, '-o', output, '-f'], { encoding: 'UTF-8' }, (error) => {
+        if (error) {
+            console.error("FFMPEG async error", error.message);
+            reject(error);
+        } else {
+            resolve();
+        }
+    });
+});
+
+const transformDataStreaming = async (data, folderOpened, counter, sortFiles = sortSize, onImages, onVideo) => {
+    const allPaths = data.map(item => path.join(folderOpened, item));
+
+    const withMeta = allPaths
+        .filter(filepath => { try { return fs.statSync(filepath).isFile(); } catch { return false; } })
+        .map(item => ({
+            item,
+            mime: mime.lookup(item),
+            fileName: item,
+            size: (() => { try { return fs.statSync(item).size; } catch { return 0; } })(),
+            id: counter++
+        }))
+        .filter(item => item.mime && (item.mime.includes('image') || item.mime.includes('video')));
+
+    const images = withMeta.filter(i => i.mime.includes('image')).sort(sortFiles);
+    const videos = withMeta.filter(i => i.mime.includes('video')).sort(sortFiles);
+
+    onImages(images);
+
+    for (const item of videos) {
+        const hashName = crypto.createHash('md5').update(item.item).digest('hex');
+        const fileName = path.join(os.tmpdir(), 'tmp', 'ffmpeg', `${hashName}.jpeg`);
+        item.fileName = fileName;
+
+        if (!fs.existsSync(fileName)) {
+            const input = item.item;
+            try {
+                await execCommandFFMPEGAsync(input, fileName);
+                onVideo(item);
+            } catch {
+                try {
+                    const ext = path.extname(input);
+                    const tmp = path.join(os.tmpdir(), hashName + ext);
+                    fs.linkSync(input, tmp);
+                    await execCommandFFMPEGAsync(tmp, fileName);
+                    fs.unlinkSync(tmp);
+                    console.log("Thumbnail created using temporary link for", item.item);
+                    onVideo(item);
+                } catch {
+                    console.error("Failed to create thumbnail for", item.item);
+                }
+            }
+        } else {
+            onVideo(item);
+        }
+    }
+};
 
 const transformFixedData = (data, counter, sortFiles = sortSize) => {
 
@@ -186,10 +241,11 @@ const transformFixedData = (data, counter, sortFiles = sortSize) => {
         .sort(sortFiles)
         .map(item => {
 
+            const hashName = crypto.createHash('md5').update(item.item).digest('hex');
+            item.hash = hashName;
             const mime_type = item.mime
             if (mime_type && mime_type.includes('video')) {
                 // item.item = item.item.trim()
-                const hashName = crypto.createHash('md5').update(item.item).digest('hex');
                 const fileName = `${path.join(os.tmpdir(), "tmp/ffmpeg")}\\${hashName}.jpeg`
                 item.fileName = fileName
                 if (!fs.existsSync(fileName)) {
@@ -218,4 +274,11 @@ const transformFixedData = (data, counter, sortFiles = sortSize) => {
 
         })
 
+}
+
+module.exports = {
+    transformData,
+    transformFixedData,
+    transformDataStreaming,
+    sortSize: sortSize, sortName: sortName, sortFolder: sortFolder, noSort: noSort,
 }

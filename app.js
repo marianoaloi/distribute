@@ -218,19 +218,28 @@ const moveFile = (bol, dest, onlyCopy, data) => {
 }
 const util = require("./util")
 const transformData = util.transformData
+const transformDataStreaming = util.transformDataStreaming
 var actualSort = util.sortSize
 const openfile = () => {
     mainWindow.title = `Get Images in ${fileGlobal}`
 
-
     fs.readdir(fileGlobal, "utf8", (err, data) => {
-        if (err) console.error(err);
-        else {
-            console.log(`Get Images in ${fileGlobal}`, "files", data.length);
-            mainWindow.webContents.send("directoryOpen",
-                transformData(data, fileGlobal, 0, actualSort)
-            );
-        }
+        if (err) { console.error(err); return; }
+
+        console.log(`Get Images in ${fileGlobal}`, "files", data.length);
+
+        transformDataStreaming(
+            data,
+            fileGlobal,
+            0,
+            actualSort,
+            (images) => {
+                mainWindow.webContents.send("directoryOpen", images);
+            },
+            (video) => {
+                mainWindow.webContents.send("loadMedias", [video]);
+            }
+        );
     });
 };
 

@@ -7,4 +7,5 @@ export interface Media {
     deleted: boolean
     size: number
     screenIndex: number
+    hash: string
 }

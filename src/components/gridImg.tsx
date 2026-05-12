@@ -237,7 +237,7 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
             <ImgGrid>
                 {mediaSliced.length > 0
                     ?
-                    mediaSliced.map(media => <MediaIMG key={media.id} media={media}
+                    mediaSliced.map(media => <MediaIMG key={`${media.screenIndex}${media.id}`} media={media}
                         lastClickedEvent={lastClickedEvent}
                         shiftSelect={shiftSelect}
                         shiftControlSelect={shiftControlSelect}

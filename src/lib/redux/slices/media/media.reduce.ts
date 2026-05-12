@@ -11,14 +11,10 @@ interface MainMedia {
 const initialState: MainMedia = {
     medias: []
 }
-/*
-const pullMediaReducer = createReducer(initialState, (build) => {
-    build.addCase(pullMediaData, (state, action) => ({
-        ...state,
-        medias: transformStringToMedia(action.payload)
-    }))
-})
-    */
+
+
+
+
 const itemsSlice = createSlice({
     name: "medias",
     initialState: initialState,
@@ -29,7 +25,7 @@ const itemsSlice = createSlice({
         }),
         addListinActualArray: (state, action) => ({
             ...state,
-            medias: state.medias.concat(transformStringToMedia(action.payload))
+            medias: Array.from(new Set([...state.medias, ...transformStringToMedia(action.payload)]))
         }),
         purgeArray: (state, action) => ({
             ...state,
@@ -74,7 +70,7 @@ const itemsSlice = createSlice({
 
 function transformStringToMedia(paths: FileDTO[]): Media[] {
 
-    return paths.map(f => { return { "id": f.id, "path": f.item, size: f.size, media: f.fileName, mime: f.mime, checked: false, deleted: false } as Media });
+    return paths.map(f => { return { "id": f.id, "path": f.item, size: f.size, media: f.fileName, mime: f.mime, checked: false, deleted: false , hash:f.hash , screenIndex:f.id} as Media });
 }
 
 
