@@ -2,6 +2,7 @@ import { createSlice } from "@reduxjs/toolkit";
 import { Media } from "../../../../entity/Media";
 import { FileDTO } from "../../../../entity/FileDTO";
 
+import { createApi } from "@reduxjs/toolkit/query/react";
 
 
 interface MainMedia {
@@ -12,7 +13,14 @@ const initialState: MainMedia = {
     medias: []
 }
 
-
+const addOnceMediaHelper = (medias: Media[], media: Media): Media[] => {
+    if (medias.find(m => m.id === media.id)) {
+        return medias
+    }
+    const auxMedias = [...medias]
+    auxMedias.push(media)
+    return auxMedias
+}   
 
 
 const itemsSlice = createSlice({
@@ -21,13 +29,17 @@ const itemsSlice = createSlice({
     reducers: {
         populateArray: (state, action) => ({
             ...state,
-            medias: transformStringToMedia(action.payload)
+            medias: transformStringToMedias(action.payload)
         }),
         addListinActualArray: (state, action) => ({
             ...state,
-            medias: Array.from(new Set([...state.medias, ...transformStringToMedia(action.payload)]))
+            medias: state.medias.concat(transformStringToMedias(action.payload))
         }),
-        purgeArray: (state, action) => ({
+        addOnceMedia: (state, action) => ({
+            ...state,
+            medias: addOnceMediaHelper(state.medias, transformMedia(action.payload))
+        }),
+        purgeArray: (state) => ({
             ...state,
             medias: []
         }),
@@ -50,17 +62,17 @@ const itemsSlice = createSlice({
             return result;
         },
 
-        orderByName:(state, action) => ({
+        orderByName:(state) => ({
             ...state,
             medias :state.medias.sort((a:Media,b:Media) => a.media.localeCompare(b.media))
             
         }),
-        orderBySize:(state, action) => ({
+        orderBySize:(state) => ({
             ...state,
             medias :state.medias.sort((a:Media,b:Media) => a.size-b.size)
             
         }),
-        orderByFolder:(state, action) => ({
+        orderByFolder:(state) => ({
             ...state,
             medias :state.medias.sort((a:Media,b:Media) => a.path.localeCompare(b.path))
             
@@ -68,16 +80,30 @@ const itemsSlice = createSlice({
     }
 })
 
-function transformStringToMedia(paths: FileDTO[]): Media[] {
+const transformMedia = (f: FileDTO) => { return { "id": f.id, "path": f.item, size: f.size, media: f.fileName, mime: f.mime, checked: false, deleted: false , hash:f.hash , screenIndex:f.id} as Media }
 
-    return paths.map(f => { return { "id": f.id, "path": f.item, size: f.size, media: f.fileName, mime: f.mime, checked: false, deleted: false , hash:f.hash , screenIndex:f.id} as Media });
+function transformStringToMedias(paths: FileDTO[]): Media[] {
+
+    return paths.map(transformMedia);
 }
 
 
+export const mediasApi = createApi({
+    reducerPath: "mediasApi",
+    baseQuery: () => Promise.resolve({ data: [] }),
+    endpoints: (builder) => ({
+        getMedias: builder.query<Media[], void>({
+            query: () => ({ url: '/medias' })
+        })
+    })
+}); 
 
-export const { populateArray, updateArrayItem, updateManyArrayItem, addListinActualArray, purgeArray ,orderByName, orderBySize, orderByFolder} = itemsSlice.actions;
+
+export const { populateArray, updateArrayItem, updateManyArrayItem, addOnceMedia , addListinActualArray, purgeArray ,orderByName, orderBySize, orderByFolder} = itemsSlice.actions;
 export default itemsSlice.reducer;
 
-function reIdList(medias: Media[]): Media[] {
-    return medias;
-}
+// Export hooks for usage in functional components, which are
+// auto-generated based on the defined endpoints
+export const { useGetMediasQuery } = mediasApi;
+
+

@@ -33,6 +33,8 @@ function App() {
 
   function pressedKeyUp(ev: globalThis.KeyboardEvent): any {
 
+    if (document.querySelector('[role="dialog"]')) return;
+
     if (ev.key === "q" && childRefMethods.current) {
       childRefMethods.current.selectAll(); // Call the method in the child component
     }

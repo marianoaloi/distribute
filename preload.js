@@ -26,7 +26,8 @@ const ipc = {
             'verifyOpen',
             'openRecursive',
             'sort',
-            'open',],
+            'open',
+         ],
         // From render to main and back again.
         'sendReceive': [
             'directoryOpen',
@@ -38,7 +39,8 @@ const ipc = {
             'verifyOpen',
             'openRecursive',
             'sort',
-            'open', // Channel name
+            'open', 
+            "addOneMedia",
         ]
     }
 };

@@ -1,4 +1,4 @@
-import { forwardRef, SyntheticEvent, useImperativeHandle, useRef, useState } from "react"
+import { forwardRef, SyntheticEvent, useImperativeHandle, useRef } from "react"
 import { Media } from "../entity/Media"
 import { prettifySizeF } from "./media"
 import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, MediaControllersCSS, FoldersZoom } from "./modalZoom.styled"
@@ -6,7 +6,6 @@ import { IconButton, Slider, Modal } from "@mui/material"
 import { toMediaUrl } from "../lib/mediaUrl"
 import { ArrowBackIos, ArrowForwardIos, CleaningServices } from "@mui/icons-material"
 import { updateArrayItem, useDispatch } from "../lib/redux"
-import { set } from "mongoose"
 
 interface ModalZoomMethods {
     chamgeImageClass: () => void,

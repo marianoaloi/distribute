@@ -1,10 +1,10 @@
-import { forwardRef, SyntheticEvent, useEffect, useImperativeHandle, useRef, useState } from "react"
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react"
 import { OpenDirectory, OpenDirectoryRecursive, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
 import { FilterBar, ImgGrid, Qtd, Resume } from "./gridImg.styled"
-import { MediaIMG, prettifySizeF } from "./media"
+import { MediaIMG } from "./media"
 import { Media } from "../entity/Media"
 import { useDispatch } from "react-redux"
-import { IconButton, Modal } from "@mui/material"
+import { IconButton } from "@mui/material"
 import { Folders } from "./folder"
 import { Filter, KeyboardArrowLeft, KeyboardArrowRight, KeyboardDoubleArrowLeft, KeyboardDoubleArrowRight, RadioButtonChecked, RadioButtonUnchecked } from "@mui/icons-material"
 import ModalZoom from "./modalZoom"
@@ -40,9 +40,8 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
     let counterIndex = 0;
     const mediaSliced = medias
         .slice(currentPage * postsPerPage, ((currentPage * postsPerPage) + postsPerPage)).map(item => {
-            const mitem = { ...item }
-            mitem.screenIndex = counterIndex++
-            return mitem
+       
+            return { ...item , screenIndex : counterIndex++ }
         })
 
 
