@@ -1,7 +1,7 @@
 import { forwardRef, SyntheticEvent, useImperativeHandle, useRef } from "react"
 import { Media } from "../entity/Media"
 import { prettifySizeF } from "./media"
-import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, MediaControllersCSS, FoldersZoom } from "./modalZoom.styled"
+import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, MediaControllersCSS, FoldersZoom, MuteIcon } from "./modalZoom.styled"
 import { IconButton, Slider, Modal } from "@mui/material"
 import { toMediaUrl } from "../lib/mediaUrl"
 import { ArrowBackIos, ArrowForwardIos, CleaningServices } from "@mui/icons-material"
@@ -9,7 +9,9 @@ import { updateArrayItem, useDispatch } from "../lib/redux"
 
 interface ModalZoomMethods {
     chamgeImageClass: () => void,
-    fullScreenVideo: () => void
+    fullScreenVideo: () => void,
+    togleVideoControls: () => void
+    playPauseVideo: () => void
 }
 
 interface ModalZoomProps {
@@ -21,242 +23,271 @@ interface ModalZoomProps {
 }
 
 const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
-        ({ mediaWithPreview, handleExternalClose, openModal, onNext, onPrev }, ref) => {
+    ({ mediaWithPreview, handleExternalClose, openModal, onNext, onPrev }, ref) => {
 
-    const imgRef = useRef<HTMLImageElement | null>(null)
-    const videoRef = useRef<HTMLVideoElement | null>(null)
-    const dispatch = useDispatch();
+        const imgRef = useRef<HTMLImageElement | null>(null)
+        const videoRef = useRef<HTMLVideoElement | null>(null)
+        const dispatch = useDispatch();
 
 
-    useImperativeHandle(ref, () => ({
-        chamgeImageClass() {            
-            if (imgRef.current) 
-                imageUnset()
-        },
-        fullScreenVideo() {
-            if (videoRef.current)
-                videoRef.current.requestFullscreen()    
+        useImperativeHandle(ref, () => ({
+            chamgeImageClass() {
+                if (imgRef.current)
+                    imageUnset()
+            },
+            fullScreenVideo() {
+                if (videoRef.current)
+                    videoRef.current.requestFullscreen()
+            },
+            togleVideoControls() {
+                if (videoRef.current)
+                    togleVideoControls()
+            },
+            playPauseVideo() {
+                if (videoRef.current) {
+                    if (videoRef.current.paused) {
+                        videoRef.current.play()
+                    } else {
+                        videoRef.current.pause()
+                    }
+                }
             }
-    }));
+        }));
 
 
 
-    var zoonNow = 1
-    function zoomImg(event: any): void {
-        const imgInZoom: any = imgRef.current
-        if (!imgInZoom)
-            return
-        zoonNow += event.deltaY > 0 ? zoonNow > 0.3 ? -0.2 : 0 : 0.2
-        imgInZoom.style.zoom = (zoonNow).toString()
+        var zoonNow = 1
+        function zoomImg(event: any): void {
+            const imgInZoom: any = imgRef.current
+            if (!imgInZoom)
+                return
+            zoonNow += event.deltaY > 0 ? zoonNow > 0.3 ? -0.2 : 0 : 0.2
+            imgInZoom.style.zoom = (zoonNow).toString()
 
-    }
+        }
 
 
 
-    const filters: any = {}
+        const filters: any = {}
 
-    const changeFilter = () => {
-        const imgInZoom: any = imgRef.current
-        if (!imgInZoom)
-            return
-        imgInZoom.style.filter = Object.entries(filters).map(x => `${x[0]}(${x[1]})`).join(" ")
-    }
+        const changeFilter = () => {
+            const imgInZoom: any = imgRef.current
+            if (!imgInZoom)
+                return
+            imgInZoom.style.filter = Object.entries(filters).map(x => `${x[0]}(${x[1]})`).join(" ")
+        }
 
-    const handleChangeContrast = (event: Event, newValue: number | number[]) => {
-        filters["contrast"] = newValue
-        changeFilter()
-    };
+        const handleChangeContrast = (event: Event, newValue: number | number[]) => {
+            filters["contrast"] = newValue
+            changeFilter()
+        };
 
-    const handleChangeBrightness = (event: Event, newValue: number | number[]) => {
-        filters["brightness"] = newValue
-        changeFilter()
-    };
+        const handleChangeBrightness = (event: Event, newValue: number | number[]) => {
+            filters["brightness"] = newValue
+            changeFilter()
+        };
 
-    const imageUnset = () => {
-        const imgCurrent = imgRef.current
-        if (!imgCurrent)
-            return
-        if (imgCurrent.classList.contains("imageAddaptScreen"))
-            imgCurrent.classList.remove("imageAddaptScreen")
-        else imgCurrent.classList.add("imageAddaptScreen")
+        const imageUnset = () => {
+            const imgCurrent = imgRef.current
+            if (!imgCurrent)
+                return
+            if (imgCurrent.classList.contains("imageAddaptScreen"))
+                imgCurrent.classList.remove("imageAddaptScreen")
+            else imgCurrent.classList.add("imageAddaptScreen")
 
-        imgCurrent.focus()
+            imgCurrent.focus()
 
-    }
+        }
 
-    function startVid(event: SyntheticEvent<HTMLVideoElement, Event>): void {
-        event.currentTarget.volume = 0.05
-    }
+        function startVid(event: SyntheticEvent<HTMLVideoElement, Event>): void {
+            const video = event.currentTarget
+            if (!video) return
+            event.currentTarget.volume = 0.05
 
-    function dragControlVideo(event: any): void {
-        const duration = videoRef.current ? videoRef.current.duration : 0
-        if (event.ctrlKey && videoRef.current && !isNaN(duration)) {
-            const video = videoRef.current
-            try {
-                video.currentTime = (event.clientX / window.innerWidth) * duration
-            } catch (error) {
-                console.info(`Error trying to change video time: ${error} 
+        }
+
+        function dragControlVideo(event: any): void {
+            const duration = videoRef.current ? videoRef.current.duration : 0
+            if (event.ctrlKey && videoRef.current && !isNaN(duration)) {
+                const video = videoRef.current
+                try {
+                    video.currentTime = (event.clientX / window.innerWidth) * duration
+                } catch (error) {
+                    console.info(`Error trying to change video time: ${error} 
                         currentTime: ${video.currentTime},
                         clientWidth: ${video.clientWidth},
                         duration: ${video.duration},
                         event.clientX: ${event.clientX}`)
-            }
-            event.stopPropagation();
-        }
-    }
-
-
-    const MediaConstPresentation = () => {
-
-
-        const zoomImage = (event: any, imgInZoom: any): void => {
-
-            if (!imgInZoom)
-                return
-            if (event.ctrlKey) {
-                zoonNow += event.deltaY > 0 ? zoonNow > 0.3 ? -0.2 : 0 : 0.2
-                imgInZoom.style.zoom = (zoonNow).toString()
-                event.stopPropagation();
-            }
-        }
-
-        const controlVolumeByAltPresed = (event: any): void => {
-            const videoInZoom: any = videoRef.current
-            if (!videoInZoom)
-                return
-            if (event.ctrlKey) {
-                if (event.deltaY > 0 && videoInZoom.volume > 0.001) {
-                    videoInZoom.volume -= videoInZoom.volume <= 0.01 ? 0.001 : 0.01
-                } else if (event.deltaY < 0 && videoInZoom.volume < 0.99) {
-                    videoInZoom.volume += videoInZoom.volume <= 0.01 ? 0.001 : 0.01
                 }
                 event.stopPropagation();
             }
+        }
+
+        const togleVideoControls = (): void => {
+            const videoInZoom: any = videoRef.current
+            if (!videoInZoom)
+                return
+            videoInZoom.controls = !videoInZoom.controls
+        }
+
+
+
+        const MediaConstPresentation = () => {
+
+
+            const zoomImage = (event: any, imgInZoom: any): void => {
+
+                if (!imgInZoom)
+                    return
+                if (event.ctrlKey) {
+                    zoonNow += event.deltaY > 0 ? zoonNow > 0.3 ? -0.2 : 0 : 0.2
+                    imgInZoom.style.zoom = (zoonNow).toString()
+                    event.stopPropagation();
+                }
+            }
+
+            const controlVolumeByAltPresed = (event: any): void => {
+                const videoInZoom: any = videoRef.current
+                if (!videoInZoom)
+                    return
+                if (event.ctrlKey) {
+                    if (event.deltaY > 0 && videoInZoom.volume > 0.001) {
+                        videoInZoom.volume -= videoInZoom.volume <= 0.01 ? 0.001 : 0.01
+                    } else if (event.deltaY < 0 && videoInZoom.volume < 0.99) {
+                        videoInZoom.volume += videoInZoom.volume <= 0.01 ? 0.001 : 0.01
+                    }
+                    event.stopPropagation();
+                }
+            }
+
+
+
+            return (
+                <MediaPresentation>
+                    {
+                        mediaWithPreview.mime.includes('video')
+                            ?
+                            <>
+                                <VideoPresentation ref={videoRef} src={toMediaUrl(mediaWithPreview.path)}
+
+                                    onPlay={(ev) => ev.currentTarget.blur()}
+                                    onLoadStart={startVid}
+                                    onDoubleClick={changeCheckbox}
+
+                                    onWheel={controlVolumeByAltPresed}
+
+                                    autoPlay title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></VideoPresentation>
+
+                            </>
+                            :
+                            <ImgPresentation
+                                onDoubleClick={changeCheckbox}
+                                draggable={false}
+                                // className="imageAddaptScreen"
+                                onWheel={(ev) => zoomImage(ev, imgRef.current)}
+                                ref={imgRef} src={toMediaUrl(mediaWithPreview.path)}
+                                alt={mediaWithPreview.path} title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></ImgPresentation>
+
+                    }
+                </MediaPresentation>)
+        }
+        const hasAudio = (video: any) => {
+            return video.mozHasAudio ||
+                Boolean(video.webkitAudioDecodedByteCount) ||
+                Boolean(video.audioTracks && video.audioTracks.length);
+        }
+        const MediaControllers = () => {
+            return <MediaControllersCSS onWheel={(ev) => zoomImg(ev)}>
+
+
+                {mediaWithPreview.mime.includes('video') ?
+                    <>
+                        {videoRef.current && !hasAudio(videoRef.current) ? <MuteIcon color="error" /> : ""}
+                        <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
+                        <input style={{ zoom: 2 }} type="checkbox" onClick={changeCheckbox} id="selectMedia" defaultChecked={mediaWithPreview.checked} />
+                    </>
+                    :
+                    <>
+                        <IconButton onClick={imageUnset}><CleaningServices /></IconButton>
+                        <Slider
+                            aria-label="Zoom"
+                            defaultValue={1}
+                            //   getAriaValueText={valuetext}
+                            valueLabelDisplay="auto"
+                            shiftStep={0.5}
+                            step={0.1}
+                            min={0.3}
+                            max={10}
+                            onChange={(event: Event, newValue: number | number[]) => {
+                                const imgInZoom: any = imgRef.current
+                                if (!imgInZoom)
+                                    return
+                                imgInZoom.style.zoom = (newValue).toString()
+                            }}
+                        />
+                        <Slider
+                            aria-label="Contrast"
+                            defaultValue={1}
+                            //   getAriaValueText={valuetext}
+                            valueLabelDisplay="auto"
+                            shiftStep={0.5}
+                            step={0.1}
+                            marks
+                            min={0}
+                            max={15}
+                            onChange={handleChangeContrast}
+                        />
+                        <Slider
+                            aria-label="Brightness"
+                            defaultValue={1}
+                            //   getAriaValueText={valuetext}
+                            valueLabelDisplay="auto"
+                            shiftStep={0.5}
+                            step={0.1}
+                            marks
+                            min={0}
+                            max={15}
+                            onChange={handleChangeBrightness}
+                        />
+                    </>}
+
+
+            </MediaControllersCSS>
+        }
+
+        function changeCheckbox(event: any): void {
+            const aux = { ...mediaWithPreview }
+            aux.checked = !mediaWithPreview.checked
+            dispatch(updateArrayItem(aux))
+            handleExternalClose();
         }
 
 
 
         return (
-            <MediaPresentation>
-                {
-                    mediaWithPreview.mime.includes('video')
-                        ?
-                        <>
-                            <VideoPresentation ref={videoRef} src={toMediaUrl(mediaWithPreview.path)}
+            <Modal
+                open={!!openModal}
+                onClose={handleExternalClose}
+                aria-labelledby="modal-modal-title"
+                aria-describedby="modal-modal-description"
+                onMouseMove={(ev: any) => dragControlVideo(ev)}
+            >
 
-                                onPlay={(ev) => ev.currentTarget.blur()}
-                                onLoadStart={startVid}
-                                onDoubleClick={changeCheckbox}
+                <ModalBox >
+                    <div>
+                        {onPrev && <IconButton onClick={onPrev}><ArrowBackIos /></IconButton>}
+                        {onNext && <IconButton onClick={onNext}><ArrowForwardIos /></IconButton>}
+                        <input style={{ zoom: 2 }} type="checkbox" onClick={changeCheckbox} id="selectMedia" defaultChecked={mediaWithPreview.checked} />
+                        <label htmlFor="selectMedia">Select</label>
+                        <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
+                    </div>
+                    <MediaConstPresentation></MediaConstPresentation>
+                    <MediaControllers />
+                </ModalBox>
 
-                                onWheel={controlVolumeByAltPresed}
-                                controls
-                                autoPlay title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></VideoPresentation>
+            </Modal>
+        )
 
-                        </>
-                        :
-                        <ImgPresentation
-                            onDoubleClick={changeCheckbox}
-                            draggable={false}
-                            // className="imageAddaptScreen"
-                            onWheel={(ev) => zoomImage(ev, imgRef.current)}
-                            ref={imgRef} src={toMediaUrl(mediaWithPreview.path)}
-                            alt={mediaWithPreview.path} title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></ImgPresentation>
-
-                }
-            </MediaPresentation>)
-    }
-
-    const MediaControllers = () => {
-        return <MediaControllersCSS onWheel={(ev) => zoomImg(ev)}>
-
-            <IconButton onClick={imageUnset}><CleaningServices /></IconButton>
-            {mediaWithPreview.mime.includes('video') ?
-                <>
-                    <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
-                    <input style={{ zoom: 2 }} type="checkbox" onClick={changeCheckbox} id="selectMedia" defaultChecked={mediaWithPreview.checked} />
-
-                </>
-                :
-                <>
-                    <Slider
-                        aria-label="Zoom"
-                        defaultValue={1}
-                        //   getAriaValueText={valuetext}
-                        valueLabelDisplay="auto"
-                        shiftStep={0.5}
-                        step={0.1}
-                        min={0.3}
-                        max={10}
-                        onChange={(event: Event, newValue: number | number[]) => {
-                            const imgInZoom: any = imgRef.current
-                            if (!imgInZoom)
-                                return
-                            imgInZoom.style.zoom = (newValue).toString()
-                        }}
-                    />
-                    <Slider
-                        aria-label="Contrast"
-                        defaultValue={1}
-                        //   getAriaValueText={valuetext}
-                        valueLabelDisplay="auto"
-                        shiftStep={0.5}
-                        step={0.1}
-                        marks
-                        min={0}
-                        max={15}
-                        onChange={handleChangeContrast}
-                    />
-                    <Slider
-                        aria-label="Brightness"
-                        defaultValue={1}
-                        //   getAriaValueText={valuetext}
-                        valueLabelDisplay="auto"
-                        shiftStep={0.5}
-                        step={0.1}
-                        marks
-                        min={0}
-                        max={15}
-                        onChange={handleChangeBrightness}
-                    />
-                </>}
-
-
-        </MediaControllersCSS>
-    }
-
-    function changeCheckbox(event: any): void {
-        const aux = { ...mediaWithPreview }
-        aux.checked = !mediaWithPreview.checked
-        dispatch(updateArrayItem(aux))
-        handleExternalClose();
-    }
-
-  
-
-    return (
-        <Modal
-            open={!!openModal}
-            onClose={handleExternalClose}
-            aria-labelledby="modal-modal-title"
-            aria-describedby="modal-modal-description"
-            onMouseMove={(ev: any) => dragControlVideo(ev)}
-        >
-
-            <ModalBox >
-                <div>
-                    {onPrev && <IconButton onClick={onPrev}><ArrowBackIos /></IconButton>}
-                    {onNext && <IconButton onClick={onNext}><ArrowForwardIos /></IconButton>}
-                    <input style={{ zoom: 2 }} type="checkbox" onClick={changeCheckbox} id="selectMedia" defaultChecked={mediaWithPreview.checked} />
-                    <label htmlFor="selectMedia">Select</label>
-                    <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
-                </div>
-                <MediaConstPresentation></MediaConstPresentation>
-                <MediaControllers />
-            </ModalBox>
-
-        </Modal>
-    )
-
-})
+    })
 
 export default ModalZoom
