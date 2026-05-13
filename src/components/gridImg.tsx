@@ -211,10 +211,10 @@ export const GridIMGs = (() => {
     if (document.querySelector('[role="dialog"]')) return;
     if (!modalZoomRefMethods.current) return;
 
-    if (ev.key === "q" ) {
+    if (ev.key === "q" && !open ) {
       selectAll(); // Call the method in the child component
     }
-    if (ev.key === "w" ) {
+    if (ev.key === "w" && !open) {
       unselectAllSelectAll(); // Call the method in the child component
     }
 
@@ -234,10 +234,10 @@ export const GridIMGs = (() => {
       modalZoomRefMethods.current.chamgeImageClass(); // Call the method in the child component
     }
 
-    if (ev.key === "ArrowRight" ) {
+    if (ev.key === "ArrowRight" && open ) {
       nextMedia();
     }
-    if (ev.key === "ArrowLeft" ) {
+    if (ev.key === "ArrowLeft" && open ) {
       prevMedia();
     }
     if (ev.key === "1" ) {

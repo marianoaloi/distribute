@@ -177,6 +177,8 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                     onWheel={controlVolumeByAltPresed}
 
                                     autoPlay title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></VideoPresentation>
+                                    
+                        {videoRef.current && !hasAudio(videoRef.current) ? <MuteIcon color="error" /> : ""}
 
                             </>
                             :
@@ -202,7 +204,6 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
 
                 {mediaWithPreview.mime.includes('video') ?
                     <>
-                        {videoRef.current && !hasAudio(videoRef.current) ? <MuteIcon color="error" /> : ""}
                         <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
                         <input style={{ zoom: 2 }} type="checkbox" onClick={changeCheckbox} id="selectMedia" defaultChecked={mediaWithPreview.checked} />
                     </>
