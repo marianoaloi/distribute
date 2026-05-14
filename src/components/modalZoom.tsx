@@ -104,8 +104,10 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             const video = event.currentTarget
             if (!video) return
             event.currentTarget.volume = 0.05
-            setSoundIsMuted(!hasAudio(video))
+            enableIconVideoNoSound()
         }
+
+        
 
         function dragControlVideo(event: any): void {
             const duration = videoRef.current ? videoRef.current.duration : 0
@@ -169,14 +171,10 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                         mediaWithPreview.mime.includes('video')
                             ?
                             <>
-                                <VideoPresentation ref={videoRef} src={toMediaUrl(mediaWithPreview.path)}
-
-                                    onPlay={(ev) => ev.currentTarget.blur()}
+                                <VideoPresentation ref={videoRef} src={toMediaUrl(mediaWithPreview.path)}                                   
                                     onLoadedMetadata={startVid}
                                     onDoubleClick={changeCheckbox}
-
                                     onWheel={controlVolumeByAltPresed}
-
                                     autoPlay title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></VideoPresentation>
                                     
                         {soundIsMuted && <MuteIcon color="error" /> }
@@ -194,6 +192,14 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                     }
                 </MediaPresentation>)
         }
+        const enableIconVideoNoSound = async ()  => {
+            const videoInZoom: any = videoRef.current
+            if (!videoInZoom)
+                return  
+            setTimeout(() => {
+                setSoundIsMuted(!hasAudio(videoInZoom))
+            }, 1000);
+        }
         const hasAudio = (video: any): boolean => {
             // audioTracks is reliable after loadedmetadata in Chromium/Electron
             if (video.audioTracks !== undefined) {
@@ -202,6 +208,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             if (video.mozHasAudio !== undefined) {
                 return video.mozHasAudio;
             }
+            console.log("No audio track information available, guessing based on webkitAudioDecodedByteCount",video.webkitAudioDecodedByteCount);
             return Boolean(video.webkitAudioDecodedByteCount) ;
         }
         const MediaControllers = () => {
