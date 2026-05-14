@@ -23,6 +23,9 @@ export const ElectronConnection = () => {
 
     return (dispatch: any) => {
         if (ipcRender) {
+            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen'];
+            channels.forEach(ch => ipcRender.removeAllListeners(ch));
+
             ipcRender.on('directoryOpen', (e: any, args: any) => {
 
                 console.log("Receive files ", args.length);
@@ -63,7 +66,7 @@ export const ElectronConnection = () => {
                     case 'sortByName': dispatch(orderByName()); break;
                     case 'sortBySize': dispatch(orderBySize()); break;
                     case 'sortByFolder': dispatch(orderByFolder()); break;
-                
+
                     default:
                         break;
                 }

@@ -83,6 +83,12 @@ contextBridge.exposeInMainWorld(
             if (validChannels.includes(channel)) {
                 ipcRenderer.once(channel, listener);
             }
+        },
+        removeAllListeners: (channel) => {
+            let validChannels = [...ipc.render.send, ...ipc.render.receive, ...ipc.render.sendReceive];
+            if (validChannels.includes(channel)) {
+                ipcRenderer.removeAllListeners(channel);
+            }
         }
     }
 }

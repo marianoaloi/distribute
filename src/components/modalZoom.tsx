@@ -1,4 +1,4 @@
-import { forwardRef, SyntheticEvent, useImperativeHandle, useRef } from "react"
+import { forwardRef, SyntheticEvent, useImperativeHandle, useRef, useState } from "react"
 import { Media } from "../entity/Media"
 import { prettifySizeF } from "./media"
 import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, MediaControllersCSS, FoldersZoom, MuteIcon } from "./modalZoom.styled"
@@ -28,6 +28,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         const imgRef = useRef<HTMLImageElement | null>(null)
         const videoRef = useRef<HTMLVideoElement | null>(null)
         const dispatch = useDispatch();
+        const [soundIsMuted, setSoundIsMuted] = useState(false);
 
 
         useImperativeHandle(ref, () => ({
@@ -103,7 +104,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             const video = event.currentTarget
             if (!video) return
             event.currentTarget.volume = 0.05
-
+            setSoundIsMuted(!hasAudio(video))
         }
 
         function dragControlVideo(event: any): void {
@@ -171,14 +172,14 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                 <VideoPresentation ref={videoRef} src={toMediaUrl(mediaWithPreview.path)}
 
                                     onPlay={(ev) => ev.currentTarget.blur()}
-                                    onLoadStart={startVid}
+                                    onLoadedMetadata={startVid}
                                     onDoubleClick={changeCheckbox}
 
                                     onWheel={controlVolumeByAltPresed}
 
                                     autoPlay title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></VideoPresentation>
                                     
-                        {videoRef.current && !hasAudio(videoRef.current) ? <MuteIcon color="error" /> : ""}
+                        {soundIsMuted && <MuteIcon color="error" /> }
 
                             </>
                             :
@@ -193,10 +194,15 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                     }
                 </MediaPresentation>)
         }
-        const hasAudio = (video: any) => {
-            return video.mozHasAudio ||
-                Boolean(video.webkitAudioDecodedByteCount) ||
-                Boolean(video.audioTracks && video.audioTracks.length);
+        const hasAudio = (video: any): boolean => {
+            // audioTracks is reliable after loadedmetadata in Chromium/Electron
+            if (video.audioTracks !== undefined) {
+                return video.audioTracks.length > 0;
+            }
+            if (video.mozHasAudio !== undefined) {
+                return video.mozHasAudio;
+            }
+            return Boolean(video.webkitAudioDecodedByteCount) ;
         }
         const MediaControllers = () => {
             return <MediaControllersCSS onWheel={(ev) => zoomImg(ev)}>

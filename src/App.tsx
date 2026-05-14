@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import './App.css';
 import { ElectronConnection, useDispatch } from './lib/redux';
 import { GridIMGs } from './components/gridImg';
@@ -6,10 +6,6 @@ import { GridIMGs } from './components/gridImg';
 function App() {
 
   const dispatch = useDispatch();
-
-
-
-
 
   useEffect(() => {
     dispatch(ElectronConnection())
