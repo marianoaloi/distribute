@@ -4,4 +4,5 @@ export interface FileDTO {
     mime: string
     fileName: string
     size: number
+    hash: string
 }

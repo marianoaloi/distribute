@@ -26,7 +26,8 @@ const ipc = {
             'verifyOpen',
             'openRecursive',
             'sort',
-            'open',],
+            'open',
+         ],
         // From render to main and back again.
         'sendReceive': [
             'directoryOpen',
@@ -38,7 +39,8 @@ const ipc = {
             'verifyOpen',
             'openRecursive',
             'sort',
-            'open', // Channel name
+            'open', 
+            "addOneMedia",
         ]
     }
 };
@@ -80,6 +82,12 @@ contextBridge.exposeInMainWorld(
             let validChannels = ipc.render.sendReceive;
             if (validChannels.includes(channel)) {
                 ipcRenderer.once(channel, listener);
+            }
+        },
+        removeAllListeners: (channel) => {
+            let validChannels = [...ipc.render.send, ...ipc.render.receive, ...ipc.render.sendReceive];
+            if (validChannels.includes(channel)) {
+                ipcRenderer.removeAllListeners(channel);
             }
         }
     }

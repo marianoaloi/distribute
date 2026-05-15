@@ -1,4 +1,5 @@
 import { createLogger } from 'redux-logger'
+import { mediasApi } from "./slices/media/media.reduce";
 
 const middleware = [
     createLogger({
@@ -14,6 +15,7 @@ const middleware = [
         },
         predicate: () => typeof window !== 'undefined',
     }),
+    mediasApi.middleware
 ]
 
 export { middleware }

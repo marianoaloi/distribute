@@ -1,10 +1,10 @@
-import { forwardRef, SyntheticEvent, useEffect, useImperativeHandle, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { OpenDirectory, OpenDirectoryRecursive, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
 import { FilterBar, ImgGrid, Qtd, Resume } from "./gridImg.styled"
-import { MediaIMG, prettifySizeF } from "./media"
+import { MediaIMG } from "./media"
 import { Media } from "../entity/Media"
 import { useDispatch } from "react-redux"
-import { IconButton, Modal } from "@mui/material"
+import { IconButton } from "@mui/material"
 import { Folders } from "./folder"
 import { Filter, KeyboardArrowLeft, KeyboardArrowRight, KeyboardDoubleArrowLeft, KeyboardDoubleArrowRight, RadioButtonChecked, RadioButtonUnchecked } from "@mui/icons-material"
 import ModalZoom from "./modalZoom"
@@ -13,10 +13,9 @@ import { configurationsSelector, setMediaType } from "../lib/redux/slices/config
 
 import { FolderCopyTwoTone, FolderOpen, Pause, PlayArrow } from '@mui/icons-material';
 
-interface GridMethods {    
-}
 
-export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
+
+export const GridIMGs = (() => {
 
 
     const dispatch = useDispatch<any>();
@@ -38,34 +37,19 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
     let counterIndex = 0;
     const mediaSliced = medias
         .slice(currentPage * postsPerPage, ((currentPage * postsPerPage) + postsPerPage)).map(item => {
-            const mitem = { ...item }
-            mitem.screenIndex = counterIndex++
-            return mitem
+       
+            return { ...item , screenIndex : counterIndex++ }
         })
 
 
-    // Expose methods to parent using useImperativeHandle
-    useImperativeHandle(ref, () => ({
-        scrollPhotos(qtd: number) {
-            if (qtd < 0 && currentPage !== 0)
-                setCurrentPage(currentPage - 1)
-            else if (qtd > 0 && currentPage < qtdPages)
-                setCurrentPage(currentPage + 1);
-            else
-                setCurrentPage(0)
-        },
-        closePreview() {
-            setOpen(false)
-        },
-        selectAll() { selectAll() },
-        unselectAllSelectAll() { unselectAllSelectAll() },
-        chamgeImageClass: () => modalZoomRefMethods.current?.chamgeImageClass(),
-        fullScreenVideo: () => modalZoomRefMethods.current?.fullScreenVideo()
-    }));
 
     const modalZoomRefMethods = useRef<{
         chamgeImageClass: () => void,
-        fullScreenVideo: () => void
+        fullScreenVideo: () => void,
+        togleVideoControls: () => void
+        playPauseVideo: () => void
+        maxVolume: () => void,
+        minVolume: () => void
     
       }>(null);
 
@@ -204,8 +188,73 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
         setPlay(!play)
     }
 
+   function nextMedia() {
+            if (!lastZoom) return;
+            const absIdx = medias.findIndex(m => m.id === lastZoom!.id);
+            if (absIdx === -1 || absIdx >= medias.length - 1) return;
+            const newIdx = absIdx + 1;
+            const newPage = Math.floor(newIdx / postsPerPage);
+            setCurrentPage(newPage);
+            setLastZoom({ ...medias[newIdx], screenIndex: newIdx % postsPerPage });
+        }
+    function    prevMedia() {
+            if (!lastZoom) return;
+            const absIdx = medias.findIndex(m => m.id === lastZoom!.id);
+            if (absIdx <= 0) return;
+            const newIdx = absIdx - 1;
+            const newPage = Math.floor(newIdx / postsPerPage);
+            setCurrentPage(newPage);
+            setLastZoom({ ...medias[newIdx], screenIndex: newIdx % postsPerPage });
+        }
+    
+
+  function pressedKeyUp(ev: React.KeyboardEvent<HTMLDivElement>): any {
+
+    if (document.querySelector('[role="dialog"]')) return;
+    if (!modalZoomRefMethods.current) return;
+
+    if (ev.key === "q" && !open ) {
+      selectAll(); // Call the method in the child component
+    }
+    if (ev.key === "w" && !open) {
+      unselectAllSelectAll(); // Call the method in the child component
+    }
+
+    if (ev.key === "s" ) {
+      modalZoomRefMethods.current.playPauseVideo(); // Call the method in the child component
+    }
+
+    if (ev.key === "Escape" ) {
+      setOpen(false); // Call the method in the child component
+    }
+
+    if (ev.key === "f" ) {
+      modalZoomRefMethods.current.fullScreenVideo(); // Call the method in the child component
+    }
+
+    if (ev.key === "'" ) {
+      modalZoomRefMethods.current.chamgeImageClass(); // Call the method in the child component
+    }
+
+    if (ev.key === "ArrowRight" && open ) {
+      nextMedia();
+    }
+    if (ev.key === "ArrowLeft" && open ) {
+      prevMedia();
+    }
+    if (ev.key === "1" ) {
+      modalZoomRefMethods.current.togleVideoControls()
+    }
+    if (ev.key === "v" ) {
+      modalZoomRefMethods.current.maxVolume()
+    }
+    if (ev.key === "b" ) {
+      modalZoomRefMethods.current.minVolume()
+    }
+  }
+
     return (
-        <>
+        <div onKeyUp={(ev) => pressedKeyUp(ev)}>
             <Resume>
                 <Qtd title="Total items not deleted">{medias.length}</Qtd>
                 <select value={postsPerPage} title="How many items for page" onChange={(val) => setPostsPerPage(parseInt(val.currentTarget.value))}>
@@ -237,7 +286,7 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
             <ImgGrid>
                 {mediaSliced.length > 0
                     ?
-                    mediaSliced.map(media => <MediaIMG key={media.id} media={media}
+                    mediaSliced.map(media => <MediaIMG key={`${media.screenIndex}${media.id}`} media={media}
                         lastClickedEvent={lastClickedEvent}
                         shiftSelect={shiftSelect}
                         shiftControlSelect={shiftControlSelect}
@@ -251,11 +300,26 @@ export const GridIMGs = forwardRef<GridMethods>((props, ref) => {
             <FilterComponent />
 
  {lastZoom ?
-           
-                    <ModalZoom mediaWithPreview={lastZoom} handleExternalClose={handleClose} openModal={open} ref={modalZoomRefMethods}></ModalZoom>
+
+                    <ModalZoom mediaWithPreview={lastZoom} handleExternalClose={handleClose} openModal={open} ref={modalZoomRefMethods}
+                        onPrev={() => {
+                            const absIdx = medias.findIndex(m => m.id === lastZoom.id);
+                            if (absIdx <= 0) return;
+                            const newIdx = absIdx - 1;
+                            setCurrentPage(Math.floor(newIdx / postsPerPage));
+                            setLastZoom({ ...medias[newIdx], screenIndex: newIdx % postsPerPage });
+                        }}
+                        onNext={() => {
+                            const absIdx = medias.findIndex(m => m.id === lastZoom.id);
+                            if (absIdx === -1 || absIdx >= medias.length - 1) return;
+                            const newIdx = absIdx + 1;
+                            setCurrentPage(Math.floor(newIdx / postsPerPage));
+                            setLastZoom({ ...medias[newIdx], screenIndex: newIdx % postsPerPage });
+                        }}
+                    ></ModalZoom>
 
 
                     : <p>No Media found</p>}
 
-        </>)
+        </div>)
 })

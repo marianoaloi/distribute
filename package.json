@@ -34,6 +34,7 @@
     "@types/redux-logger": "3.0.9",
     "electron": "^31.0.1",
     "electron-builder": "^26.8.1",
+    "electron-devtools-installer": "^4.0.0",
     "electron-installer-debian": "^3.2.0",
     "electron-packager": "^17.1.2",
     "redux-logger": "^3.0.6",

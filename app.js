@@ -1,12 +1,14 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu, protocol } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const { default: installExtension, REACT_DEVELOPER_TOOLS, REDUX_DEVTOOLS } = require("electron-devtools-installer");
 
 const isDev = process.env.NODE_ENV === "development";
 const isMac = process.platform === 'darwin'
 protocol.registerSchemesAsPrivileged([
     { scheme: 'local-media', privileges: { bypassCSP: true, stream: true, supportFetchAPI: true } }
 ]);
+
 
 
 const os = require('os');
@@ -56,11 +58,13 @@ var mainWindow
 var fileGlobal
 function createWindow() {
     try {
-        if (fs.existsSync(path.join(os.tmpdir(), "tmp"))) {
-            fs.rmSync(path.join(os.tmpdir(), "tmp"), { recursive: true })
+        // if (fs.existsSync(path.join(dirCache, "tmp"))) {
+        //     fs.rmSync(path.join(dirCache, "tmp"), { recursive: true })
+        // }
+        if (!fs.existsSync(path.join(dirCache, "tmp"))) {
+            fs.mkdirSync(path.join(dirCache, "tmp"))
+            fs.mkdirSync(path.join(dirCache, "tmp/ffmpeg"))
         }
-        fs.mkdirSync(path.join(os.tmpdir(), "tmp"))
-        fs.mkdirSync(path.join(os.tmpdir(), "tmp/ffmpeg"))
     } catch (error) {
         console.error("Error creating tmp folder", error);
     }
@@ -97,6 +101,7 @@ function createWindow() {
 
     if (isDev) {
         mainWindow.webContents.openDevTools();
+
     }
 
     mainWindow.on("closed", function () {
@@ -137,6 +142,8 @@ app.on("ready", () => {
         callback({ path: filePath });
     });
     createWindow();
+
+    
 });
 
 app.on("window-all-closed", function () {
@@ -216,21 +223,32 @@ const moveFile = (bol, dest, onlyCopy, data) => {
         // mainWindow.ipcMain.send("delete", media)
     });
 }
-const util = require("./util")
+const util = require("./util");
+const { dirCache } = require("./DirectorioCache");
 const transformData = util.transformData
+const transformDataStreaming = util.transformDataStreaming
 var actualSort = util.sortSize
 const openfile = () => {
     mainWindow.title = `Get Images in ${fileGlobal}`
 
-
     fs.readdir(fileGlobal, "utf8", (err, data) => {
-        if (err) console.error(err);
-        else {
-            console.log(`Get Images in ${fileGlobal}`, "files", data.length);
-            mainWindow.webContents.send("directoryOpen",
-                transformData(data, fileGlobal, 0, actualSort)
-            );
-        }
+        if (err) { console.error(err); return; }
+
+        console.log(`Get Images in ${fileGlobal}`, "files", data.length);
+
+        transformDataStreaming(
+            data,
+            fileGlobal,
+            0,
+            actualSort,
+            (images) => {
+                mainWindow.webContents.send("directoryOpen", images);
+            },
+            (video) => {
+                console.log("Video found", video.id);
+                mainWindow.webContents.send("addOneMedia", video);
+            }
+        );
     });
 };
 
@@ -316,5 +334,8 @@ const sortByName = async () => { actualSort = util.sortName; openfile() }    //m
 const sortBySize = async () => { actualSort = util.sortSize; openfile() }    //mainWindow.webContents.send("sort","sortBySize")
 const sortByFolder = async () => { actualSort = util.sortFolder; openfile() }    //mainWindow.webContents.send("sort","sortByFolder")
 
-
-app.focus()
+app.whenReady().then(() => {
+    installExtension([REDUX_DEVTOOLS, REACT_DEVELOPER_TOOLS])
+        .then(([redux, react]) => console.log(`Added Extensions:  ${redux.name}, ${react.name}`))
+        .catch((err) => console.log('An error occurred: ', err));
+})

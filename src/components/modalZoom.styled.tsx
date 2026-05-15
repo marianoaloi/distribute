@@ -1,6 +1,7 @@
 import styled from "@emotion/styled";
 import { Box, Slider } from "@mui/material";
 import { Folders } from "./folder";
+import { VolumeMuteRounded } from "@mui/icons-material";
 
 
 export const ModalBox = styled(Box)`
@@ -34,9 +35,10 @@ export const MediaPresentation = styled.div`
 
 export const VideoPresentation = styled.video`
       position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
+    //   top: 50%;
+    //   left: 50%;
+    //   transform: translate(-50%, -50%);
+    text-align: center;
       overflow: auto;
       max-height: 100%;
       width: 100%;
@@ -58,6 +60,16 @@ export const FoldersZoom = styled(Folders)`
     height: 35px;
     top: 0px;
     z-index: 2;
+`
+
+export const MuteIcon = styled(VolumeMuteRounded)`
+    color: red;
+    height: 100px;
+    width: 100px;
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    z-index: 3;
 `
 
 export const MediaControllersCSS = styled.div`

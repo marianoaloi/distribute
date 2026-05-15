@@ -1,0 +1,58 @@
+name: Release Windows
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Windows executable
+        run: npm run execWindows
+        env:
+          CI: false
+
+      - name: Get package version
+        id: pkg
+        run: echo "version=$(node -p "require('./package.json').version")" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+
+      - name: Stage release artifact
+        id: artifact
+        run: |
+          $outDir = Resolve-Path (Join-Path "${{ github.workspace }}" ".." "distribute-dist")
+          $exe = Get-ChildItem -Path $outDir -Filter "*.exe" | Select-Object -First 1
+          if (-not $exe) { throw "No .exe found in $outDir" }
+          $dest = Join-Path "${{ github.workspace }}" $exe.Name
+          Copy-Item $exe.FullName $dest
+          echo "path=$dest" >> $env:GITHUB_OUTPUT
+          echo "name=$($exe.Name)" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.pkg.outputs.version }}-${{ github.run_number }}
+          name: v${{ steps.pkg.outputs.version }} (build ${{ github.run_number }})
+          body: |
+            Automated Windows release from merge to master.
+            Commit: ${{ github.sha }}
+          files: ${{ steps.artifact.outputs.path }}
+          fail_on_unmatched_files: true

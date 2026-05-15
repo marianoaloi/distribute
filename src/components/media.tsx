@@ -48,7 +48,13 @@ export const MediaIMG: React.FC<TheMediaProps> = ({ media, lastClickedEvent,
     const config = useSelector(configurationsSelector)
     return <ThePhoto onMouseMove={mouseMoveOpen}>
         {/* <img src={media.media} /> */}
-        <ImageMaloi size={config.pxzoom} width={config.pxzoom} onClick={(val) => changeCkecked(val)} src={toMediaUrl(media.media)}  title={`${media.path}\n${prettifySizeF(media.size)} ${media.id} ${media.screenIndex}`}  ></ImageMaloi>
+        <ImageMaloi 
+                size={config.pxzoom} 
+                draggable={false}
+                width={config.pxzoom} 
+                onClick={(val) => changeCkecked(val)} 
+                src={toMediaUrl(media.media)}  
+                title={`${media.path}\n${prettifySizeF(media.size)} ${media.id} ${media.screenIndex}`}  ></ImageMaloi>
         <CheckBoxSelect readOnly onClick={(val) => changeCkecked(val)} checked={media.checked} type="checkbox"></CheckBoxSelect>
         <PreviewMedia onClick={openPreview} isVideo={media.mime.includes('video')}>{media.mime.includes('video') ? "V" : "F"}</PreviewMedia>
     </ThePhoto>

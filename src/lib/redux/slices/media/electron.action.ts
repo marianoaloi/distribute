@@ -1,9 +1,10 @@
 import { ElectronService } from 'ngx-electron';
-import { addListinActualArray, orderByFolder, orderByName, orderBySize, populateArray, updateArrayItem } from './media.reduce';
+import { addListinActualArray, addOnceMedia, orderByFolder, orderByName, orderBySize, populateArray, updateArrayItem } from './media.reduce';
 import { example } from './populateExample';
 import { Media } from '../../../../entity/Media';
 import { addFolder } from '../folders';
 import { zoomIn, zoomOut } from '../configurations';
+import { FileDTO } from '../../../../entity/FileDTO';
 
 
 const isElectronApp = new ElectronService().isElectronApp;
@@ -22,6 +23,9 @@ export const ElectronConnection = () => {
 
     return (dispatch: any) => {
         if (ipcRender) {
+            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen'];
+            channels.forEach(ch => ipcRender.removeAllListeners(ch));
+
             ipcRender.on('directoryOpen', (e: any, args: any) => {
 
                 console.log("Receive files ", args.length);
@@ -32,11 +36,20 @@ export const ElectronConnection = () => {
 
             ipcRender.on('loadMedias', (e: any, args: any) => {
 
-                console.log("Receive upgrades ", args.length);
+                console.log("Receive upgrades ", args.length , " from ", e.sender.id, " with channel ", e.channel, " ids ", args.map((a:Media) => a.id));
 
                 dispatch(addListinActualArray(args))
 
             })
+
+            ipcRender.on("addOneMedia", (e: any, media: FileDTO) => {
+
+                console.log("Receive one media ", media.id);
+
+                dispatch(addOnceMedia(media))
+
+            })
+
             ipcRender.on('delete', (e: any, med: Media) => {
 
                 med.deleted = true
@@ -50,10 +63,10 @@ export const ElectronConnection = () => {
             })
             ipcRender.on('sort', (e:any,sort:string)=>{
                 switch (sort) {
-                    case 'sortByName': dispatch(orderByName(sort)); break;
-                    case 'sortBySize': dispatch(orderBySize(sort)); break;
-                    case 'sortByFolder': dispatch(orderByFolder(sort)); break;
-                
+                    case 'sortByName': dispatch(orderByName()); break;
+                    case 'sortBySize': dispatch(orderBySize()); break;
+                    case 'sortByFolder': dispatch(orderByFolder()); break;
+
                     default:
                         break;
                 }
