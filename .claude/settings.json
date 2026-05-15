@@ -13,7 +13,8 @@
       "Bash(powershell -Command 'openfiles /query /fo csv 2>&1 | Select-String \"app.asar\"')",
       "Bash(wmic process:*)",
       "Bash(powershell -Command 'Get-CimInstance Win32_Process | Where-Object {$_.CommandLine -like \"*distribute*\" -or $_.CommandLine -like \"*app.asar*\"} | Select-Object Name,ProcessId,CommandLine')",
-      "Bash(powershell -Command ':*)"
+      "Bash(powershell -Command ':*)",
+      "Bash(npm i *)"
     ]
   }
 }
