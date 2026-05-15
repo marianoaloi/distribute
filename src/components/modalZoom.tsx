@@ -52,6 +52,18 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                         videoRef.current.pause()
                     }
                 }
+            },
+            maxVolume() {
+                const videoInZoom: any = videoRef.current
+                if (!videoInZoom)
+                    return
+                videoInZoom.volume = 1
+            },
+                minVolume() {
+                const videoInZoom: any = videoRef.current
+                if (!videoInZoom)
+                    return
+                videoInZoom.volume = 0.001
             }
         }));
 
@@ -198,7 +210,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                 return  
             setTimeout(() => {
                 setSoundIsMuted(!hasAudio(videoInZoom))
-            }, 1000);
+            }, 300);
         }
         const hasAudio = (video: any): boolean => {
             // audioTracks is reliable after loadedmetadata in Chromium/Electron

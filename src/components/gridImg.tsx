@@ -48,6 +48,8 @@ export const GridIMGs = (() => {
         fullScreenVideo: () => void,
         togleVideoControls: () => void
         playPauseVideo: () => void
+        maxVolume: () => void,
+        minVolume: () => void
     
       }>(null);
 
@@ -242,6 +244,12 @@ export const GridIMGs = (() => {
     }
     if (ev.key === "1" ) {
       modalZoomRefMethods.current.togleVideoControls()
+    }
+    if (ev.key === "v" ) {
+      modalZoomRefMethods.current.maxVolume()
+    }
+    if (ev.key === "b" ) {
+      modalZoomRefMethods.current.minVolume()
     }
   }
 
