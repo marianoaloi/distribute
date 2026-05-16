@@ -61,15 +61,17 @@ export const FoldersZoom = styled(Folders)`
     top: 0px;
     z-index: 2;
 `
-
-export const MuteIcon = styled(VolumeMuteRounded)`
-    color: red;
-    height: 100px;
-    width: 100px;
+export const InfoBox = styled.div`
     position: fixed;
     top: 10px;
     right: 10px;
     z-index: 3;
+`
+export const MuteIcon = styled(VolumeMuteRounded)`
+    color: red;
+    height: 100px;
+    width: 100px;
+
 `
 
 export const MediaControllersCSS = styled.div`

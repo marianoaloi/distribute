@@ -1,6 +1,5 @@
-import { createReducer } from "@reduxjs/toolkit"
+import { createReducer, WritableDraft } from "@reduxjs/toolkit"
 import { addFolder, removeFolder } from "./thunks"
-import { WritableDraft } from "immer/dist/internal"
 
 
 interface FoldersDistribute {
@@ -31,7 +30,7 @@ function addFolderTransform(state: WritableDraft<FoldersDistribute>, action: { p
 }
 function removeFolderTransform(state: WritableDraft<FoldersDistribute>, action: { payload: string; type: string }): string[] {
 
-    return state.folders.filter(fold => fold !== action.payload)
+    return state.folders.filter((fold: string) => fold !== action.payload)
 }
 
 
