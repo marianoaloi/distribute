@@ -146,74 +146,28 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             videoInZoom.controls = !videoInZoom.controls
         }
 
-        const SoundVolumeLevel = () => {
-            const videoInZoom: any = videoRef.current
-            if (!videoInZoom)
-                return <MuteIcon color="error" />
-            
-            return <span>{`${(volumeLevel * 100).toFixed(0)}%`}</span>
+        const zoomImage = (event: any, imgInZoom: any): void => {
+            if (!imgInZoom)
+                return
+            if (event.ctrlKey) {
+                zoonNow += event.deltaY > 0 ? zoonNow > 0.3 ? -0.2 : 0 : 0.2
+                imgInZoom.style.zoom = (zoonNow).toString()
+                event.stopPropagation();
+            }
         }
 
-
-
-        const MediaConstPresentation = () => {
-
-
-            const zoomImage = (event: any, imgInZoom: any): void => {
-
-                if (!imgInZoom)
-                    return
-                if (event.ctrlKey) {
-                    zoonNow += event.deltaY > 0 ? zoonNow > 0.3 ? -0.2 : 0 : 0.2
-                    imgInZoom.style.zoom = (zoonNow).toString()
-                    event.stopPropagation();
+        const controlVolumeByAltPresed = (event: any): void => {
+            const videoInZoom: any = videoRef.current
+            if (!videoInZoom)
+                return
+            if (event.ctrlKey) {
+                if (event.deltaY > 0 && videoInZoom.volume > 0.001) {
+                    videoInZoom.volume -= videoInZoom.volume <= 0.01 ? 0.001 : 0.01
+                } else if (event.deltaY < 0 && videoInZoom.volume < 0.99) {
+                    videoInZoom.volume += videoInZoom.volume <= 0.01 ? 0.001 : 0.01
                 }
+                event.stopPropagation();
             }
-
-            const controlVolumeByAltPresed = (event: any): void => {
-                const videoInZoom: any = videoRef.current
-                if (!videoInZoom)
-                    return
-                if (event.ctrlKey) {
-                    if (event.deltaY > 0 && videoInZoom.volume > 0.001) {
-                        videoInZoom.volume -= videoInZoom.volume <= 0.01 ? 0.001 : 0.01
-                    } else if (event.deltaY < 0 && videoInZoom.volume < 0.99) {
-                        videoInZoom.volume += videoInZoom.volume <= 0.01 ? 0.001 : 0.01
-                    }
-                    event.stopPropagation();
-                }
-            }
-
-
-
-            return (
-                <MediaPresentation>
-                    {
-                        mediaWithPreview.mime.includes('video')
-                            ?
-                            <>
-                                <VideoPresentation ref={videoRef} src={toMediaUrl(mediaWithPreview.path)}
-                                    onLoadedMetadata={startVid}
-                                    onDoubleClick={changeCheckbox}
-                                    onWheel={controlVolumeByAltPresed}
-                                    onVolumeChange={(ev) => setVolumeLevel(ev.currentTarget.volume)}
-                                    autoPlay title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></VideoPresentation>
-                                <InfoBox>
-                                    {soundIsMuted ? <MuteIcon color="error" /> : <SoundVolumeLevel />}
-                                </InfoBox>
-
-                            </>
-                            :
-                            <ImgPresentation
-                                onDoubleClick={changeCheckbox}
-                                draggable={false}
-                                // className="imageAddaptScreen"
-                                onWheel={(ev) => zoomImage(ev, imgRef.current)}
-                                ref={imgRef} src={toMediaUrl(mediaWithPreview.path)}
-                                alt={mediaWithPreview.path} title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></ImgPresentation>
-
-                    }
-                </MediaPresentation>)
         }
         const enableIconVideoNoSound = async () => {
             const videoInZoom: any = videoRef.current
@@ -318,7 +272,30 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                         <label htmlFor="selectMedia">Select</label>
                         <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
                     </div>
-                    <MediaConstPresentation></MediaConstPresentation>
+                    <MediaPresentation>
+                        {
+                            mediaWithPreview.mime.includes('video')
+                                ?
+                                <>
+                                    <VideoPresentation ref={videoRef} src={toMediaUrl(mediaWithPreview.path)}
+                                        onLoadedMetadata={startVid}
+                                        onDoubleClick={changeCheckbox}
+                                        onWheel={controlVolumeByAltPresed}
+                                        onVolumeChange={(ev) => setVolumeLevel(ev.currentTarget.volume)}
+                                        autoPlay title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></VideoPresentation>
+                                    <InfoBox>
+                                        {soundIsMuted ? <MuteIcon color="error" /> : <span>{`${(volumeLevel * 100).toFixed(0)}%`}</span>}
+                                    </InfoBox>
+                                </>
+                                :
+                                <ImgPresentation
+                                    onDoubleClick={changeCheckbox}
+                                    draggable={false}
+                                    onWheel={(ev) => zoomImage(ev, imgRef.current)}
+                                    ref={imgRef} src={toMediaUrl(mediaWithPreview.path)}
+                                    alt={mediaWithPreview.path} title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></ImgPresentation>
+                        }
+                    </MediaPresentation>
                     <MediaControllers />
                 </ModalBox>
 
