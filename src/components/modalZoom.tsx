@@ -28,7 +28,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         const imgRef = useRef<HTMLImageElement | null>(null)
         const videoRef = useRef<HTMLVideoElement | null>(null)
         const dispatch = useDispatch();
-        const [soundIsMuted, setSoundIsMuted] = useState(true);
+        const [soundIsMuted, setSoundIsMuted] = useState(false);
         const [volumeLevel, setVolumeLevel] = useState(0);
 
 
@@ -284,7 +284,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                         onVolumeChange={(ev) => setVolumeLevel(ev.currentTarget.volume)}
                                         autoPlay title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></VideoPresentation>
                                     <InfoBox>
-                                        {soundIsMuted ? <MuteIcon color="error" /> : <span>{`${(volumeLevel * 100).toFixed(0)}%`}</span>}
+                                        {soundIsMuted ? <MuteIcon color="error" /> : <span>{`${(volumeLevel * 100).toFixed(2)}%`}</span>}
                                     </InfoBox>
                                 </>
                                 :
