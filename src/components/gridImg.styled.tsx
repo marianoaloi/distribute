@@ -90,6 +90,10 @@ export const Resume = styled.div`
         align-items: center;
         gap: 8px;
     }
+
+    .spacer {
+        flex-grow: 1;
+    }
 `
 
 export const Qtd = styled(Typography)`
