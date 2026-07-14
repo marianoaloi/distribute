@@ -5,18 +5,17 @@ import { Button, IconButton } from "@mui/material";
 
 
 export const FolderGrid = styled.div`
-        background: antiquewhite;
-        height: 40px;
-        place-content: center flex-start;
-        padding: 0px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 4px;
+        padding: 4px 8px;
         margin: 0px;
-        // width: 100%;
-        display: inline-flex;
-        flex-wrap: nowrap;
-        -webkit-box-pack: start;
-        -webkit-box-align: center;
+        display: flex;
+        flex-wrap: wrap;
         align-items: center;
-      
+        gap: 6px;
+        min-height: 32px;
+        height: auto;
 `
 
 export const AddFolder = styled(IconButton)`
