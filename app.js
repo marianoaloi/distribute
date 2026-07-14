@@ -12,6 +12,11 @@ protocol.registerSchemesAsPrivileged([
 
 
 const os = require('os');
+const util = require("./util");
+const { dirCache } = require("./DirectorioCache");
+const transformData = util.transformData;
+const transformDataStreaming = util.transformDataStreaming;
+var actualSort = util.sortSize;
 
 var menuTemplate = () => [
     {
@@ -48,13 +53,22 @@ var menuTemplate = () => [
     {
         label: 'Order',
         submenu: [
-            { label: "Sort by Name", click: sortByName },
-            { label: "Sort by Size", click: sortBySize },
-            { label: "Sort by Folder", click: sortByFolder },
+            { label: "Sort by Name", type: "radio", checked: actualSort === util.sortName, click: sortByName },
+            { label: "Sort by Size", type: "radio", checked: actualSort === util.sortSize, click: sortBySize },
+            { label: "Sort by Folder", type: "radio", checked: actualSort === util.sortFolder, click: sortByFolder },
         ]
     },
 
 ]
+
+const updateMenu = () => {
+    try {
+        const menu = Menu.buildFromTemplate(menuTemplate())
+        Menu.setApplicationMenu(menu)
+    } catch (error) {
+        console.error("Error setting application menu", error);
+    }
+}
 var mainWindow
 var fileGlobal
 function createWindow() {
@@ -101,12 +115,7 @@ function createWindow() {
 
 
 
-    try {
-        const menu = Menu.buildFromTemplate(menuTemplate())
-        Menu.setApplicationMenu(menu)
-    } catch (error) {
-        console.error("Error setting application menu", error);
-    }
+    updateMenu();
 
 
     try {
@@ -232,11 +241,6 @@ const moveFile = (bol, dest, onlyCopy, data) => {
         // mainWindow.ipcMain.send("delete", media)
     });
 }
-const util = require("./util");
-const { dirCache } = require("./DirectorioCache");
-const transformData = util.transformData
-const transformDataStreaming = util.transformDataStreaming
-var actualSort = util.sortSize
 const openfile = () => {
     mainWindow.title = `Get Images in ${fileGlobal}`
 
@@ -341,9 +345,36 @@ const openfileRecursive = (folderPath) => {
 
 const cleanGrid = async () => { mainWindow.webContents.send("cleanGrid") }
 
-const sortByName = async () => { actualSort = util.sortName; openfile() }    //mainWindow.webContents.send("sort","sortByName")
-const sortBySize = async () => { actualSort = util.sortSize; openfile() }    //mainWindow.webContents.send("sort","sortBySize")
-const sortByFolder = async () => { actualSort = util.sortFolder; openfile() }    //mainWindow.webContents.send("sort","sortByFolder")
+const sortByName = async () => {
+    actualSort = util.sortName;
+    updateMenu();
+    if (fileGlobal) {
+        openfile();
+    }
+    if (mainWindow) {
+        mainWindow.webContents.send("sort", "sortByName");
+    }
+}
+const sortBySize = async () => {
+    actualSort = util.sortSize;
+    updateMenu();
+    if (fileGlobal) {
+        openfile();
+    }
+    if (mainWindow) {
+        mainWindow.webContents.send("sort", "sortBySize");
+    }
+}
+const sortByFolder = async () => {
+    actualSort = util.sortFolder;
+    updateMenu();
+    if (fileGlobal) {
+        openfile();
+    }
+    if (mainWindow) {
+        mainWindow.webContents.send("sort", "sortByFolder");
+    }
+}
 
 app.whenReady().then(() => {
     installExtension([REDUX_DEVTOOLS, REACT_DEVELOPER_TOOLS])
