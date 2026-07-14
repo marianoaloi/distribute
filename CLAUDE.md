@@ -10,7 +10,7 @@ Electron-based media browser for viewing and organizing images/videos. Loads med
 
 ```bash
 # React dev server (renderer)
-npm start                 # Starts on localhost:3000 (BROWSER=none to skip auto-open)
+npm start                 # Starts on localhost:7845 (PORT and BROWSER=none set in .env)
 npm run build             # Production build to build/
 npm run buildMaloi        # Build with source maps
 
@@ -82,7 +82,7 @@ Store setup in `src/lib/redux/store.ts` uses `redux-logger` middleware in develo
 
 - `app.js` creates temp dir at `path.join(__dirname, "tmp")` but `util.js` hardcodes `C:\tmp\ffmpeg\` for thumbnail cache — these are inconsistent
 - `ffmpegthumbnailer` must be installed and on PATH for video thumbnail generation
-- Dev mode detection uses `electron-is-dev` package; in dev loads `localhost:3000`, in prod loads `build/index.html`
+- Dev mode detection uses `electron-is-dev` package; in dev loads `localhost:7845`, in prod loads `build/index.html`
 - On Windows, `app.on("window-all-closed")` calls `process.exit(0)` instead of `app.quit()`
 
 ### Keyboard Shortcuts (handled in App.tsx)

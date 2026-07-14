@@ -129,18 +129,18 @@ export const GridIMGs = (() => {
         if (inputElement) {
             const handleWheel = (ev: globalThis.WheelEvent) => {
                 ev.preventDefault();
-                setSpeed(Math.trunc((ev.deltaY * -0.01) + speed));
+                setSpeed(prev => Math.trunc((ev.deltaY * -0.01) + prev));
             };
 
             // Add non-passive event listener
-            inputElement.addEventListener('wheel', (ev) => handleWheel(ev), { passive: false });
+            inputElement.addEventListener('wheel', handleWheel, { passive: false });
 
             return () => {
                 // Clean up the event listener
-                inputElement.removeEventListener('wheel', (ev) => handleWheel(ev));
+                inputElement.removeEventListener('wheel', handleWheel);
             };
         }
-    }, [scrollIntervalId, speed]);
+    }, []);
 
     useEffect(() => {
         // Clean up the interval when the component unmounts
@@ -286,7 +286,7 @@ export const GridIMGs = (() => {
             <ImgGrid>
                 {mediaSliced.length > 0
                     ?
-                    mediaSliced.map(media => <MediaIMG key={`${media.screenIndex}${media.id}`} media={media}
+                    mediaSliced.map(media => <MediaIMG key={media.id} media={media}
                         lastClickedEvent={lastClickedEvent}
                         shiftSelect={shiftSelect}
                         shiftControlSelect={shiftControlSelect}

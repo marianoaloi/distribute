@@ -62,21 +62,15 @@ const itemsSlice = createSlice({
             return result;
         },
 
-        orderByName:(state) => ({
-            ...state,
-            medias :state.medias.sort((a:Media,b:Media) => a.media.localeCompare(b.media))
-            
-        }),
-        orderBySize:(state) => ({
-            ...state,
-            medias :state.medias.sort((a:Media,b:Media) => a.size-b.size)
-            
-        }),
-        orderByFolder:(state) => ({
-            ...state,
-            medias :state.medias.sort((a:Media,b:Media) => a.path.localeCompare(b.path))
-            
-        }),
+        orderByName:(state) => {
+            state.medias.sort((a:Media,b:Media) => a.media.localeCompare(b.media))
+        },
+        orderBySize:(state) => {
+            state.medias.sort((a:Media,b:Media) => a.size-b.size)
+        },
+        orderByFolder:(state) => {
+            state.medias.sort((a:Media,b:Media) => a.path.localeCompare(b.path))
+        },
     }
 })
 

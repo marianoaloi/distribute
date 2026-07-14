@@ -1,5 +1,4 @@
-import { ElectronService } from 'ngx-electron';
-import { addListinActualArray, addOnceMedia, orderByFolder, orderByName, orderBySize, populateArray, updateArrayItem } from './media.reduce';
+import { addListinActualArray, addOnceMedia, orderByFolder, orderByName, orderBySize, populateArray, purgeArray, updateArrayItem } from './media.reduce';
 import { example } from './populateExample';
 import { Media } from '../../../../entity/Media';
 import { addFolder } from '../folders';
@@ -7,7 +6,7 @@ import { zoomIn, zoomOut } from '../configurations';
 import { FileDTO } from '../../../../entity/FileDTO';
 
 
-const isElectronApp = new ElectronService().isElectronApp;
+const isElectronApp = typeof window !== 'undefined' && !!window.electron;
 const ipcRender = isElectronApp ? window.electron.ipcRenderer : undefined;
 
 export const ElectronConnection = () => {
@@ -23,7 +22,7 @@ export const ElectronConnection = () => {
 
     return (dispatch: any) => {
         if (ipcRender) {
-            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen'];
+            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid'];
             channels.forEach(ch => ipcRender.removeAllListeners(ch));
 
             ipcRender.on('directoryOpen', (e: any, args: any) => {
@@ -73,6 +72,9 @@ export const ElectronConnection = () => {
             })
             ipcRender.on('menuOpen', (e: any, folders: string[]) => {
                 folders.forEach(folder => dispatch(addFolder(folder)))
+            })
+            ipcRender.on('cleanGrid', () => {
+                dispatch(purgeArray())
             })
             ipcRender.send("verifyOpen", undefined)
         }

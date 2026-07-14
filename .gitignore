@@ -30,3 +30,5 @@ distribute-win32-x64
 distribute-win32-x64/**
 dist/**
 tmp/**
+.claude/**
+.claude-flow/**

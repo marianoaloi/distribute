@@ -1,48 +1,19 @@
 const path = require("path");
 const fs = require("fs");
 
-const os = require('os');
-const crypto = require('crypto');
-
+const mime = require('mime-types');
+const thumbnails = require("./thumbnails/ThumbnailService");
+const { hashFor } = require("./thumbnails/cache");
 
 const sortSize = (a, b) => b.size - a.size
-const sortName = (a, b) => path.basename(b.item) - path.basename(a.item)
-const sortFolder = (a, b) => b.size - a.size
+const sortName = (a, b) => path.basename(a.item).localeCompare(path.basename(b.item))
+const sortFolder = (a, b) => path.dirname(a.item).localeCompare(path.dirname(b.item))
 const noSort = (a, b) => 0
-
-
-
-
-
-const mime = require('mime-types');
-const { execSync, execFileSync, execFile } = require('child_process');
-const { quote } = require('shell-quote');
-const { dirCache } = require("./DirectorioCache");
 
 const transformData = (data, folderOpened, counter, sortFiles = sortSize) => {
     return transformFixedData(data.map(item => path.join(folderOpened, item)), counter, sortFiles)
 
 }
-
-const execCommandFFMPEG = (input, output) => {
-    try {
-        execFileSync('ffmpegthumbnailer', ['-s300', '-i', input, '-o', output, '-f'], { encoding: 'UTF-8' })
-    } catch (error) {
-        console.error("FFMPEG error", error.message, "\nCommand: ", `ffmpegthumbnailer -s300 -i "${input}" -o "${output}" -f `);
-        throw error;
-    }
-}
-
-const execCommandFFMPEGAsync = (input, output) => new Promise((resolve, reject) => {
-    execFile('ffmpegthumbnailer', ['-s300', '-i', input, '-o', output, '-f'], { encoding: 'UTF-8' }, (error) => {
-        if (error) {
-            console.error("FFMPEG async error", error.message);
-            reject(error);
-        } else {
-            resolve();
-        }
-    });
-});
 
 const transformDataStreaming = async (data, folderOpened, counter, sortFiles = sortSize, onImages, onVideo) => {
     const allPaths = data.map(item => path.join(folderOpened, item));
@@ -64,31 +35,8 @@ const transformDataStreaming = async (data, folderOpened, counter, sortFiles = s
     onImages(images);
 
     for (const item of videos) {
-        const hashName = crypto.createHash('md5').update(item.item).digest('hex');
-        const fileName = path.join(dirCache, 'tmp', 'ffmpeg', `${hashName}.jpeg`);
-        item.fileName = fileName;
-
-        if (!fs.existsSync(fileName)) {
-            const input = item.item;
-            try {
-                await execCommandFFMPEGAsync(input, fileName);
-                onVideo(item);
-            } catch {
-                try {
-                    const ext = path.extname(input);
-                    const tmp = path.join(dirCache, hashName + ext);
-                    fs.linkSync(input, tmp);
-                    await execCommandFFMPEGAsync(tmp, fileName);
-                    fs.unlinkSync(tmp);
-                    console.log("Thumbnail created using temporary link for", item.item);
-                    onVideo(item);
-                } catch {
-                    console.error("Failed to create thumbnail for", item.item);
-                }
-            }
-        } else {
-            onVideo(item);
-        }
+        item.fileName = await thumbnails.getThumbnail(item.item);
+        onVideo(item);
     }
 };
 
@@ -106,35 +54,9 @@ const transformFixedData = (data, counter, sortFiles = sortSize) => {
         })
         .sort(sortFiles)
         .map(item => {
-
-            const hashName = crypto.createHash('md5').update(item.item).digest('hex');
-            item.hash = hashName;
-            const mime_type = item.mime
-            if (mime_type && mime_type.includes('video')) {
-                // item.item = item.item.trim()
-                const fileName = `${path.join(dirCache, "tmp/ffmpeg")}\\${hashName}.jpeg`
-                item.fileName = fileName
-                if (!fs.existsSync(fileName)) {
-                    const input = item.item;
-                    try {
-                        //`ffmpegthumbnailer -s300 -i "${item.item}" -o "${fileName}" -f `
-                        // execSync(`chcp 65001 >nul && ffmpegthumbnailer -s300 -i "${item.item}" -o "${fileName}" -f `, {'encoding': 'UTF-8'})
-                        execCommandFFMPEG(input, fileName)
-                    } catch (error) {
-                        try {
-                            const ext = path.extname(input);
-                            const tmp = path.join(dirCache, hashName + ext);
-                            fs.linkSync(input, tmp);
-                            execCommandFFMPEG(tmp, fileName)
-                            fs.unlinkSync(tmp);
-                            console.log("Thumbnail created using temporary link for", item.item);
-                        } catch (error) {
-                            return undefined
-                        }
-                        return undefined
-                    }
-                }
-
+            item.hash = hashFor(item.item);
+            if (item.mime && item.mime.includes('video')) {
+                item.fileName = thumbnails.getThumbnailSync(item.item);
             }
             return item
 

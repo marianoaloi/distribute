@@ -42,6 +42,7 @@ var menuTemplate = () => [
                 click: () => zoomImg(-1),
                 accelerator: "numsub"
             },
+            { label: 'Clean', click: cleanGrid },
         ]
     },
     {
@@ -58,13 +59,7 @@ var mainWindow
 var fileGlobal
 function createWindow() {
     try {
-        // if (fs.existsSync(path.join(dirCache, "tmp"))) {
-        //     fs.rmSync(path.join(dirCache, "tmp"), { recursive: true })
-        // }
-        if (!fs.existsSync(path.join(dirCache, "tmp"))) {
-            fs.mkdirSync(path.join(dirCache, "tmp"))
-            fs.mkdirSync(path.join(dirCache, "tmp/ffmpeg"))
-        }
+        require("./thumbnails/ThumbnailService").ensureCacheDir()
     } catch (error) {
         console.error("Error creating tmp folder", error);
     }
@@ -73,11 +68,8 @@ function createWindow() {
         // height: 600,
         icon: path.join(__dirname, `/build/logo512.png`),
         webPreferences: {
-            // nodeIntegration: true,
             contextIsolation: true,
-            nodeIntegration: true,
-            enableRemoteModule: true,
-            // contextIsolation: false,
+            nodeIntegration: false,
             spellcheck: true,
             preload: path.join(__dirname, 'preload.js'),
         },
@@ -86,15 +78,14 @@ function createWindow() {
         },
     });
 
+    const startURL = isDev
+        ? 'http://localhost:7845'
+        : `file://${path.join(__dirname, `/build/index.html`)}`;
+
     try {
-
-        const startURL = isDev
-            ? 'http://localhost:3000'
-            : `file://${path.join(__dirname, `/build/index.html`)}`;
-
         mainWindow.loadURL(startURL);
     } catch (error) {
-        console.error(`Error loading URL: ${error} 
+        console.error(`Error loading URL: ${error}
             IsDev: ${isDev}
             Start URL: ${startURL}`);
     }
@@ -152,8 +143,10 @@ app.on("window-all-closed", function () {
 });
 
 app.on('before-quit', () => {
-    mainWindow.removeAllListeners('close');
-    mainWindow.close();
+    if (mainWindow) {
+        mainWindow.removeAllListeners('close');
+        mainWindow.close();
+    }
 });
 /********************************************** */
 
@@ -210,16 +203,32 @@ const moveFile = (bol, dest, onlyCopy, data) => {
         if (!fs.existsSync(completeDestine)) {
             fs.mkdirSync(completeDestine)
         }
-        if (fs.existsSync(media.path))
+        if (fs.existsSync(media.path)) {
+            const destination = path.join(completeDestine, path.basename(media.path));
             if (onlyCopy) {
-                fs.copyFile(media.path, path.join(completeDestine, path.basename(media.path)), (err) => {
-                    if (err) throw err;
+                fs.copyFile(media.path, destination, (err) => {
+                    if (err) console.error("Copy failed for", media.path, "-", err);
                 })
             } else {
-                fs.rename(media.path, path.join(completeDestine, path.basename(media.path)), (err) => {
-                    if (err) throw err;
+                fs.rename(media.path, destination, (err) => {
+                    if (!err) return;
+                    if (err.code !== "EXDEV") {
+                        console.error("Move failed for", media.path, "-", err);
+                        return;
+                    }
+                    // rename cannot cross volumes: fall back to copy + delete
+                    fs.copyFile(media.path, destination, (copyErr) => {
+                        if (copyErr) {
+                            console.error("Move (copy fallback) failed for", media.path, "-", copyErr);
+                            return;
+                        }
+                        fs.unlink(media.path, (unlinkErr) => {
+                            if (unlinkErr) console.error("Move (source cleanup) failed for", media.path, "-", unlinkErr);
+                        });
+                    });
                 })
             }
+        }
         // mainWindow.ipcMain.send("delete", media)
     });
 }
@@ -318,7 +327,7 @@ const openfileRecursive = (folderPath) => {
 
 
     fs.readdir(folderPath, "utf8", (err, data) => {
-        if (err) console.error(err);
+        if (err) { console.error(err); return; }
         let qtdFiles = data.map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isFile()).length
         data.map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isDirectory()).forEach(item => openfileRecursive(item))
 
@@ -329,6 +338,8 @@ const openfileRecursive = (folderPath) => {
         counter += qtdFiles
     })
 }
+
+const cleanGrid = async () => { mainWindow.webContents.send("cleanGrid") }
 
 const sortByName = async () => { actualSort = util.sortName; openfile() }    //mainWindow.webContents.send("sort","sortByName")
 const sortBySize = async () => { actualSort = util.sortSize; openfile() }    //mainWindow.webContents.send("sort","sortBySize")

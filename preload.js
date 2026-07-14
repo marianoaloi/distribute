@@ -27,6 +27,7 @@ const ipc = {
             'openRecursive',
             'sort',
             'open',
+            'cleanGrid',
          ],
         // From render to main and back again.
         'sendReceive': [
@@ -39,8 +40,9 @@ const ipc = {
             'verifyOpen',
             'openRecursive',
             'sort',
-            'open', 
+            'open',
             "addOneMedia",
+            'cleanGrid',
         ]
     }
 };
