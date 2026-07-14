@@ -4,7 +4,7 @@ import { setMediaType, zoomIn, zoomOut } from "./thunks"
 
 interface Config {
     pxzoom: number
-    mediaType?: 'image' | 'video' | undefined
+    mediaType?: 'image' | 'video' | 'gif' | undefined
 }
 
 const initialState: Config = {

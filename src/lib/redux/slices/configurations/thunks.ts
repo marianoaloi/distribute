@@ -11,7 +11,7 @@ export const zoomOut = createAction(
 
 export const setMediaType = createAction(
     'config/setMediaType',
-    (mediaType: 'video' | 'image' | undefined) => ({
+    (mediaType: 'video' | 'image' | 'gif' | undefined) => ({
         payload: mediaType
     })
 )
