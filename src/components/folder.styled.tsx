@@ -16,6 +16,17 @@ export const FolderGrid = styled.div`
         gap: 6px;
         min-height: 32px;
         height: auto;
+
+        .onlyCopyLabel {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 13px;
+            user-select: none;
+            cursor: pointer;
+            color: #ccc;
+            white-space: nowrap;
+        }
 `
 
 export const AddFolder = styled(IconButton)`

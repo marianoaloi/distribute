@@ -1,7 +1,7 @@
 import { forwardRef, SyntheticEvent, useImperativeHandle, useRef, useState } from "react"
 import { Media } from "../entity/Media"
 import { prettifySizeF } from "./media"
-import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, MediaControllersCSS, FoldersZoom, MuteIcon, InfoBox } from "./modalZoom.styled"
+import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, MediaControllersCSS, FoldersZoom, MuteIcon, InfoBox, ZoomHeader } from "./modalZoom.styled"
 import { IconButton, Slider, Modal } from "@mui/material"
 import { toMediaUrl } from "../lib/mediaUrl"
 import { ArrowBackIos, ArrowForwardIos, CleaningServices } from "@mui/icons-material"
@@ -265,13 +265,13 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             >
 
                 <ModalBox >
-                    <div>
+                    <ZoomHeader>
                         {onPrev && <IconButton onClick={onPrev}><ArrowBackIos /></IconButton>}
                         {onNext && <IconButton onClick={onNext}><ArrowForwardIos /></IconButton>}
-                        <input style={{ zoom: 2 }} type="checkbox" onClick={changeCheckbox} id="selectMedia" defaultChecked={mediaWithPreview.checked} />
-                        <label htmlFor="selectMedia">Select</label>
+                        <input style={{ cursor: 'pointer' }} type="checkbox" onClick={changeCheckbox} id="selectMedia" defaultChecked={mediaWithPreview.checked} />
+                        <label htmlFor="selectMedia" style={{ cursor: 'pointer', userSelect: 'none', fontSize: '14px', marginRight: '8px' }}>Select</label>
                         <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
-                    </div>
+                    </ZoomHeader>
                     <MediaPresentation>
                         {
                             mediaWithPreview.mime.includes('video')
