@@ -32,3 +32,4 @@ dist/**
 tmp/**
 .claude/**
 .claude-flow/**
+**.tgz
