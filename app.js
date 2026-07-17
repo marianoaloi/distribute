@@ -348,9 +348,6 @@ const cleanGrid = async () => { mainWindow.webContents.send("cleanGrid") }
 const sortByName = async () => {
     actualSort = util.sortName;
     updateMenu();
-    if (fileGlobal) {
-        openfile();
-    }
     if (mainWindow) {
         mainWindow.webContents.send("sort", "sortByName");
     }
@@ -358,9 +355,6 @@ const sortByName = async () => {
 const sortBySize = async () => {
     actualSort = util.sortSize;
     updateMenu();
-    if (fileGlobal) {
-        openfile();
-    }
     if (mainWindow) {
         mainWindow.webContents.send("sort", "sortBySize");
     }
@@ -368,9 +362,6 @@ const sortBySize = async () => {
 const sortByFolder = async () => {
     actualSort = util.sortFolder;
     updateMenu();
-    if (fileGlobal) {
-        openfile();
-    }
     if (mainWindow) {
         mainWindow.webContents.send("sort", "sortByFolder");
     }
