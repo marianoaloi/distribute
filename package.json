@@ -67,7 +67,7 @@
     "build": "react-scripts build",
     "buildMaloi": "react-scripts build --source-map --base-href ",
     "test": "react-scripts test",
-    "electron": "electron .",
+    "electron": "npm version patch --no-git-tag-version && electron .",
     "eject": "react-scripts eject",
     "buildele": "npm run build && ./ExecutableLinux.sh",
     "deb64": "electron-installer-debian --src dist_resume/getimage-linux-x64/ --dest dist_resume/installers/ --arch amd64",
