@@ -132,6 +132,10 @@ export const InfoBox = styled.div`
     top: 10px;
     right: 10px;
     z-index: 3;
+    display: flex;
+    flex-wrap: wrap;
+    flex-direction: column;
+    align-items: center;
 `
 export const MuteIcon = styled(VolumeMuteRounded)`
     color: red;

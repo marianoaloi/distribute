@@ -33,3 +33,4 @@ tmp/**
 .claude/**
 .claude-flow/**
 **.tgz
+.swarm/**
