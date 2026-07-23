@@ -269,7 +269,7 @@ const openfile = () => {
                 mainWindow.webContents.send("directoryOpen", images);
             },
             (video) => {
-                console.log("Video found", video.id);
+                // console.log("Video found", video.id);
                 mainWindow.webContents.send("addOneMedia", video);
             }
         );

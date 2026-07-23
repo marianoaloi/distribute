@@ -45,8 +45,20 @@ const indexImage = async (mediaItem) => {
     }
 };
 
+// Frame positions are fixed labels (not duration-derived), so we can check
+// whether a video's frames are already indexed without probing it via ffmpeg.
+const videoAlreadyIndexed = async (localPath) => {
+    const baseId = hashFor(localPath);
+    for (const position of videoFrames.FRAME_POSITIONS) {
+        if (!(await compareImgStore.index.getItem(`${baseId}_${position}`))) return false;
+    }
+    return true;
+};
+
 const indexVideo = async (mediaItem) => {
     const localPath = mediaItem.item;
+    if (await videoAlreadyIndexed(localPath)) return;
+
     const frames = await videoFrames.extractFrames(localPath).catch(error => {
         console.error(`compareImg: frame extraction failed for ${localPath}:`, error.message);
         return [];

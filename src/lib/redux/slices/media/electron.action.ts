@@ -44,7 +44,7 @@ export const ElectronConnection = () => {
 
             ipcRender.on("addOneMedia", (e: any, media: FileDTO) => {
 
-                console.log("Receive one media ", media.id);
+                // console.log("Receive one media ", media.id);
 
                 dispatch(addOnceMedia(media))
 
