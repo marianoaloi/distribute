@@ -3,6 +3,7 @@ import { example } from './populateExample';
 import { Media } from '../../../../entity/Media';
 import { addFolder } from '../folders';
 import { zoomIn, zoomOut } from '../configurations';
+import { setDuplicateGroups } from '../duplicates';
 import { FileDTO } from '../../../../entity/FileDTO';
 
 
@@ -22,7 +23,7 @@ export const ElectronConnection = () => {
 
     return (dispatch: any) => {
         if (ipcRender) {
-            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid'];
+            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound'];
             channels.forEach(ch => ipcRender.removeAllListeners(ch));
 
             ipcRender.on('directoryOpen', (e: any, args: any) => {
@@ -75,6 +76,9 @@ export const ElectronConnection = () => {
             })
             ipcRender.on('cleanGrid', () => {
                 dispatch(purgeArray())
+            })
+            ipcRender.on('duplicatesFound', (e: any, groups: number[][]) => {
+                dispatch(setDuplicateGroups(groups))
             })
             ipcRender.send("verifyOpen", undefined)
         }

@@ -30,5 +30,9 @@ distribute-win32-x64
 distribute-win32-x64/**
 dist/**
 tmp/**
+compareImg/vectorIndex/**
 .claude/**
 .claude-flow/**
+**.tgz
+.swarm/**
+ruvector.db

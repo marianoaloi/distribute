@@ -1,11 +1,13 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import './App.css';
 import { ElectronConnection, useDispatch } from './lib/redux';
 import { GridIMGs } from './components/gridImg';
+import { GridDuplicates } from './components/duplicatesGrid';
 
 function App() {
 
   const dispatch = useDispatch();
+  const [view, setView] = useState<'grid' | 'duplicates'>('grid');
 
   useEffect(() => {
     dispatch(ElectronConnection())
@@ -21,8 +23,10 @@ function App() {
 
       <header className="App-header">
         {/* <img src={logo} className="App-logo" alt="logo" /> */}
+        <button onClick={() => setView('grid')} disabled={view === 'grid'}>Grid</button>
+        <button onClick={() => setView('duplicates')} disabled={view === 'duplicates'}>Duplicates</button>
       </header>
-      <GridIMGs />
+      {view === 'grid' ? <GridIMGs /> : <GridDuplicates />}
 
     </div>
   );

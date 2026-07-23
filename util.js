@@ -4,6 +4,7 @@ const fs = require("fs");
 const mime = require('mime-types');
 const thumbnails = require("./thumbnails/ThumbnailService");
 const { hashFor } = require("./thumbnails/cache");
+const compareImgStore = require("./compareImg/VectorStore");
 
 const sortSize = (a, b) => b.size - a.size
 const sortName = (a, b) => path.basename(a.item).localeCompare(path.basename(b.item))
@@ -16,6 +17,8 @@ const transformData = (data, folderOpened, counter, sortFiles = sortSize) => {
 }
 
 const transformDataStreaming = async (data, folderOpened, counter, sortFiles = sortSize, onImages, onVideo) => {
+    await compareImgStore.ensureReady();
+
     const allPaths = data.map(item => path.join(folderOpened, item));
 
     const withMeta = allPaths
@@ -41,6 +44,7 @@ const transformDataStreaming = async (data, folderOpened, counter, sortFiles = s
 };
 
 const transformFixedData = (data, counter, sortFiles = sortSize) => {
+    compareImgStore.ensureReady().catch(error => console.error("compareImg index init failed:", error));
 
     return data.filter(filepath => fs.statSync(filepath)
         .isFile()

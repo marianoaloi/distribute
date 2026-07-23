@@ -14,6 +14,7 @@ protocol.registerSchemesAsPrivileged([
 const os = require('os');
 const util = require("./util");
 const { dirCache } = require("./DirectorioCache");
+const duplicateFinder = require("./compareImg/duplicateFinder");
 const transformData = util.transformData;
 const transformDataStreaming = util.transformDataStreaming;
 var actualSort = util.sortSize;
@@ -183,6 +184,16 @@ ipcMain.on("open", () => {
 ipcMain.on("process", async (event, data) => {
     if (data) {
         moveFile(true, data.folder, data.onlyCopy, data.data)
+    }
+})
+
+ipcMain.on("findDuplicates", async (event, data) => {
+    try {
+        const groups = await duplicateFinder.findDuplicates(data.medias);
+        mainWindow.webContents.send("duplicatesFound", groups);
+    } catch (error) {
+        console.error("findDuplicates failed", error);
+        mainWindow.webContents.send("duplicatesFound", []);
     }
 })
 
