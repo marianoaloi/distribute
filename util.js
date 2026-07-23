@@ -5,6 +5,7 @@ const mime = require('mime-types');
 const thumbnails = require("./thumbnails/ThumbnailService");
 const { hashFor } = require("./thumbnails/cache");
 const compareImgStore = require("./compareImg/VectorStore");
+const mediaIndexer = require("./compareImg/mediaIndexer");
 
 const sortSize = (a, b) => b.size - a.size
 const sortName = (a, b) => path.basename(a.item).localeCompare(path.basename(b.item))
@@ -36,17 +37,19 @@ const transformDataStreaming = async (data, folderOpened, counter, sortFiles = s
     const videos = withMeta.filter(i => i.mime.includes('video')).sort(sortFiles);
 
     onImages(images);
+    mediaIndexer.indexMediaBackground(images).catch(error => console.error("compareImg indexing failed:", error));
 
     for (const item of videos) {
         item.fileName = await thumbnails.getThumbnail(item.item);
         onVideo(item);
+        mediaIndexer.indexMediaBackground([item]).catch(error => console.error("compareImg indexing failed:", error));
     }
 };
 
 const transformFixedData = (data, counter, sortFiles = sortSize) => {
     compareImgStore.ensureReady().catch(error => console.error("compareImg index init failed:", error));
 
-    return data.filter(filepath => fs.statSync(filepath)
+    const result = data.filter(filepath => fs.statSync(filepath)
         .isFile()
     )
         .map(item => {
@@ -66,6 +69,9 @@ const transformFixedData = (data, counter, sortFiles = sortSize) => {
 
         })
 
+    mediaIndexer.indexMediaBackground(result).catch(error => console.error("compareImg indexing failed:", error));
+
+    return result;
 }
 
 module.exports = {

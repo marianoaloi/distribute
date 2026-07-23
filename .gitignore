@@ -31,6 +31,8 @@ distribute-win32-x64/**
 dist/**
 tmp/**
 compareImg/vectorIndex/**
+compareImg/frames/**
+compareImg/models/**
 .claude/**
 .claude-flow/**
 **.tgz
