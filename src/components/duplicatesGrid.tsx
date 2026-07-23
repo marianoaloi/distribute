@@ -1,9 +1,9 @@
 import { useRef, useState } from "react"
 import { useDispatch } from "react-redux"
 import { IconButton } from "@mui/material"
-import { Refresh } from "@mui/icons-material"
+import { Refresh, ImageSearch } from "@mui/icons-material"
 import { Media } from "../entity/Media"
-import { FindDuplicates, selectDuplicateGroups, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
+import { FindDuplicates, FindIndexDuplicates, selectDuplicateGroups, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
 import { MediaIMG } from "./media"
 import ModalZoom from "./modalZoom"
 import { DuplicateGroupCard, DuplicateGroupRow, DuplicatesList, DuplicatesResume, EmptyState, GroupLabel } from "./duplicatesGrid.styled"
@@ -63,6 +63,7 @@ export const GridDuplicates = (() => {
     }
 
     const scan = () => dispatch(FindDuplicates(medias))
+    const scanByHash = () => dispatch(FindIndexDuplicates())
 
     const nextMedia = () => {
         if (!lastZoom) return;
@@ -81,6 +82,7 @@ export const GridDuplicates = (() => {
         <div>
             <DuplicatesResume>
                 <IconButton onClick={scan} title="Scan loaded media for identical content (MD5)"><Refresh /></IconButton>
+                <IconButton onClick={scanByHash} title="Scan indexed media for visual duplicates (perceptual hash)"><ImageSearch /></IconButton>
                 <span>{groups.length} duplicate group{groups.length === 1 ? "" : "s"}</span>
             </DuplicatesResume>
 

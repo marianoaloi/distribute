@@ -197,6 +197,16 @@ ipcMain.on("findDuplicates", async (event, data) => {
     }
 })
 
+ipcMain.on("findIndexDuplicates", async () => {
+    try {
+        const groups = await duplicateFinder.findIndexDuplicates();
+        mainWindow.webContents.send("duplicatesFound", groups);
+    } catch (error) {
+        console.error("findIndexDuplicates failed", error);
+        mainWindow.webContents.send("duplicatesFound", []);
+    }
+})
+
 ipcMain.on("verifyOpen", async () => {
     if (process.env.FixFiles && fs.existsSync(process.env.FixFiles)) {
         fs.readFile(process.env.FixFiles, 'utf8', (err, data) => {

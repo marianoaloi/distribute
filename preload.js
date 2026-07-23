@@ -16,6 +16,7 @@ const ipc = {
             'sort',
             'open',
             'findDuplicates',
+            'findIndexDuplicates',
         ],
         // From main to render.
         'receive': ['directoryOpen',
