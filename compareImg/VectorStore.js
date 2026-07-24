@@ -30,8 +30,21 @@ const ensureReady = () => {
     return readyPromise;
 };
 
+// vectra's LocalIndex keeps a single in-flight `_update` snapshot on the
+// instance (beginUpdate/endUpdate); overlapping upsertItem calls race on it
+// and either throw "Update already in progress" or silently clobber each
+// other's writes. Concurrent indexing must serialize writes through here so
+// the expensive work (ffmpeg, md5, embedding) can still run in parallel.
+let writeQueue = Promise.resolve();
+const upsertItem = (item) => {
+    const result = writeQueue.then(() => index.upsertItem(item));
+    writeQueue = result.then(() => {}, () => {});
+    return result;
+};
+
 module.exports = {
     index,
     ensureReady,
     rebuildIndex,
+    upsertItem,
 };

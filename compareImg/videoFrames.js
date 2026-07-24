@@ -50,10 +50,10 @@ const extractFrame = (input, output, seconds) => new Promise((resolve, reject) =
     execFile(ffmpegPath, args, { encoding: "UTF-8" }, (error) => error ? reject(error) : resolve());
 });
 
-// indexMediaBackground processes videos sequentially per call, but a rebuild
-// re-indexes the whole loaded media list in one call and multiple rebuild
-// calls could overlap, so cap how many video frame-extraction pipelines run
-// at once; extras queue and start as a slot frees up.
+// indexMediaBackground now processes several media items concurrently
+// (ITEM_CONCURRENCY in mediaIndexer.js), and multiple rebuild calls could
+// also overlap, so cap how many video frame-extraction pipelines (each
+// spawning ffmpeg) run at once; extras queue and start as a slot frees up.
 const FRAME_EXTRACTION_CONCURRENCY = 15;
 
 const createSemaphore = (limit) => {

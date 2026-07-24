@@ -69,7 +69,7 @@
     }
   },
   "scripts": {
-    "startele": "nodemon -e ts,tsx --exec npm run buildMaloi ",
+    "startele": "nodemon -e js --exec electron . ",
     "start": "react-scripts start --no-browser  --source-map --base-href ",
     "build": "react-scripts build",
     "buildMaloi": "react-scripts build --source-map --base-href ",
