@@ -76,8 +76,17 @@ const createSemaphore = (limit) => {
 
 const frameExtractionLimiter = createSemaphore(FRAME_EXTRACTION_CONCURRENCY);
 
+const existingFramesFor = (input) => FRAME_POSITIONS
+    .map(position => ({ position, path: framePathFor(input, position) }))
+    .filter(frame => fs.existsSync(frame.path));
+
 // Returns [{ position, path }] for frames it managed to extract; skips ones ffmpeg can't produce
 const extractFrames = async (input) => {
+    // All frames already on disk (e.g. re-scanning a folder): just read them
+    // back, no need to probe duration or spend a concurrency slot on ffmpeg.
+    const cached = existingFramesFor(input);
+    if (cached.length === FRAME_POSITIONS.length) return cached;
+
     await frameExtractionLimiter.acquire();
     try {
         const duration = await getDuration(input);
