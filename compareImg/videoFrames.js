@@ -54,7 +54,7 @@ const extractFrame = (input, output, seconds) => new Promise((resolve, reject) =
 // (ITEM_CONCURRENCY in mediaIndexer.js), and multiple rebuild calls could
 // also overlap, so cap how many video frame-extraction pipelines (each
 // spawning ffmpeg) run at once; extras queue and start as a slot frees up.
-const FRAME_EXTRACTION_CONCURRENCY = 15;
+const FRAME_EXTRACTION_CONCURRENCY = 55;
 
 const createSemaphore = (limit) => {
     let active = 0;

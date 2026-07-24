@@ -1,6 +1,7 @@
 const compareImgStore = require("./VectorStore");
 const imageTransform = require("./imageTransform");
 const imageEmbedding = require("./imageEmbedding");
+const computePool = require("./computePool");
 const videoFrames = require("./videoFrames");
 const { hashFor } = require("../thumbnails/cache");
 
@@ -15,8 +16,12 @@ const indexUnit = async (id, pixelSourcePath, metadataLocalPath, kind, framePosi
     const existing = await compareImgStore.index.getItem(id);
     if (existing) return;
 
+    // Pixel hashing runs in a worker-thread pool so it doesn't block the
+    // Electron main process/UI and multiple items' hashing runs truly in
+    // parallel across cores. CLIP embedding stays on the main thread (see
+    // frameWorker.js for why); the two still run concurrently per item.
     const [{ baseMd5, blurMd5 }, vector] = await Promise.all([
-        imageTransform.md5sFor(pixelSourcePath),
+        computePool.compute(pixelSourcePath),
         imageEmbedding.embed(pixelSourcePath),
     ]);
 
