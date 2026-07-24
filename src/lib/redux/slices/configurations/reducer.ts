@@ -1,5 +1,5 @@
 import { createReducer } from "@reduxjs/toolkit"
-import { setMediaType, setPage, zoomIn, zoomOut } from "./thunks"
+import { mediaLoadComplete, mediaLoadStart, setMediaType, setPage, zoomIn, zoomOut } from "./thunks"
 import { populateArray } from "../media/media.reduce"
 
 
@@ -7,11 +7,13 @@ interface Config {
     pxzoom: number
     mediaType?: 'image' | 'video' | 'gif' | undefined
     page: number
+    mediaLoading: boolean
 }
 
 const initialState: Config = {
     pxzoom: 200,
-    page: 0
+    page: 0,
+    mediaLoading: false
 }
 
 export const ConfigReduce = createReducer(initialState, (build) => {
@@ -35,5 +37,13 @@ export const ConfigReduce = createReducer(initialState, (build) => {
     build.addCase(populateArray, (state) => ({
         ...state,
         page: 0
+    }))
+    build.addCase(mediaLoadStart, (state) => ({
+        ...state,
+        mediaLoading: true
+    }))
+    build.addCase(mediaLoadComplete, (state) => ({
+        ...state,
+        mediaLoading: false
     }))
 })

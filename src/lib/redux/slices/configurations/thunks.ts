@@ -22,3 +22,15 @@ export const setPage = createAction(
         payload: page
     })
 )
+
+// Fired by the main process around the video-thumbnail streaming phase of
+// opening a folder (util.js's transformDataStreaming) — the grid can still
+// be filling in one video at a time well after mediaLoadStart, with no other
+// signal available to tell whether it's finished.
+export const mediaLoadStart = createAction(
+    'config/mediaLoadStart'
+)
+
+export const mediaLoadComplete = createAction(
+    'config/mediaLoadComplete'
+)

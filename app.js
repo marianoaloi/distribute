@@ -295,6 +295,7 @@ const openfile = () => {
 
         console.log(`Get Images in ${fileGlobal}`, "files", data.length);
 
+        mainWindow.webContents.send("mediaLoadStart");
         transformDataStreaming(
             data,
             fileGlobal,
@@ -306,6 +307,9 @@ const openfile = () => {
             (video) => {
                 // console.log("Video found", video.id);
                 mainWindow.webContents.send("addOneMedia", video);
+            },
+            () => {
+                mainWindow.webContents.send("mediaLoadComplete");
             }
         );
     });

@@ -15,7 +15,10 @@ const transformData = (data, folderOpened, counter, sortFiles = sortSize) => {
 
 }
 
-const transformDataStreaming = async (data, folderOpened, counter, sortFiles = sortSize, onImages, onVideo) => {
+// onDone fires once every video's thumbnail has been generated and sent —
+// videos are added one at a time (each awaits its own thumbnail), so the
+// caller has no other way to know the grid is still being populated.
+const transformDataStreaming = async (data, folderOpened, counter, sortFiles = sortSize, onImages, onVideo, onDone) => {
     const allPaths = data.map(item => path.join(folderOpened, item));
 
     const withMeta = allPaths
@@ -38,6 +41,8 @@ const transformDataStreaming = async (data, folderOpened, counter, sortFiles = s
         item.fileName = await thumbnails.getThumbnail(item.item);
         onVideo(item);
     }
+
+    if (onDone) onDone();
 };
 
 const transformFixedData = (data, counter, sortFiles = sortSize) => {

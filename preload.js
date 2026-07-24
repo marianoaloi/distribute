@@ -17,6 +17,7 @@ const ipc = {
             'open',
             'findDuplicates',
             'findIndexDuplicates',
+            'rebuildIndex',
         ],
         // From main to render.
         'receive': ['directoryOpen',
@@ -47,6 +48,10 @@ const ipc = {
             "addOneMedia",
             'cleanGrid',
             'duplicatesFound',
+            'indexRebuilt',
+            'indexRebuildProgress',
+            'mediaLoadStart',
+            'mediaLoadComplete',
         ]
     }
 };

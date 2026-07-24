@@ -289,6 +289,7 @@ export const GridIMGs = (() => {
         <div onKeyUp={(ev) => pressedKeyUp(ev)}>
             <Resume>
                 <Qtd title="Total items not deleted">{medias.length}</Qtd>
+                {config.mediaLoading && <span title="Videos are still being added one at a time in the background">Loading media…</span>}
                 <select value={postsPerPage} title="How many items for page" onChange={(val) => setPostsPerPage(parseInt(val.currentTarget.value))}>
                     <option value="20">20</option>
                     <option value="50">50</option>

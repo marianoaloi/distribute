@@ -3,7 +3,8 @@ import { useDispatch } from "react-redux"
 import { IconButton, CircularProgress, LinearProgress } from "@mui/material"
 import { Refresh, ImageSearch, RestartAlt } from "@mui/icons-material"
 import { Media } from "../entity/Media"
-import { FindDuplicates, FindIndexDuplicates, RebuildIndex, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
+import { FindDuplicates, FindIndexDuplicates, RebuildIndex, indexRebuildFinished, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
+import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { MediaIMG } from "./media"
 import ModalZoom from "./modalZoom"
 import { DuplicateGroupCard, DuplicateGroupRow, DuplicatesList, DuplicatesResume, EmptyState, GroupLabel } from "./duplicatesGrid.styled"
@@ -17,6 +18,7 @@ export const GridDuplicates = (() => {
     const indexRebuilding = useSelector(selectIndexRebuilding)
     const indexRebuildError = useSelector(selectIndexRebuildError)
     const indexRebuildProgress = useSelector(selectIndexRebuildProgress)
+    const config = useSelector(configurationsSelector)
 
     const mediaById = new Map(medias.map(m => [m.id, m]))
 
@@ -67,7 +69,16 @@ export const GridDuplicates = (() => {
 
     const scan = () => dispatch(FindDuplicates(medias))
     const scanByHash = () => dispatch(FindIndexDuplicates())
-    const rebuildIndex = () => dispatch(RebuildIndex(medias))
+    const rebuildIndex = () => {
+        // Guards against the folder still being loaded (videos stream in one
+        // at a time, so medias here can be empty or a small partial list —
+        // rebuilding against it would silently "succeed" with nothing indexed).
+        if (medias.length === 0) {
+            dispatch(indexRebuildFinished("No media loaded — open a folder first"))
+            return
+        }
+        dispatch(RebuildIndex(medias))
+    }
 
     const nextMedia = () => {
         if (!lastZoom) return;
@@ -87,11 +98,14 @@ export const GridDuplicates = (() => {
             <DuplicatesResume>
                 <IconButton onClick={scan} title="Scan loaded media for identical content (MD5)"><Refresh /></IconButton>
                 <IconButton onClick={scanByHash} title="Scan indexed media for visual duplicates (perceptual hash)"><ImageSearch /></IconButton>
-                <IconButton onClick={rebuildIndex} disabled={indexRebuilding}
-                    title="Rebuild the compareImg vector index from the currently loaded media (use this if indexing errors show up in the console, e.g. a corrupted index)">
+                <IconButton onClick={rebuildIndex} disabled={indexRebuilding || config.mediaLoading}
+                    title={config.mediaLoading
+                        ? "Still loading media from the folder — wait for it to finish before rebuilding"
+                        : "Rebuild the compareImg vector index from the currently loaded media (use this if indexing errors show up in the console, e.g. a corrupted index)"}>
                     {indexRebuilding ? <CircularProgress size={20} /> : <RestartAlt />}
                 </IconButton>
                 <span>{groups.length} duplicate group{groups.length === 1 ? "" : "s"}</span>
+                {config.mediaLoading && <span>Still loading media…</span>}
                 {indexRebuildError && <span>Index rebuild failed: {indexRebuildError}</span>}
             </DuplicatesResume>
 
