@@ -49,10 +49,15 @@ const indexImage = async (mediaItem) => {
 // whether a video's frames are already indexed without probing it via ffmpeg.
 const videoAlreadyIndexed = async (localPath) => {
     const baseId = hashFor(localPath);
-    for (const position of videoFrames.FRAME_POSITIONS) {
-        if (!(await compareImgStore.index.getItem(`${baseId}_${position}`))) return false;
+    try {
+        for (const position of videoFrames.FRAME_POSITIONS) {
+            if (!(await compareImgStore.index.getItem(`${baseId}_${position}`))) return false;
+        }
+        return true;
+    } catch (error) {
+        console.error(`compareImg: failed to check index for ${localPath}:`, error.message);
+        return false;
     }
-    return true;
 };
 
 const indexVideo = async (mediaItem) => {

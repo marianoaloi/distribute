@@ -50,27 +50,58 @@ const extractFrame = (input, output, seconds) => new Promise((resolve, reject) =
     execFile(ffmpegPath, args, { encoding: "UTF-8" }, (error) => error ? reject(error) : resolve());
 });
 
+// util.js's transformDataStreaming fires indexMediaBackground per video
+// without awaiting it, so extractFrames for many videos can otherwise run
+// fully in parallel. Cap how many video frame-extraction pipelines run at
+// once; extras queue and start as a slot frees up.
+const FRAME_EXTRACTION_CONCURRENCY = 15;
+
+const createSemaphore = (limit) => {
+    let active = 0;
+    const queue = [];
+    const acquire = () => {
+        if (active < limit) {
+            active++;
+            return Promise.resolve();
+        }
+        return new Promise(resolve => queue.push(resolve)).then(() => { active++; });
+    };
+    const release = () => {
+        active--;
+        const next = queue.shift();
+        if (next) next();
+    };
+    return { acquire, release };
+};
+
+const frameExtractionLimiter = createSemaphore(FRAME_EXTRACTION_CONCURRENCY);
+
 // Returns [{ position, path }] for frames it managed to extract; skips ones ffmpeg can't produce
 const extractFrames = async (input) => {
-    const duration = await getDuration(input);
-    if (!duration) return [];
+    await frameExtractionLimiter.acquire();
+    try {
+        const duration = await getDuration(input);
+        if (!duration) return [];
 
-    ensureFramesDir();
-    const timestamps = timestampsFor(duration);
-    const frames = [];
-    for (const position of FRAME_POSITIONS) {
-        const output = framePathFor(input, position);
-        if (!fs.existsSync(output)) {
-            try {
-                await extractFrame(input, output, timestamps[position]);
-            } catch (error) {
-                console.error(`Frame extraction failed for ${input} @ ${position}:`, error.message);
-                continue;
+        ensureFramesDir();
+        const timestamps = timestampsFor(duration);
+        const frames = [];
+        for (const position of FRAME_POSITIONS) {
+            const output = framePathFor(input, position);
+            if (!fs.existsSync(output)) {
+                try {
+                    await extractFrame(input, output, timestamps[position]);
+                } catch (error) {
+                    console.error(`Frame extraction failed for ${input} @ ${position}:`, error.message);
+                    continue;
+                }
             }
+            if (fs.existsSync(output)) frames.push({ position, path: output });
         }
-        if (fs.existsSync(output)) frames.push({ position, path: output });
+        return frames;
+    } finally {
+        frameExtractionLimiter.release();
     }
-    return frames;
 };
 
 module.exports = {

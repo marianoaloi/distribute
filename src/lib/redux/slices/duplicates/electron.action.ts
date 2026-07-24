@@ -1,4 +1,5 @@
 import { Media } from "../../../../entity/Media";
+import { startIndexRebuild } from "./duplicates.reduce";
 
 const isElectronApp = typeof window !== 'undefined' && !!window.electron;
 const ipcRender = isElectronApp ? window.electron.ipcRenderer : undefined;
@@ -29,6 +30,26 @@ export const FindIndexDuplicates = () => {
     return (dispatch: any) => {
         if (ipcRender) {
             ipcRender.send('findIndexDuplicates', undefined);
+        }
+    }
+}
+
+// Recovers from a corrupted compareImg vector index (e.g. "Unexpected end of
+// JSON input" from a truncated index.json): wipes the index on disk and
+// re-indexes it from the media already loaded in redux, so the user doesn't
+// have to re-open/re-scan the folder.
+export const RebuildIndex = (medias: Media[]) => {
+
+    if (!isElectronApp) {
+        return (dispatch: any) => { }
+    }
+
+    return (dispatch: any) => {
+        dispatch(startIndexRebuild());
+        if (ipcRender) {
+            ipcRender.send('rebuildIndex', {
+                medias: medias.map(m => ({ id: m.id, path: m.path, mime: m.mime }))
+            });
         }
     }
 }

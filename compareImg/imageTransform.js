@@ -5,7 +5,7 @@ const crypto = require("crypto");
 const SQUARE_SIZE = 68;
 const CROP_MARGIN = 4;
 const FINAL_SIZE = SQUARE_SIZE - (CROP_MARGIN * 2);
-const BLUR_LEVELS = [1, 2, 4, 8, 16];
+const BLUR_LEVELS = [1, 12, 25, 38, 50];
 
 const hashBuffer = (buffer) => crypto.createHash("md5").update(buffer).digest("hex");
 
@@ -24,7 +24,7 @@ const md5sFor = async (input) => {
     const baseMd5 = hashBuffer(Buffer.from(base.bitmap.data));
 
     const blurMd5 = BLUR_LEVELS.map(level => {
-        const blurred = base.clone().blur(level);
+        const blurred = base.clone().gaussian(level);
         return hashBuffer(Buffer.from(blurred.bitmap.data));
     });
 

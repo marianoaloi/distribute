@@ -1,9 +1,9 @@
 import { useRef, useState } from "react"
 import { useDispatch } from "react-redux"
-import { IconButton } from "@mui/material"
-import { Refresh, ImageSearch } from "@mui/icons-material"
+import { IconButton, CircularProgress } from "@mui/material"
+import { Refresh, ImageSearch, RestartAlt } from "@mui/icons-material"
 import { Media } from "../entity/Media"
-import { FindDuplicates, FindIndexDuplicates, selectDuplicateGroups, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
+import { FindDuplicates, FindIndexDuplicates, RebuildIndex, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
 import { MediaIMG } from "./media"
 import ModalZoom from "./modalZoom"
 import { DuplicateGroupCard, DuplicateGroupRow, DuplicatesList, DuplicatesResume, EmptyState, GroupLabel } from "./duplicatesGrid.styled"
@@ -14,6 +14,8 @@ export const GridDuplicates = (() => {
 
     const medias = useSelector(selectMedias).filter(m => !m.deleted)
     const groupIds = useSelector(selectDuplicateGroups)
+    const indexRebuilding = useSelector(selectIndexRebuilding)
+    const indexRebuildError = useSelector(selectIndexRebuildError)
 
     const mediaById = new Map(medias.map(m => [m.id, m]))
 
@@ -64,6 +66,7 @@ export const GridDuplicates = (() => {
 
     const scan = () => dispatch(FindDuplicates(medias))
     const scanByHash = () => dispatch(FindIndexDuplicates())
+    const rebuildIndex = () => dispatch(RebuildIndex(medias))
 
     const nextMedia = () => {
         if (!lastZoom) return;
@@ -83,7 +86,12 @@ export const GridDuplicates = (() => {
             <DuplicatesResume>
                 <IconButton onClick={scan} title="Scan loaded media for identical content (MD5)"><Refresh /></IconButton>
                 <IconButton onClick={scanByHash} title="Scan indexed media for visual duplicates (perceptual hash)"><ImageSearch /></IconButton>
+                <IconButton onClick={rebuildIndex} disabled={indexRebuilding}
+                    title="Rebuild the compareImg vector index from the currently loaded media (use this if indexing errors show up in the console, e.g. a corrupted index)">
+                    {indexRebuilding ? <CircularProgress size={20} /> : <RestartAlt />}
+                </IconButton>
                 <span>{groups.length} duplicate group{groups.length === 1 ? "" : "s"}</span>
+                {indexRebuildError && <span>Index rebuild failed: {indexRebuildError}</span>}
             </DuplicatesResume>
 
             {groups.length > 0

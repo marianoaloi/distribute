@@ -15,6 +15,8 @@ const os = require('os');
 const util = require("./util");
 const { dirCache } = require("./DirectorioCache");
 const duplicateFinder = require("./compareImg/duplicateFinder");
+const compareImgStore = require("./compareImg/VectorStore");
+const mediaIndexer = require("./compareImg/mediaIndexer");
 const transformData = util.transformData;
 const transformDataStreaming = util.transformDataStreaming;
 var actualSort = util.sortSize;
@@ -204,6 +206,26 @@ ipcMain.on("findIndexDuplicates", async () => {
     } catch (error) {
         console.error("findIndexDuplicates failed", error);
         mainWindow.webContents.send("duplicatesFound", []);
+    }
+})
+
+// Wipes the (possibly corrupted) vectra index and re-indexes the media the
+// renderer already has loaded in redux, so the user doesn't need to
+// re-open/re-scan the folder to recover from an "Unexpected end of JSON
+// input" style crash.
+ipcMain.on("rebuildIndex", async (event, data) => {
+    try {
+        await compareImgStore.rebuildIndex();
+        const medias = (data && data.medias) || [];
+        await mediaIndexer.indexMediaBackground(medias.map(m => ({
+            item: m.path,
+            mime: m.mime,
+            id: m.id,
+        })));
+        mainWindow.webContents.send("indexRebuilt", { success: true, count: medias.length });
+    } catch (error) {
+        console.error("rebuildIndex failed", error);
+        mainWindow.webContents.send("indexRebuilt", { success: false, error: error.message });
     }
 })
 
