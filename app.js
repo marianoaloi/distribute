@@ -217,11 +217,14 @@ ipcMain.on("rebuildIndex", async (event, data) => {
     try {
         await compareImgStore.rebuildIndex();
         const medias = (data && data.medias) || [];
+        mainWindow.webContents.send("indexRebuildProgress", { processed: 0, total: medias.length });
         await mediaIndexer.indexMediaBackground(medias.map(m => ({
             item: m.path,
             mime: m.mime,
             id: m.id,
-        })));
+        })), (processed, total) => {
+            mainWindow.webContents.send("indexRebuildProgress", { processed, total });
+        });
         mainWindow.webContents.send("indexRebuilt", { success: true, count: medias.length });
     } catch (error) {
         console.error("rebuildIndex failed", error);

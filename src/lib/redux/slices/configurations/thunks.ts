@@ -15,3 +15,10 @@ export const setMediaType = createAction(
         payload: mediaType
     })
 )
+
+export const setPage = createAction(
+    'config/setPage',
+    (page: number) => ({
+        payload: page
+    })
+)

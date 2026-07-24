@@ -1,9 +1,9 @@
 import { useRef, useState } from "react"
 import { useDispatch } from "react-redux"
-import { IconButton, CircularProgress } from "@mui/material"
+import { IconButton, CircularProgress, LinearProgress } from "@mui/material"
 import { Refresh, ImageSearch, RestartAlt } from "@mui/icons-material"
 import { Media } from "../entity/Media"
-import { FindDuplicates, FindIndexDuplicates, RebuildIndex, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
+import { FindDuplicates, FindIndexDuplicates, RebuildIndex, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
 import { MediaIMG } from "./media"
 import ModalZoom from "./modalZoom"
 import { DuplicateGroupCard, DuplicateGroupRow, DuplicatesList, DuplicatesResume, EmptyState, GroupLabel } from "./duplicatesGrid.styled"
@@ -16,6 +16,7 @@ export const GridDuplicates = (() => {
     const groupIds = useSelector(selectDuplicateGroups)
     const indexRebuilding = useSelector(selectIndexRebuilding)
     const indexRebuildError = useSelector(selectIndexRebuildError)
+    const indexRebuildProgress = useSelector(selectIndexRebuildProgress)
 
     const mediaById = new Map(medias.map(m => [m.id, m]))
 
@@ -93,6 +94,23 @@ export const GridDuplicates = (() => {
                 <span>{groups.length} duplicate group{groups.length === 1 ? "" : "s"}</span>
                 {indexRebuildError && <span>Index rebuild failed: {indexRebuildError}</span>}
             </DuplicatesResume>
+
+            {indexRebuilding &&
+                <div style={{ padding: "4px 8px" }}>
+                    <span>
+                        Rebuilding index…{" "}
+                        {indexRebuildProgress && indexRebuildProgress.total > 0
+                            ? `${indexRebuildProgress.processed} / ${indexRebuildProgress.total}`
+                            : "starting"}
+                    </span>
+                    <LinearProgress
+                        variant={indexRebuildProgress && indexRebuildProgress.total > 0 ? "determinate" : "indeterminate"}
+                        value={indexRebuildProgress && indexRebuildProgress.total > 0
+                            ? (indexRebuildProgress.processed / indexRebuildProgress.total) * 100
+                            : 0}
+                    />
+                </div>
+            }
 
             {groups.length > 0
                 ? <DuplicatesList>

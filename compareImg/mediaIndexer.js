@@ -81,14 +81,21 @@ const indexVideo = async (mediaItem) => {
 
 // Fire-and-forget friendly: sequential (single-threaded main process), isolates
 // per-item failures so one bad file doesn't stop the rest of the batch.
-const indexMediaBackground = async (mediaItems) => {
+// onProgress(processed, total), if given, fires after each media item (image,
+// or video with all its frames) finishes — lets a caller surface progress
+// since indexing a real library can take minutes (model warm-up + ffmpeg).
+const indexMediaBackground = async (mediaItems, onProgress) => {
     await compareImgStore.ensureReady();
+    const total = mediaItems.length;
+    let processed = 0;
     for (const mediaItem of mediaItems) {
         if (mediaItem.mime && mediaItem.mime.includes("video")) {
             await indexVideo(mediaItem);
         } else if (mediaItem.mime && mediaItem.mime.includes("image")) {
             await indexImage(mediaItem);
         }
+        processed++;
+        if (onProgress) onProgress(processed, total);
     }
 };
 

@@ -50,10 +50,10 @@ const extractFrame = (input, output, seconds) => new Promise((resolve, reject) =
     execFile(ffmpegPath, args, { encoding: "UTF-8" }, (error) => error ? reject(error) : resolve());
 });
 
-// util.js's transformDataStreaming fires indexMediaBackground per video
-// without awaiting it, so extractFrames for many videos can otherwise run
-// fully in parallel. Cap how many video frame-extraction pipelines run at
-// once; extras queue and start as a slot frees up.
+// indexMediaBackground processes videos sequentially per call, but a rebuild
+// re-indexes the whole loaded media list in one call and multiple rebuild
+// calls could overlap, so cap how many video frame-extraction pipelines run
+// at once; extras queue and start as a slot frees up.
 const FRAME_EXTRACTION_CONCURRENCY = 15;
 
 const createSemaphore = (limit) => {

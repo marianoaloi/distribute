@@ -3,7 +3,7 @@ import { example } from './populateExample';
 import { Media } from '../../../../entity/Media';
 import { addFolder } from '../folders';
 import { zoomIn, zoomOut } from '../configurations';
-import { setDuplicateGroups, indexRebuildFinished } from '../duplicates';
+import { setDuplicateGroups, indexRebuildFinished, setIndexRebuildProgress } from '../duplicates';
 import { FileDTO } from '../../../../entity/FileDTO';
 
 
@@ -23,7 +23,7 @@ export const ElectronConnection = () => {
 
     return (dispatch: any) => {
         if (ipcRender) {
-            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt'];
+            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress'];
             channels.forEach(ch => ipcRender.removeAllListeners(ch));
 
             ipcRender.on('directoryOpen', (e: any, args: any) => {
@@ -82,6 +82,9 @@ export const ElectronConnection = () => {
             })
             ipcRender.on('indexRebuilt', (e: any, result: { success: boolean, error?: string }) => {
                 dispatch(indexRebuildFinished(result.success ? null : (result.error || 'Rebuild failed')))
+            })
+            ipcRender.on('indexRebuildProgress', (e: any, progress: { processed: number, total: number }) => {
+                dispatch(setIndexRebuildProgress(progress))
             })
             ipcRender.send("verifyOpen", undefined)
         }

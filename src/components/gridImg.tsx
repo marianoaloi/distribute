@@ -8,7 +8,7 @@ import { IconButton, Menu, MenuItem, ListItemIcon, ListItemText } from "@mui/mat
 import { Folders } from "./folder"
 import { KeyboardArrowLeft, KeyboardArrowRight, KeyboardDoubleArrowLeft, KeyboardDoubleArrowRight, RadioButtonChecked, RadioButtonUnchecked, Gif, Movie, Image, AllInclusive } from "@mui/icons-material"
 import ModalZoom from "./modalZoom"
-import { configurationsSelector, setMediaType } from "../lib/redux/slices/configurations"
+import { configurationsSelector, setMediaType, setPage } from "../lib/redux/slices/configurations"
 
 
 import { FolderCopyTwoTone, FolderOpen, Pause, PlayArrow } from '@mui/icons-material';
@@ -29,7 +29,8 @@ export const GridIMGs = (() => {
             if (config.mediaType === "image") return m.mime.includes("image") && !m.mime.includes("gif");
             return true;
         })
-    const [currentPage, setCurrentPage] = useState(0);
+    const currentPage = config.page;
+    const setCurrentPage = (page: number) => dispatch(setPage(page));
     const [postsPerPage, setPostsPerPage] = useState(50);
 
 
