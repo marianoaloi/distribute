@@ -1,12 +1,7 @@
 const compareImgStore = require("./HashStore");
-const imageTransform = require("./imageTransform");
 const computePool = require("./computePool");
 const videoFrames = require("./videoFrames");
 const { hashFor } = require("../thumbnails/cache");
-
-// flat columns (one per configured blur level) instead of an array, since
-// HashStore stores each hash as its own indexed SQLite column
-const blurFieldName = (level) => `blur_${level}`;
 
 // pixelSourcePath: what to read pixel data from (the frame file for videos, the
 // media file itself for images). metadataLocalPath: what to record as the
@@ -18,7 +13,7 @@ const indexUnit = async (id, pixelSourcePath, metadataLocalPath, kind, framePosi
     // Pixel hashing runs in a worker-thread pool so it doesn't block the
     // Electron main process/UI and multiple items' hashing runs truly in
     // parallel across cores.
-    const { baseMd5, blurMd5 } = await computePool.compute(pixelSourcePath);
+    const { baseMd5, grey } = await computePool.compute(pixelSourcePath);
 
     const metadata = {
         localPath: metadataLocalPath,
@@ -27,10 +22,11 @@ const indexUnit = async (id, pixelSourcePath, metadataLocalPath, kind, framePosi
         actualPosition,
         futurePosition: -1,
         baseMd5,
+        // Raw cropped/greyscale pixel buffer, stored so duplicateFinder.js
+        // can do a real similarity comparison (mean pixel difference) instead
+        // of hash equality - see HashStore.js's baseGrey column.
+        baseGrey: Buffer.from(grey),
     };
-    imageTransform.BLUR_LEVELS.forEach((level, idx) => {
-        metadata[blurFieldName(level)] = blurMd5[idx];
-    });
 
     compareImgStore.upsertItem({ id, metadata });
 };

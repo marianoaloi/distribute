@@ -5,7 +5,7 @@ const crypto = require("crypto");
 const SQUARE_SIZE = 48;
 const CROP_MARGIN = 4;
 const FINAL_SIZE = SQUARE_SIZE - (CROP_MARGIN * 2);
-const BLUR_LEVELS = [1, 2, 4, 8, 16, 32, 64, 128]; // radius in pixels
+const BLUR_LEVELS = [4] //[1, 2, 4, 8, 16, 32, 64, 128]; // radius in pixels
 
 const hashBuffer = (buffer) => crypto.createHash("md5").update(buffer).digest("hex");
 
@@ -82,8 +82,26 @@ const md5sFor = async (input) => {
     return { baseMd5, blurMd5 };
 };
 
+// baseMd5 (cheap short-circuit for byte-identical crops) plus the raw
+// greyscale pixel buffer itself, so callers can do a real similarity
+// comparison (mean absolute pixel difference) instead of hash equality.
+// MD5 alone can't express "99% the same" - any single differing pixel value
+// produces a totally unrelated hash - which is why the old blur_1..blur_128
+// hash-equality columns could never reliably catch near-duplicate frames
+// (JPEG re-encode noise, resize rounding) without also producing false
+// positives once the blur radius got large enough to flatten unrelated
+// frames to the same value. See scripts/debugCompareVideos.js for the
+// measurements this is based on.
+const pixelsFor = async (input) => {
+    const base = await toBaseImage(input);
+    const baseMd5 = hashBuffer(Buffer.from(base.bitmap.data));
+    const grey = greyscaleChannel(base);
+    return { baseMd5, grey };
+};
+
 module.exports = {
     md5sFor,
+    pixelsFor,
     BLUR_LEVELS,
     // Exposed for debug tooling (scripts/debugCompareVideos.js) so it can
     // render the actual images being hashed, not just the resulting md5s.

@@ -39,6 +39,32 @@ const contentHashFor = (filepath) => new Promise((resolve, reject) => {
 
 const HASH_COLUMNS = ["baseMd5", ...BLUR_LEVELS.map((level) => `blur_${level}`)];
 
+// Numeric similarity between two equal-length grey-pixel buffers, as an
+// alternative to MD5 equality: MD5 has the avalanche property (any single
+// pixel off by 1 produces a totally unrelated hash), so it can never express
+// "these are 99% the same image" - only "identical" or "unrelated". This is
+// what the app's matching logic is missing entirely.
+const pixelDiffStats = (a, b) => {
+    let sumAbs = 0;
+    let maxAbs = 0;
+    let identical = 0;
+    let within2 = 0;
+    for (let i = 0; i < a.length; i++) {
+        const d = Math.abs(a[i] - b[i]);
+        sumAbs += d;
+        if (d > maxAbs) maxAbs = d;
+        if (d === 0) identical++;
+        if (d <= 2) within2++;
+    }
+    const n = a.length;
+    return {
+        meanAbsDiff: sumAbs / n,
+        maxAbsDiff: maxAbs,
+        pctIdentical: (identical / n) * 100,
+        pctWithin2: (within2 / n) * 100,
+    };
+};
+
 const safeStem = (filePath) => path.basename(filePath, path.extname(filePath))
     .replace(/[^a-z0-9_-]+/gi, "_")
     .slice(0, 60);
@@ -79,12 +105,14 @@ const processVideo = async (videoPath, label, outDir) => {
         const grey = greyscaleChannel(base);
 
         const blurs = {};
+        const blurBuffers = {};
         for (const level of BLUR_LEVELS) {
             const blurred = boxBlur(grey, width, height, level);
             const blurMd5 = hashBuffer(Buffer.from(blurred));
             const blurOut = path.join(outDir, `${label}_${stem}_${position}_blur${level}.png`);
             await saveGreyBuffer(blurred, width, height, blurOut);
             blurs[`blur_${level}`] = { md5: blurMd5, image: path.basename(blurOut) };
+            blurBuffers[`blur_${level}`] = blurred;
         }
 
         frameResults.push({
@@ -93,6 +121,10 @@ const processVideo = async (videoPath, label, outDir) => {
             baseImage: path.basename(baseOut),
             baseMd5,
             blurs,
+            // Underscore-prefixed: raw pixel buffers kept only for pixelDiffStats
+            // in main(), stripped before the JSON report is written.
+            _baseBuffer: grey,
+            _blurBuffers: blurBuffers,
         });
     }
 
@@ -120,10 +152,12 @@ const compareFrames = (videoA, videoB) => {
 };
 
 // One block per timestamp (start10s first, matching FRAME_POSITIONS order):
-// a row for A's images at that timestamp, then a row for B's, each image
-// with its md5 printed directly underneath it.
+// a row for A's images at that timestamp, a row for B's (md5 under each
+// image), then a "diff" row with the pixelDiffStats between A and B for
+// that column - showing the numeric similarity that MD5 equality throws away.
 const buildHtmlReport = (report) => {
     const frameFor = (video, position) => video.frames.find((f) => f.position === position);
+    const statsFor = (position) => report.diffStats.find((d) => d.position === position);
 
     const imgCell = (file, md5) => `
         <td>
@@ -143,12 +177,27 @@ const buildHtmlReport = (report) => {
         return `<tr><th class="rowlabel">${video.label}</th>${cells.join("")}</tr>`;
     };
 
+    const diffCell = (stats) => stats
+        ? `<td class="diffcell">mean|&Delta;|=${stats.meanAbsDiff.toFixed(2)}<br>max=${stats.maxAbsDiff}<br>ident=${stats.pctIdentical.toFixed(1)}%<br>&plusmn;2=${stats.pctWithin2.toFixed(1)}%</td>`
+        : `<td class="diffcell">-</td>`;
+
+    const diffRow = (stats) => {
+        if (!stats) return "";
+        const cells = [
+            `<td class="diffcell">-</td>`,
+            diffCell(stats.base),
+            ...BLUR_LEVELS.map((level) => diffCell(stats.blurs[`blur_${level}`])),
+        ];
+        return `<tr><th class="rowlabel">A vs B</th>${cells.join("")}</tr>`;
+    };
+
     const positionBlock = (position) => `
         <h2>${position}</h2>
         <table>
             <tr><th></th><th>raw frame</th><th>base60</th>${BLUR_LEVELS.map((l) => `<th>blur_${l}</th>`).join("")}</tr>
             ${rowFor(report.videoA, frameFor(report.videoA, position))}
             ${rowFor(report.videoB, frameFor(report.videoB, position))}
+            ${diffRow(statsFor(position))}
         </table>`;
 
     const matchRows = report.matches.length
@@ -167,6 +216,7 @@ code { font-size: 10px; word-break: break-all; display: block; margin-top: 4px; 
 .verdict { font-size: 16px; padding: 10px; margin-bottom: 16px; }
 .dup { background: #ffdede; } .nodup { background: #ddffdd; }
 .paths { font-size: 13px; margin-bottom: 16px; }
+.diffcell { text-align: left; font-size: 10px; background: #f5f5f5; }
 </style></head>
 <body>
 <h1>Duplicate-finder debug report</h1>
@@ -228,6 +278,25 @@ const main = async () => {
         console.log("  (none - the app's findIndexDuplicates would NOT flag this pair)");
     }
 
+    // Same-timestamp pixel-similarity, independent of MD5: how close A and B
+    // actually are at each blur level, even when no hash matched.
+    const diffStats = [];
+    for (const position of FRAME_POSITIONS) {
+        const frameA = resultA.frames.find((f) => f.position === position);
+        const frameB = resultB.frames.find((f) => f.position === position);
+        if (!frameA || !frameB) continue;
+        const blurs = {};
+        for (const level of BLUR_LEVELS) {
+            blurs[`blur_${level}`] = pixelDiffStats(frameA._blurBuffers[`blur_${level}`], frameB._blurBuffers[`blur_${level}`]);
+        }
+        diffStats.push({ position, base: pixelDiffStats(frameA._baseBuffer, frameB._baseBuffer), blurs });
+    }
+    console.log("\nPixel-similarity (A vs B, same timestamp - ignores MD5 entirely):");
+    for (const stat of diffStats) {
+        console.log(`  ${stat.position} base60: mean|diff|=${stat.base.meanAbsDiff.toFixed(2)} max=${stat.base.maxAbsDiff} identical=${stat.base.pctIdentical.toFixed(1)}% within2=${stat.base.pctWithin2.toFixed(1)}%`);
+    }
+
+    const stripPrivate = (key, value) => (key.startsWith("_") ? undefined : value);
     const report = {
         videoA: resultA,
         videoB: resultB,
@@ -235,9 +304,10 @@ const main = async () => {
         contentHashB,
         contentIdentical,
         matches,
+        diffStats,
     };
 
-    fs.writeFileSync(path.join(outDir, "report.json"), JSON.stringify(report, null, 2));
+    fs.writeFileSync(path.join(outDir, "report.json"), JSON.stringify(report, stripPrivate, 2));
     fs.writeFileSync(path.join(outDir, "report.html"), buildHtmlReport(report));
 
     console.log(`\nWrote report.json and report.html to ${outDir}`);

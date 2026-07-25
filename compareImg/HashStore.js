@@ -1,16 +1,33 @@
 const fs = require("fs");
 const Database = require("better-sqlite3");
 const { dbDir, dbPath } = require("./cache");
-const { BLUR_LEVELS } = require("./imageTransform");
 
-const blurColumn = (level) => `blur_${level}`;
-const BLUR_COLUMNS = BLUR_LEVELS.map(blurColumn);
-// Columns duplicateFinder.js clusters media on; a shared value on any one of
-// these means two items are perceptual duplicates.
-const HASH_COLUMNS = ["baseMd5", ...BLUR_COLUMNS];
-const METADATA_COLUMNS = ["localPath", "kind", "framePosition", "actualPosition", "futurePosition", ...HASH_COLUMNS];
+// baseGrey (the raw cropped/greyscale pixel buffer) has no index:
+// duplicateFinder.js compares it by pixel distance, not SQL equality, so
+// there's no equality/range lookup to index - see allBaseGreyRows below.
+//
+// Deliberately NOT coupled to imageTransform.js's BLUR_LEVELS/SQUARE_SIZE
+// constants (unlike the old blur_1..blur_N columns were): those are tuned
+// often while iterating on crop/blur (see git history), and because
+// CREATE TABLE IF NOT EXISTS is a no-op on an already-existing table, any
+// schema built from the *current* BLUR_LEVELS would drift out of sync with
+// whatever columns actually exist on disk from a previous run's config -
+// exactly the "no such column: blur_2" crash this replaced. A fixed schema
+// can't drift.
+const METADATA_COLUMNS = ["localPath", "kind", "framePosition", "actualPosition", "futurePosition", "baseMd5", "baseGrey"];
 
 let db = null;
+
+// Adds a column to an already-created table if it predates this schema
+// version. CREATE TABLE IF NOT EXISTS is a no-op on an existing table, so
+// this is the only way an existing installation's index.db picks up new
+// columns without the user losing their whole index.
+const ensureColumn = (database, table, name, type) => {
+    const columns = database.pragma(`table_info(${table})`).map((c) => c.name);
+    if (!columns.includes(name)) {
+        database.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+    }
+};
 
 const createSchema = (database) => {
     // actualPosition is left untyped (BLOB affinity) so whatever type the
@@ -25,12 +42,11 @@ const createSchema = (database) => {
             actualPosition,
             futurePosition INTEGER NOT NULL DEFAULT -1,
             baseMd5 TEXT,
-            ${BLUR_COLUMNS.map((c) => `${c} TEXT`).join(",\n            ")}
+            baseGrey BLOB
         );
     `);
-    for (const column of HASH_COLUMNS) {
-        database.exec(`CREATE INDEX IF NOT EXISTS idx_items_${column} ON items(${column});`);
-    }
+    ensureColumn(database, "items", "baseGrey", "BLOB");
+    database.exec("CREATE INDEX IF NOT EXISTS idx_items_baseMd5 ON items(baseMd5);");
 };
 
 const openDb = () => {
@@ -80,12 +96,11 @@ const upsertItem = ({ id, metadata }) => {
     stmt.run({ id, ...metadata });
 };
 
-// Rows sharing a value for `column` (one of HASH_COLUMNS, always an internal
-// constant - never user input, so interpolating it into SQL is safe) along
-// with the media id (actualPosition) that value belongs to. Used by
-// duplicateFinder.js to cluster media without loading full item rows.
-const valuesForColumn = (column) => db
-    .prepare(`SELECT ${column} AS value, actualPosition FROM items WHERE ${column} IS NOT NULL AND ${column} != ''`)
+// Every row with a stored pixel buffer, for duplicateFinder.js's pairwise
+// mean-pixel-difference comparison (baseGrey has no index - distance can't
+// be expressed as a SQL equality/range lookup on a blob).
+const allBaseGreyRows = () => db
+    .prepare("SELECT actualPosition, baseGrey FROM items WHERE baseGrey IS NOT NULL")
     .all();
 
 module.exports = {
@@ -93,6 +108,5 @@ module.exports = {
     rebuildIndex,
     getItem,
     upsertItem,
-    valuesForColumn,
-    HASH_COLUMNS,
+    allBaseGreyRows,
 };

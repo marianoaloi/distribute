@@ -49,7 +49,7 @@ const ensurePool = () => {
     return pool;
 };
 
-// input: file path to hash. Resolves { baseMd5, blurMd5 }.
+// input: file path to hash. Resolves { baseMd5, grey }.
 const compute = (input) => new Promise((resolve, reject) => {
     ensurePool();
     queue.push({ id: ++nextTaskId, input, resolve, reject });

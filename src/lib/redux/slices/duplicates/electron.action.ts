@@ -19,8 +19,9 @@ export const FindDuplicates = (medias: Media[]) => {
     }
 }
 
-// Perceptual duplicates: groups media whose compareImg vector-store hash
-// fields (baseMd5, blur_1..blur_16) match, regardless of byte-identical content.
+// Perceptual duplicates: groups media whose cropped/greyscale frame pixels
+// are within a mean-difference threshold (compareImg/duplicateFinder.js),
+// regardless of byte-identical content.
 export const FindIndexDuplicates = () => {
 
     if (!isElectronApp) {

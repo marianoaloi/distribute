@@ -6,7 +6,7 @@ const imageTransform = require("./imageTransform");
 // dispatch across the worker pool.
 parentPort.on("message", async ({ id, input }) => {
     try {
-        const result = await imageTransform.md5sFor(input);
+        const result = await imageTransform.pixelsFor(input);
         parentPort.postMessage({ id, ok: true, result });
     } catch (error) {
         parentPort.postMessage({ id, ok: false, error: error.message });
