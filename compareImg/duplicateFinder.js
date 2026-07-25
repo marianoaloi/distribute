@@ -1,7 +1,6 @@
 const fs = require("fs");
 const crypto = require("crypto");
-const compareImgStore = require("./VectorStore");
-const imageTransform = require("./imageTransform");
+const compareImgStore = require("./HashStore");
 
 const contentHashFor = (filepath) => new Promise((resolve, reject) => {
     const hash = crypto.createHash("md5");
@@ -47,10 +46,6 @@ const findDuplicates = async (medias) => {
     return duplicateGroups;
 };
 
-// Metadata fields on a compareImg index item whose values, when shared by
-// more than one item, mean the underlying files are perceptual duplicates.
-const HASH_FIELDS = ["baseMd5", ...imageTransform.BLUR_LEVELS.map(level => `blur_${level}`)];
-
 // Minimal union-find so a match on any one of HASH_FIELDS merges two media
 // ids into the same duplicate cluster, even if they didn't match on others.
 const makeDisjointSet = () => {
@@ -75,19 +70,19 @@ const makeDisjointSet = () => {
     return { find, union };
 };
 
-// Groups compareImg index items by each hash field (baseMd5, blur_1..blur_16)
-// in turn; whenever more than one item shares a value for a field, the media
-// they belong to (metadata.actualPosition, the app's media id) are flagged
-// as duplicates of each other.
+// Groups compareImg index rows by each hash column (baseMd5, blur_1..blur_50)
+// in turn; whenever more than one row shares a value for a column, the media
+// they belong to (actualPosition, the app's media id) are flagged as
+// duplicates of each other.
 const findIndexDuplicates = async () => {
-    const items = await compareImgStore.index.listItems();
     const { find, union } = makeDisjointSet();
     const matchedIds = new Set();
 
-    for (const field of HASH_FIELDS) {
-        const byValue = groupBy(items.filter(item => item.metadata[field]), item => item.metadata[field]);
-        for (const sameValueItems of byValue.values()) {
-            const ids = [...new Set(sameValueItems.map(item => item.metadata.actualPosition))];
+    for (const column of compareImgStore.HASH_COLUMNS) {
+        const rows = compareImgStore.valuesForColumn(column);
+        const byValue = groupBy(rows, row => row.value);
+        for (const sameValueRows of byValue.values()) {
+            const ids = [...new Set(sameValueRows.map(row => row.actualPosition))];
             if (ids.length < 2) continue;
 
             ids.forEach(id => matchedIds.add(id));

@@ -1,29 +1,24 @@
-const compareImgStore = require("./VectorStore");
+const compareImgStore = require("./HashStore");
 const imageTransform = require("./imageTransform");
-const imageEmbedding = require("./imageEmbedding");
 const computePool = require("./computePool");
 const videoFrames = require("./videoFrames");
 const { hashFor } = require("../thumbnails/cache");
 
-// vectra metadata values must be number | string | boolean, so the blur MD5s
-// are stored as flat fields (one per configured blur level) instead of an array
+// flat columns (one per configured blur level) instead of an array, since
+// HashStore stores each hash as its own indexed SQLite column
 const blurFieldName = (level) => `blur_${level}`;
 
 // pixelSourcePath: what to read pixel data from (the frame file for videos, the
 // media file itself for images). metadataLocalPath: what to record as the
 // media's own location, always the source file the user actually has on disk.
 const indexUnit = async (id, pixelSourcePath, metadataLocalPath, kind, framePosition, actualPosition) => {
-    const existing = await compareImgStore.index.getItem(id);
+    const existing = compareImgStore.getItem(id);
     if (existing) return;
 
     // Pixel hashing runs in a worker-thread pool so it doesn't block the
     // Electron main process/UI and multiple items' hashing runs truly in
-    // parallel across cores. CLIP embedding stays on the main thread (see
-    // frameWorker.js for why); the two still run concurrently per item.
-    const [{ baseMd5, blurMd5 }, vector] = await Promise.all([
-        computePool.compute(pixelSourcePath),
-        imageEmbedding.embed(pixelSourcePath),
-    ]);
+    // parallel across cores.
+    const { baseMd5, blurMd5 } = await computePool.compute(pixelSourcePath);
 
     const metadata = {
         localPath: metadataLocalPath,
@@ -37,7 +32,7 @@ const indexUnit = async (id, pixelSourcePath, metadataLocalPath, kind, framePosi
         metadata[blurFieldName(level)] = blurMd5[idx];
     });
 
-    await compareImgStore.upsertItem({ id, vector, metadata });
+    compareImgStore.upsertItem({ id, metadata });
 };
 
 const indexImage = async (mediaItem) => {
@@ -56,7 +51,7 @@ const videoAlreadyIndexed = async (localPath) => {
     const baseId = hashFor(localPath);
     try {
         for (const position of videoFrames.FRAME_POSITIONS) {
-            if (!(await compareImgStore.index.getItem(`${baseId}_${position}`))) return false;
+            if (!compareImgStore.getItem(`${baseId}_${position}`)) return false;
         }
         return true;
     } catch (error) {
@@ -84,18 +79,18 @@ const indexVideo = async (mediaItem) => {
     }
 };
 
-// Media items are CPU/IO bound one at a time (ffmpeg spawn, image hashing,
-// CLIP embedding) but independent of each other, so process several
-// concurrently instead of one full item at a time. Index writes are
-// serialized separately (see VectorStore.upsertItem) so this concurrency is
-// safe. Isolates per-item failures so one bad file doesn't stop the batch.
+// Media items are CPU/IO bound one at a time (ffmpeg spawn, image hashing)
+// but independent of each other, so process several concurrently instead of
+// one full item at a time. HashStore.upsertItem is synchronous (no internal
+// await), so concurrent writes can't interleave; isolates per-item failures
+// so one bad file doesn't stop the batch.
 const ITEM_CONCURRENCY = 6;
 
 // onProgress(processed, total), if given, fires after each media item (image,
 // or video with all its frames) finishes — lets a caller surface progress
-// since indexing a real library can take minutes (model warm-up + ffmpeg).
+// since indexing a real library can take minutes (ffmpeg + hashing).
 const indexMediaBackground = async (mediaItems, onProgress) => {
-    await compareImgStore.ensureReady();
+    compareImgStore.ensureReady();
     const total = mediaItems.length;
     let processed = 0;
 

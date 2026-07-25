@@ -56,9 +56,7 @@ const compute = (input) => new Promise((resolve, reject) => {
     dispatchNext();
 });
 
-// Terminates all pool workers. Not required for a clean process exit (unlike
-// the CLIP/onnxruntime work, which must stay off worker threads entirely —
-// see frameWorker.js), but frees the threads if the pool is no longer needed.
+// Terminates all pool workers, freeing the threads if the pool is no longer needed.
 const shutdown = async () => {
     if (!pool) return;
     const workers = pool;
