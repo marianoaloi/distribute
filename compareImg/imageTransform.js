@@ -2,10 +2,10 @@ const { Jimp } = require("jimp");
 const crypto = require("crypto");
 
 // Spec: 68x68 square, crop a 4px border off every side down to 60x60, greyscale
-const SQUARE_SIZE = 68;
+const SQUARE_SIZE = 48;
 const CROP_MARGIN = 4;
 const FINAL_SIZE = SQUARE_SIZE - (CROP_MARGIN * 2);
-const BLUR_LEVELS = [1, 12, 25, 38, 50];
+const BLUR_LEVELS = [1, 2, 4, 8, 16, 32, 64, 128]; // radius in pixels
 
 const hashBuffer = (buffer) => crypto.createHash("md5").update(buffer).digest("hex");
 
@@ -85,4 +85,13 @@ const md5sFor = async (input) => {
 module.exports = {
     md5sFor,
     BLUR_LEVELS,
+    // Exposed for debug tooling (scripts/debugCompareVideos.js) so it can
+    // render the actual images being hashed, not just the resulting md5s.
+    toBaseImage,
+    greyscaleChannel,
+    boxBlur,
+    hashBuffer,
+    SQUARE_SIZE,
+    CROP_MARGIN,
+    FINAL_SIZE,
 };

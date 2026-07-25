@@ -7,7 +7,7 @@ import { FindDuplicates, FindIndexDuplicates, RebuildIndex, indexRebuildFinished
 import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { MediaIMG } from "./media"
 import ModalZoom from "./modalZoom"
-import { DuplicateGroupCard, DuplicateGroupRow, DuplicatesList, DuplicatesResume, EmptyState, GroupLabel } from "./duplicatesGrid.styled"
+import { CounterImgIndex, DuplicateGroupCard, DuplicateGroupRow, DuplicatesList, DuplicatesResume, EmptyState, GroupLabel } from "./duplicatesGrid.styled"
 
 export const GridDuplicates = (() => {
 
@@ -106,7 +106,7 @@ export const GridDuplicates = (() => {
                 </IconButton>
                 <span>{groups.length} duplicate group{groups.length === 1 ? "" : "s"}</span>
                 {config.mediaLoading && <span>Still loading media…</span>}
-                {indexRebuildError && <span>Index rebuild failed: {indexRebuildError}</span>}
+                {indexRebuildError && <CounterImgIndex>Index rebuild failed: {indexRebuildError}</CounterImgIndex>}
             </DuplicatesResume>
 
             {indexRebuilding &&

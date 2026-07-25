@@ -33,6 +33,7 @@ tmp/**
 compareImg/vectorIndex/**
 compareImg/frames/**
 compareImg/models/**
+/debug/**
 .claude/**
 .claude-flow/**
 **.tgz

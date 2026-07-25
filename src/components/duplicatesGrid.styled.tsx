@@ -66,3 +66,12 @@ export const EmptyState = styled.div`
     margin: 32px;
     color: rgba(255, 255, 255, 0.6);
 `
+
+
+export const CounterImgIndex = styled.span`
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 13px;
+    background: white;
+    margin: 15px 0px;
+    padding: 15px 10px;
+`
