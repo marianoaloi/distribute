@@ -57,13 +57,13 @@ const itemsSlice = createSlice({
         updateManyArrayItem: (state, action) => {
             const result = { ...state }
             result.medias = state.medias.map(
-                med => action.payload.find((m: { id: number; }) => m.id === med.id) || med
+                med => action.payload.find((m: { id: string; }) => m.id === med.id) || med
             )
             return result;
         },
 
         orderByName:(state) => {
-            state.medias.sort((a:Media,b:Media) => a.media.localeCompare(b.media))
+            state.medias.sort((a:Media,b:Media) => a.filename.localeCompare(b.filename))
         },
         orderBySize:(state) => {
             state.medias.sort((a:Media,b:Media) => b.size-a.size)
@@ -74,7 +74,7 @@ const itemsSlice = createSlice({
     }
 })
 
-const transformMedia = (f: FileDTO) => { return { "id": f.id, "path": f.item, size: f.size, media: f.fileName, mime: f.mime, checked: false, deleted: false , hash:f.hash , screenIndex:f.id} as Media }
+const transformMedia = (f: FileDTO) => { return { "id": f.id, "path": f.item, size: f.size, media: f.fileName, filename: f.filename, mime: f.mime, checked: false, deleted: false , hash:f.hash , hasAudio: f.hasAudio , screenIndex: 0} as Media }
 
 function transformStringToMedias(paths: FileDTO[]): Media[] {
 

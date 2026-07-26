@@ -1,8 +1,10 @@
 export interface FileDTO {
-    id: number
+    id: string
     item: string
     mime: string
     fileName: string
+    filename: string
     size: number
     hash: string
+    hasAudio: boolean
 }

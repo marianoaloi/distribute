@@ -76,7 +76,13 @@ export const EmptyState = styled.div`
 export const CounterImgIndex = styled.span`
     color: rgba(255, 255, 255, 0.6);
     font-size: 13px;
-    background: white;
     margin: 15px 0px;
     padding: 15px 10px;
+`
+
+export const RebuildIndexInfo = styled.div`
+    padding: 4px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
 `

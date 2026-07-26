@@ -73,15 +73,15 @@ Store setup in `src/lib/redux/store.ts` uses `redux-logger` middleware in develo
 
 ### Media Processing Pipeline (`util.js`)
 
-1. `transformData(files, folderPath, counter, sortFn)` → filters to image/video by mime-type → sorts → generates video thumbnails
-2. Video thumbnails use `ffmpegthumbnailer` CLI tool, cached by MD5 hash of filepath
+1. `transformData(files, folderPath)` → filters to image/video by mime-type → generates video thumbnails. `id` is the MD5 of the media's absolute path (stable across reloads), not a load-order counter.
+2. Video thumbnails use the bundled `ffmpeg-static` binary, seeking to 10% of the video's duration, cached by MD5 hash of filepath
 3. Thumbnail cache location: `C:\tmp\ffmpeg\` (hardcoded Windows path — will break on Linux)
-4. Sorting functions: `sortSize` (default), `sortName`, `sortFolder`, `noSort`
+4. Sorting (by name/size/folder) happens entirely in redux (`orderByName`/`orderBySize`/`orderByFolder` in `media.reduce.ts`) — `util.js` no longer sorts, it just sends media in discovery order
 
 ### Cross-Platform Considerations
 
 - `app.js` creates temp dir at `path.join(__dirname, "tmp")` but `util.js` hardcodes `C:\tmp\ffmpeg\` for thumbnail cache — these are inconsistent
-- `ffmpegthumbnailer` must be installed and on PATH for video thumbnail generation
+- `ffmpeg-static` bundles its own binary, so no external CLI tool install is required for video thumbnail generation
 - Dev mode detection uses `electron-is-dev` package; in dev loads `localhost:7845`, in prod loads `build/index.html`
 - On Windows, `app.on("window-all-closed")` calls `process.exit(0)` instead of `app.quit()`
 

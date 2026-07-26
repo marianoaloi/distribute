@@ -6,7 +6,7 @@ interface IndexRebuildProgress {
 }
 
 interface DuplicatesState {
-    groups: number[][]
+    groups: string[][]
     indexRebuilding: boolean
     indexRebuildError: string | null
     indexRebuildProgress: IndexRebuildProgress | null

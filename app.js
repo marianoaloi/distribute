@@ -19,7 +19,6 @@ const compareImgStore = require("./compareImg/HashStore");
 const mediaIndexer = require("./compareImg/mediaIndexer");
 const transformData = util.transformData;
 const transformDataStreaming = util.transformDataStreaming;
-var actualSort = util.sortSize;
 
 var menuTemplate = () => [
     {
@@ -54,11 +53,14 @@ var menuTemplate = () => [
         ]
     },
     {
+        // Sorting itself lives in redux now (see media.reduce.ts orderByName/
+        // orderBySize/orderByFolder) - these just tell the renderer which one
+        // to apply, Electron doesn't track or reflect the active sort anymore.
         label: 'Order',
         submenu: [
-            { label: "Sort by Name", type: "radio", checked: actualSort === util.sortName, click: sortByName },
-            { label: "Sort by Size", type: "radio", checked: actualSort === util.sortSize, click: sortBySize },
-            { label: "Sort by Folder", type: "radio", checked: actualSort === util.sortFolder, click: sortByFolder },
+            { label: "Sort by Name", click: sortByName },
+            { label: "Sort by Size", click: sortBySize },
+            { label: "Sort by Folder", click: sortByFolder },
         ]
     },
 
@@ -146,7 +148,7 @@ app.on("ready", () => {
     });
     createWindow();
 
-    
+
 });
 
 app.on("window-all-closed", function () {
@@ -198,8 +200,7 @@ ipcMain.on("findDuplicates", async (event, data) => {
         mainWindow.webContents.send("duplicatesFound", []);
     }
 })
-
-ipcMain.on("findIndexDuplicates", async () => {
+const findIndexDuplicates = async () => {
     try {
         const groups = await duplicateFinder.findIndexDuplicates();
         mainWindow.webContents.send("duplicatesFound", groups);
@@ -207,7 +208,8 @@ ipcMain.on("findIndexDuplicates", async () => {
         console.error("findIndexDuplicates failed", error);
         mainWindow.webContents.send("duplicatesFound", []);
     }
-})
+}
+ipcMain.on("findIndexDuplicates", findIndexDuplicates)
 
 // Wipes the (possibly corrupted) compareImg sqlite index and re-indexes the
 // media the renderer already has loaded in redux, so the user doesn't need
@@ -229,13 +231,14 @@ ipcMain.on("rebuildIndex", async (event, data) => {
         console.error("rebuildIndex failed", error);
         mainWindow.webContents.send("indexRebuilt", { success: false, error: error.message });
     }
+    findIndexDuplicates();
 })
 
 ipcMain.on("verifyOpen", async () => {
     if (process.env.FixFiles && fs.existsSync(process.env.FixFiles)) {
         fs.readFile(process.env.FixFiles, 'utf8', (err, data) => {
             let files = data.split("|").filter(filepath => fs.existsSync(filepath))
-            files = util.transformFixedData(files, 0, util.sortSize)
+            files = util.transformFixedData(files)
 
             mainWindow.webContents.send("directoryOpen", files);
         })
@@ -298,8 +301,6 @@ const openfile = () => {
         transformDataStreaming(
             data,
             fileGlobal,
-            0,
-            actualSort,
             (images) => {
                 mainWindow.webContents.send("directoryOpen", images);
             },
@@ -375,7 +376,6 @@ const loadRecursive = async () => {
     });
 }
 
-var counter = 0
 const openfileRecursive = (folderPath) => {
 
 
@@ -386,31 +386,26 @@ const openfileRecursive = (folderPath) => {
 
         if (qtdFiles > 0)
             mainWindow.webContents.send("loadMedias",
-                transformData(data, folderPath, counter, actualSort)
+                transformData(data, folderPath)
             );
-        counter += qtdFiles
     })
 }
 
 const cleanGrid = async () => { mainWindow.webContents.send("cleanGrid") }
 
+// Sorting itself lives in redux (media.reduce.ts orderByName/orderBySize/
+// orderByFolder) - these just forward which order the user picked.
 const sortByName = async () => {
-    actualSort = util.sortName;
-    updateMenu();
     if (mainWindow) {
         mainWindow.webContents.send("sort", "sortByName");
     }
 }
 const sortBySize = async () => {
-    actualSort = util.sortSize;
-    updateMenu();
     if (mainWindow) {
         mainWindow.webContents.send("sort", "sortBySize");
     }
 }
 const sortByFolder = async () => {
-    actualSort = util.sortFolder;
-    updateMenu();
     if (mainWindow) {
         mainWindow.webContents.send("sort", "sortByFolder");
     }

@@ -100,6 +100,12 @@ export const Qtd = styled(Typography)`
             margin: 0px 12px;
 `
 
+export const NoMediaFound = styled.h1`
+    color: #e0e0e0;
+    text-align: center;
+    margin: 20px 0;
+`
+
 export const FilterBar = styled.div`
     position: fixed;
     bottom: 16px;
@@ -108,7 +114,7 @@ export const FilterBar = styled.div`
     backdrop-filter: blur(8px);
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 50%;
-    z-index: 2;
+    z-index: 1001;
     display: flex;
     width: 48px;
     height: 48px;

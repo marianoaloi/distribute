@@ -1,13 +1,13 @@
-import { useRef, useState } from "react"
+import { KeyboardEvent, useRef, useState } from "react"
 import { useDispatch } from "react-redux"
 import { IconButton, CircularProgress, LinearProgress } from "@mui/material"
-import { Refresh, ImageSearch, RestartAlt, FolderOpen, FolderCopyTwoTone } from "@mui/icons-material"
+import { Refresh, ImageSearch, RestartAlt, FolderOpen, FolderCopyTwoTone, VolumeOff } from "@mui/icons-material"
 import { Media } from "../entity/Media"
 import { FindDuplicates, FindIndexDuplicates, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { MediaIMG } from "./media"
 import ModalZoom from "./modalZoom"
-import { CounterImgIndex, DuplicateGroupCard, DuplicateGroupRow, DuplicatesList, DuplicatesResume, EmptyState, GroupLabel } from "./duplicatesGrid.styled"
+import { CounterImgIndex, DuplicateGroupCard, DuplicateGroupRow, DuplicatesList, DuplicatesResume, EmptyState, GroupLabel, RebuildIndexInfo } from "./duplicatesGrid.styled"
 import { Folders } from "./folder"
 
 export const GridDuplicates = (() => {
@@ -68,6 +68,26 @@ export const GridDuplicates = (() => {
         ))
     }
 
+    // Within each group, checks the muted (no-audio) video copies for removal,
+    // keeping a sounded copy unchecked as the survivor. If every video in a
+    // group is muted (no sounded copy to keep instead), one muted copy is
+    // spared - checking all of them would leave nothing to keep.
+    const selectMutedDuplicates = () => {
+        const decided: Media[] = []
+        for (const group of groups) {
+            const videos = group.filter(m => m.mime && m.mime.includes('video'))
+            const muted = videos.filter(m => !m.hasAudio)
+            const sounded = videos.filter(m => m.hasAudio)
+            if (muted.length === 0) continue
+
+            const spared = sounded.length > 0 ? null : muted[0]
+            for (const video of videos) {
+                decided.push({ ...video, checked: video !== spared && !video.hasAudio })
+            }
+        }
+        dispatch(updateManyArrayItem(decided))
+    }
+
     const scan = () => dispatch(FindDuplicates(medias))
     const scanByHash = () => dispatch(FindIndexDuplicates())
     const openDiretory = () => dispatch(OpenDirectory())
@@ -96,8 +116,49 @@ export const GridDuplicates = (() => {
         setLastZoom(flatList[idx - 1])
     }
 
+    function pressedKeyUp(ev: KeyboardEvent<HTMLDivElement>): void {
+
+        if (document.querySelector('[role="dialog"]')) return;
+        if (!modalZoomRefMethods.current) return;
+
+
+        if (ev.key === "s") {
+            modalZoomRefMethods.current.playPauseVideo(); // Call the method in the child component
+        }
+
+        if (ev.key === "Escape") {
+            setOpen(false); // Call the method in the child component
+        }
+
+
+        if (ev.key === "f") {
+            modalZoomRefMethods.current.fullScreenVideo(); // Call the method in the child component
+        }
+
+        if (ev.key === "'") {
+            modalZoomRefMethods.current.chamgeImageClass(); // Call the method in the child component
+        }
+
+        if (ev.key === "ArrowRight" && open) {
+            nextMedia();
+        }
+        if (ev.key === "ArrowLeft" && open) {
+            prevMedia();
+        }
+        if (ev.key === "1") {
+            modalZoomRefMethods.current.togleVideoControls()
+        }
+        if (ev.key === "v") {
+            modalZoomRefMethods.current.maxVolume()
+        }
+        if (ev.key === "b") {
+            modalZoomRefMethods.current.minVolume()
+        }
+
+    }
+
     return (
-        <div>
+        <div onKeyUp={(ev) => pressedKeyUp(ev)}>
             <DuplicatesResume>
                 <IconButton onClick={scan} title="Scan loaded media for identical content (MD5)"><Refresh /></IconButton>
                 <IconButton onClick={scanByHash} title="Scan indexed media for visual duplicates (perceptual hash)"><ImageSearch /></IconButton>
@@ -106,6 +167,10 @@ export const GridDuplicates = (() => {
                         ? "Still loading media from the folder — wait for it to finish before rebuilding"
                         : "Rebuild the compareImg vector index from the currently loaded media (use this if indexing errors show up in the console, e.g. a corrupted index)"}>
                     {indexRebuilding ? <CircularProgress size={20} /> : <RestartAlt />}
+                </IconButton>
+                <IconButton onClick={selectMutedDuplicates} disabled={groups.length === 0}
+                    title="Check muted video duplicates for removal in every group, keeping one sounded copy (or, if a group has no sounded copy, one muted copy) unchecked">
+                    <VolumeOff />
                 </IconButton>
                 <span>{groups.length} duplicate group{groups.length === 1 ? "" : "s"}</span>
 
@@ -124,20 +189,20 @@ export const GridDuplicates = (() => {
             </div>
 
             {indexRebuilding &&
-                <div style={{ padding: "4px 8px" }}>
-                    <span>
+                <RebuildIndexInfo >
+                    <CounterImgIndex>
                         Rebuilding index…{" "}
                         {indexRebuildProgress && indexRebuildProgress.total > 0
                             ? `${indexRebuildProgress.processed} / ${indexRebuildProgress.total}`
                             : "starting"}
-                    </span>
+                    </CounterImgIndex>
                     <LinearProgress
                         variant={indexRebuildProgress && indexRebuildProgress.total > 0 ? "determinate" : "indeterminate"}
                         value={indexRebuildProgress && indexRebuildProgress.total > 0
                             ? (indexRebuildProgress.processed / indexRebuildProgress.total) * 100
                             : 0}
                     />
-                </div>
+                </RebuildIndexInfo>
             }
 
             {groups.length > 0

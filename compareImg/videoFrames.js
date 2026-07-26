@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { execFile } = require("child_process");
+const { execFile, execFileSync } = require("child_process");
 const { framesDir, ensureFramesDir } = require("./cache");
 const { hashFor } = require("../thumbnails/cache");
 
@@ -31,6 +31,25 @@ const getDuration = async (input) => {
     const [, h, m, s] = match;
     const seconds = (Number(h) * 3600) + (Number(m) * 60) + Number(s);
     return seconds > 0 ? seconds : null;
+};
+
+// ffmpeg -i's stderr lists one "Stream #i:j[...]: <Type>: ..." line per stream
+const AUDIO_STREAM_RE = /Stream #\d+:\d+.*:\s*Audio/;
+
+const hasAudio = async (input) => {
+    const { stderr } = await runCapture(["-i", input]);
+    return AUDIO_STREAM_RE.test(stderr);
+};
+
+// ffmpeg always exits non-zero when given no output; the stream info is on
+// stderr regardless, so read it off the thrown error instead of stdout.
+const hasAudioSync = (input) => {
+    try {
+        execFileSync(ffmpegPath, ["-i", input], { encoding: "UTF-8", stdio: ["ignore", "pipe", "pipe"] });
+        return false;
+    } catch (error) {
+        return AUDIO_STREAM_RE.test((error.stderr || "").toString());
+    }
 };
 
 // Spec: 10s after begin, 10s before end, 50% and 10% of duration
@@ -117,5 +136,7 @@ module.exports = {
     isAvailable,
     getDuration,
     extractFrames,
+    hasAudio,
+    hasAudioSync,
     FRAME_POSITIONS,
 };

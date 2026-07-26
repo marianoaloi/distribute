@@ -77,7 +77,7 @@ export const ElectronConnection = () => {
             ipcRender.on('cleanGrid', () => {
                 dispatch(purgeArray())
             })
-            ipcRender.on('duplicatesFound', (e: any, groups: number[][]) => {
+            ipcRender.on('duplicatesFound', (e: any, groups: string[][]) => {
                 dispatch(setDuplicateGroups(groups))
             })
             ipcRender.on('indexRebuilt', (e: any, result: { success: boolean, error?: string }) => {

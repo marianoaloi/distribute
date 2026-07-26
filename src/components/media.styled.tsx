@@ -27,10 +27,10 @@ export const ThePhoto = styled.div`
         display: unset;
 `
 
-export const PreviewMedia = styled.div<{ isVideo?: boolean }>((props: any) => `
+export const PreviewMedia = styled.div<{ isVideo?: boolean , hasSound?: boolean }>((props: any) => `
 
   /* transform: scale(3); */
-  background-color: ${props.isVideo ? "blue" : "red"};
+  background-color: ${props.isVideo ? props.hasSound ? "blue" : "deeppink" : "red"};
   color: white;
   float: right;
   font-size: 17px;

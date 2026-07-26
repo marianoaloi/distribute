@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { OpenDirectory, OpenDirectoryRecursive, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
-import { FilterBar, ImgGrid, Qtd, Resume } from "./gridImg.styled"
+import { FilterBar, ImgGrid, NoMediaFound, Qtd, Resume } from "./gridImg.styled"
 import { MediaIMG } from "./media"
 import { Media } from "../entity/Media"
 import { useDispatch } from "react-redux"
@@ -354,7 +354,7 @@ export const GridIMGs = (() => {
                         shiftControlSelect={shiftControlSelect}
                         handleOpenPreview={handleOpenPreview}
                     />)
-                    : <h1>No Media</h1>
+                    : <NoMediaFound>No Media</NoMediaFound>
                 }
 
 
@@ -372,6 +372,7 @@ export const GridIMGs = (() => {
                 anchorEl={anchorEl}
                 open={openMenu}
                 onClose={handleCloseMenu}
+                sx={{ zIndex: 1001 }}
                 anchorOrigin={{
                     vertical: 'top',
                     horizontal: 'left',
@@ -421,9 +422,9 @@ export const GridIMGs = (() => {
                 </MenuItem>
             </Menu>
 
- {lastZoom ?
 
-                    <ModalZoom mediaWithPreview={lastZoom} handleExternalClose={handleClose} openModal={open} ref={modalZoomRefMethods}
+
+                    {lastZoom && <ModalZoom mediaWithPreview={lastZoom} handleExternalClose={handleClose} openModal={open} ref={modalZoomRefMethods}
                         onPrev={() => {
                             const absIdx = medias.findIndex(m => m.id === lastZoom.id);
                             if (absIdx <= 0) return;
@@ -438,10 +439,9 @@ export const GridIMGs = (() => {
                             setCurrentPage(Math.floor(newIdx / postsPerPage));
                             setLastZoom({ ...medias[newIdx], screenIndex: newIdx % postsPerPage });
                         }}
-                    ></ModalZoom>
+                    ></ModalZoom>}
 
 
-                    : <p>No Media found</p>}
 
         </div>)
 })

@@ -103,6 +103,8 @@ const MEAN_DIFF_THRESHOLD = 3;
 // coarse feature (e.g. average brightness) before doing the full comparison,
 // or switch to a Hamming-distance perceptual hash with an LSH/bucket index.
 const findIndexDuplicates = async () => {
+    compareImgStore.ensureReady();
+
     const { find, union } = makeDisjointSet();
     const matchedIds = new Set();
 
