@@ -9,7 +9,7 @@ import { Media } from "../entity/Media"
 
 
 
-export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: any }> = ({ mediaOnlyCopy, handleExternalClose }) => {
+export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: any, className?: string }> = ({ mediaOnlyCopy, handleExternalClose, className }) => {
 
     const folders = useSelector(workFolder)
     const [openNewFolder, setOpenNewFolder] = React.useState(false);
@@ -85,12 +85,15 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
 
     }
 
-    return <FolderGrid>
+    return <FolderGrid className={className}>
         <AddFolder onClick={handleClickOpenNewFolder}  >
             <Add titleAccess="Add folder" />
         </AddFolder>
         {mediaOnlyCopy ?
-            <input type="checkbox" readOnly onClick={(ev) => setOnlyCopy(ev.currentTarget.checked)} checked={onlyCopy} aria-label="Only Copy" title="Only copy" />
+            <label className="onlyCopyLabel">
+                <input type="checkbox" readOnly onClick={(ev) => setOnlyCopy(ev.currentTarget.checked)} checked={onlyCopy} aria-label="Only Copy" title="Only copy" />
+                Only Copy
+            </label>
             : ""}
         {folders.map(fol => <ButtonProcess key={fol} fol={fol} />)}
         <React.Fragment>

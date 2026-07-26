@@ -1,7 +1,7 @@
 import { forwardRef, SyntheticEvent, useImperativeHandle, useRef, useState } from "react"
 import { Media } from "../entity/Media"
 import { prettifySizeF } from "./media"
-import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, MediaControllersCSS, FoldersZoom, MuteIcon, InfoBox } from "./modalZoom.styled"
+import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, MediaControllersCSS, FoldersZoom, MuteIcon, InfoBox, ZoomHeader } from "./modalZoom.styled"
 import { IconButton, Slider, Modal } from "@mui/material"
 import { toMediaUrl } from "../lib/mediaUrl"
 import { ArrowBackIos, ArrowForwardIos, CleaningServices } from "@mui/icons-material"
@@ -30,6 +30,8 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         const dispatch = useDispatch();
         const [soundIsMuted, setSoundIsMuted] = useState(false);
         const [volumeLevel, setVolumeLevel] = useState(0);
+        const [currentTime, setCurrentTime] = useState(0);
+        const [duration, setDuration] = useState(0);
 
 
         useImperativeHandle(ref, () => ({
@@ -117,7 +119,22 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             const video = event.currentTarget
             if (!video) return
             event.currentTarget.volume = 0.05
+            setDuration(video.duration)
             enableIconVideoNoSound()
+        }
+
+        function updateVideoTime(event: SyntheticEvent<HTMLVideoElement, Event>): void {
+            setCurrentTime(event.currentTarget.currentTime)
+        }
+
+        function formatTime(seconds: number): string {
+            if (!isFinite(seconds) || seconds < 0) return "00:00"
+            const totalSeconds = Math.floor(seconds)
+            const hours = Math.floor(totalSeconds / 3600)
+            const minutes = Math.floor((totalSeconds % 3600) / 60)
+            const secs = totalSeconds % 60
+            const pad = (n: number) => n.toString().padStart(2, "0")
+            return hours > 0 ? `${pad(hours)}:${pad(minutes)}:${pad(secs)}` : `${pad(minutes)}:${pad(secs)}`
         }
 
 
@@ -175,7 +192,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                 return
             setTimeout(() => {
                 setSoundIsMuted(!hasAudio(videoInZoom))
-            }, 1000);
+            }, 300);
         }
         const hasAudio = (video: any): boolean => {
             // audioTracks is reliable after loadedmetadata in Chromium/Electron
@@ -265,13 +282,13 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             >
 
                 <ModalBox >
-                    <div>
+                    <ZoomHeader>
                         {onPrev && <IconButton onClick={onPrev}><ArrowBackIos /></IconButton>}
                         {onNext && <IconButton onClick={onNext}><ArrowForwardIos /></IconButton>}
-                        <input style={{ zoom: 2 }} type="checkbox" onClick={changeCheckbox} id="selectMedia" defaultChecked={mediaWithPreview.checked} />
-                        <label htmlFor="selectMedia">Select</label>
+                        <input style={{ cursor: 'pointer' }} type="checkbox" onClick={changeCheckbox} id="selectMedia" defaultChecked={mediaWithPreview.checked} />
+                        <label htmlFor="selectMedia" style={{ cursor: 'pointer', userSelect: 'none', fontSize: '14px', marginRight: '8px' }}>Select</label>
                         <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
-                    </div>
+                    </ZoomHeader>
                     <MediaPresentation>
                         {
                             mediaWithPreview.mime.includes('video')
@@ -282,9 +299,11 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                         onDoubleClick={changeCheckbox}
                                         onWheel={controlVolumeByAltPresed}
                                         onVolumeChange={(ev) => setVolumeLevel(ev.currentTarget.volume)}
+                                        onTimeUpdate={updateVideoTime}
                                         autoPlay title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></VideoPresentation>
                                     <InfoBox>
                                         {soundIsMuted ? <MuteIcon color="error" /> : <span>{`${(volumeLevel * 100).toFixed(2)}%`}</span>}
+                                        <span>{`${formatTime(currentTime)} / ${formatTime(duration)}`}</span>
                                     </InfoBox>
                                 </>
                                 :

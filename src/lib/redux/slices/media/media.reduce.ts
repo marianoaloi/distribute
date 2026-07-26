@@ -66,7 +66,7 @@ const itemsSlice = createSlice({
             state.medias.sort((a:Media,b:Media) => a.media.localeCompare(b.media))
         },
         orderBySize:(state) => {
-            state.medias.sort((a:Media,b:Media) => a.size-b.size)
+            state.medias.sort((a:Media,b:Media) => b.size-a.size)
         },
         orderByFolder:(state) => {
             state.medias.sort((a:Media,b:Media) => a.path.localeCompare(b.path))
