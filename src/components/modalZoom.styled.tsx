@@ -55,17 +55,87 @@ max-width: 30%;
 
 `
 
+export const ZoomHeader = styled.div`
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 4px 12px;
+    background: #f5f5f5;
+    border-bottom: 1px solid #e0e0e0;
+    height: 40px;
+    box-sizing: border-box;
+`
+
 export const FoldersZoom = styled(Folders)`
-    position: sticky;
-    height: 35px;
-    top: 0px;
-    z-index: 2;
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    background: transparent;
+    border: none;
+    padding: 0px;
+    margin: 0px;
+    gap: 4px;
+    min-height: unset;
+    height: 32px;
+    flex: 1;
+
+    /* Hide scrollbar for a clean look but allow scrolling if there are many folders */
+    &::-webkit-scrollbar {
+        display: none;
+    }
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+
+    /* Style buttons inside FoldersZoom to be compact and fit in the header/footer */
+    .MuiButton-root {
+        height: 26px;
+        padding: 2px 8px;
+        font-size: 11px;
+        text-transform: none;
+        min-width: unset;
+        white-space: nowrap;
+        background-color: #1976d2;
+        color: white;
+        
+        &:hover {
+            background-color: #115293;
+        }
+    }
+
+    /* Style IconButtons (delete/add) inside FoldersZoom to be compact */
+    .MuiIconButton-root {
+        padding: 2px;
+        height: 26px;
+        width: 26px;
+        color: #555;
+        
+        svg {
+            font-size: 16px;
+        }
+    }
+
+    /* Spacing between folder button and delete button */
+    .MuiButton-root + .MuiIconButton-root {
+        margin-left: -10px;
+    }
+
+    /* Style the Only Copy checkbox label for the zoom view */
+    .onlyCopyLabel {
+        color: #333;
+        font-weight: 500;
+        margin-right: 8px;
+    }
 `
 export const InfoBox = styled.div`
     position: fixed;
     top: 10px;
     right: 10px;
     z-index: 3;
+    display: flex;
+    flex-wrap: wrap;
+    flex-direction: column;
+    align-items: center;
 `
 export const MuteIcon = styled(VolumeMuteRounded)`
     color: red;
