@@ -1,6 +1,7 @@
 import { createReducer } from "@reduxjs/toolkit"
-import { mediaLoadComplete, mediaLoadStart, setMediaType, setPage, zoomIn, zoomOut } from "./thunks"
+import { mediaLoadComplete, mediaLoadStart, setMediaType, setPage, setPostsPerPage, setScrollPosition, zoomIn, zoomOut } from "./thunks"
 import { populateArray } from "../media/media.reduce"
+import { loadPersistedConfig } from "./persistConfig"
 
 
 interface Config {
@@ -8,12 +9,17 @@ interface Config {
     mediaType?: 'image' | 'video' | 'gif' | undefined
     page: number
     mediaLoading: boolean
+    postsPerPage: number
+    scrollPosition: number
 }
 
 const initialState: Config = {
     pxzoom: 200,
     page: 0,
-    mediaLoading: false
+    mediaLoading: false,
+    postsPerPage: 50,
+    scrollPosition: 0,
+    ...loadPersistedConfig(),
 }
 
 export const ConfigReduce = createReducer(initialState, (build) => {
@@ -32,6 +38,14 @@ export const ConfigReduce = createReducer(initialState, (build) => {
     build.addCase(setPage, (state, action) => ({
         ...state,
         page: action.payload
+    }))
+    build.addCase(setPostsPerPage, (state, action) => ({
+        ...state,
+        postsPerPage: action.payload
+    }))
+    build.addCase(setScrollPosition, (state, action) => ({
+        ...state,
+        scrollPosition: action.payload
     }))
     // Opening a new folder fully replaces the media list — go back to page 1.
     build.addCase(populateArray, (state) => ({

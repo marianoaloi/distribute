@@ -209,10 +209,9 @@ ipcMain.on("findIndexDuplicates", async () => {
     }
 })
 
-// Wipes the (possibly corrupted) vectra index and re-indexes the media the
-// renderer already has loaded in redux, so the user doesn't need to
-// re-open/re-scan the folder to recover from an "Unexpected end of JSON
-// input" style crash.
+// Wipes the (possibly corrupted) compareImg sqlite index and re-indexes the
+// media the renderer already has loaded in redux, so the user doesn't need
+// to re-open/re-scan the folder to recover from a corrupted index.db.
 ipcMain.on("rebuildIndex", async (event, data) => {
     try {
         await compareImgStore.rebuildIndex();

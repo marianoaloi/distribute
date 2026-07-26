@@ -55,8 +55,7 @@ const openDb = () => {
 };
 
 // Wipes and recreates an empty database. Used both to self-heal a corrupted
-// db (rare with SQLite, but mirrors the old vectra behavior) and for the
-// user-triggered "rebuild index" action.
+// db (rare with SQLite) and for the user-triggered "rebuild index" action.
 const rebuildIndex = () => {
     if (db) db.close();
     fs.rmSync(dbPath, { force: true });
@@ -85,7 +84,7 @@ const getItem = (id) => db.prepare("SELECT * FROM items WHERE id = ?").get(id);
 
 // better-sqlite3 calls are synchronous with no internal await, so concurrent
 // callers (see ITEM_CONCURRENCY in mediaIndexer.js) can never interleave
-// mid-write the way vectra's JSON-backed upsertItem could.
+// mid-write.
 const upsertItem = ({ id, metadata }) => {
     const columns = ["id", ...METADATA_COLUMNS];
     const assignments = METADATA_COLUMNS.map((c) => `${c} = excluded.${c}`).join(", ");

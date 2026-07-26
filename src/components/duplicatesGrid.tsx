@@ -1,13 +1,14 @@
 import { useRef, useState } from "react"
 import { useDispatch } from "react-redux"
 import { IconButton, CircularProgress, LinearProgress } from "@mui/material"
-import { Refresh, ImageSearch, RestartAlt } from "@mui/icons-material"
+import { Refresh, ImageSearch, RestartAlt, FolderOpen, FolderCopyTwoTone } from "@mui/icons-material"
 import { Media } from "../entity/Media"
-import { FindDuplicates, FindIndexDuplicates, RebuildIndex, indexRebuildFinished, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
+import { FindDuplicates, FindIndexDuplicates, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { MediaIMG } from "./media"
 import ModalZoom from "./modalZoom"
 import { CounterImgIndex, DuplicateGroupCard, DuplicateGroupRow, DuplicatesList, DuplicatesResume, EmptyState, GroupLabel } from "./duplicatesGrid.styled"
+import { Folders } from "./folder"
 
 export const GridDuplicates = (() => {
 
@@ -69,6 +70,8 @@ export const GridDuplicates = (() => {
 
     const scan = () => dispatch(FindDuplicates(medias))
     const scanByHash = () => dispatch(FindIndexDuplicates())
+    const openDiretory = () => dispatch(OpenDirectory())
+    const openDiretoryRecursive = () => dispatch(OpenDirectoryRecursive())
     const rebuildIndex = () => {
         // Guards against the folder still being loaded (videos stream in one
         // at a time, so medias here can be empty or a small partial list —
@@ -105,9 +108,20 @@ export const GridDuplicates = (() => {
                     {indexRebuilding ? <CircularProgress size={20} /> : <RestartAlt />}
                 </IconButton>
                 <span>{groups.length} duplicate group{groups.length === 1 ? "" : "s"}</span>
+
+                <div className="spacer" />
+
+                <Folders />
+
+                <IconButton onClick={openDiretory} title="Open folder to choose medias"><FolderOpen /></IconButton>
+                <IconButton onClick={openDiretoryRecursive} title="Open folder recursively to choose medias"><FolderCopyTwoTone /></IconButton>
+            </DuplicatesResume>
+            <div>
+
                 {config.mediaLoading && <span>Still loading media…</span>}
                 {indexRebuildError && <CounterImgIndex>Index rebuild failed: {indexRebuildError}</CounterImgIndex>}
-            </DuplicatesResume>
+
+            </div>
 
             {indexRebuilding &&
                 <div style={{ padding: "4px 8px" }}>

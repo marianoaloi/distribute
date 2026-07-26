@@ -23,6 +23,21 @@ export const setPage = createAction(
     })
 )
 
+export const setPostsPerPage = createAction(
+    'config/setPostsPerPage',
+    (postsPerPage: number) => ({
+        payload: postsPerPage
+    })
+)
+
+// Persisted so the grid restores where the user left off (see persistConfig.ts).
+export const setScrollPosition = createAction(
+    'config/setScrollPosition',
+    (scrollPosition: number) => ({
+        payload: scrollPosition
+    })
+)
+
 // Fired by the main process around the video-thumbnail streaming phase of
 // opening a folder (util.js's transformDataStreaming) — the grid can still
 // be filling in one video at a time well after mediaLoadStart, with no other

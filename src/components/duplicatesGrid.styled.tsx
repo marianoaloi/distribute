@@ -31,6 +31,11 @@ export const DuplicatesResume = styled.div`
             background-color: rgba(255, 255, 255, 0.08);
         }
     }
+
+    
+    .spacer {
+        flex-grow: 1;
+    }
 `
 
 export const DuplicatesList = styled.div`

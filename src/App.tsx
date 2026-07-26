@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { IconButton } from '@mui/material';
+import { GridView, Difference } from '@mui/icons-material';
 import './App.css';
 import { ElectronConnection, useDispatch } from './lib/redux';
 import { GridIMGs } from './components/gridImg';
@@ -23,8 +25,12 @@ function App() {
 
       <header className="App-header">
         {/* <img src={logo} className="App-logo" alt="logo" /> */}
-        <button onClick={() => setView('grid')} disabled={view === 'grid'}>Grid</button>
-        <button onClick={() => setView('duplicates')} disabled={view === 'duplicates'}>Duplicates</button>
+        <IconButton onClick={() => setView('grid')} color={view === 'grid' ? 'primary' : 'default'} title="Grid">
+          <GridView />
+        </IconButton>
+        <IconButton onClick={() => setView('duplicates')} color={view === 'duplicates' ? 'primary' : 'default'} title="Duplicates">
+          <Difference />
+        </IconButton>
       </header>
       {view === 'grid' ? <GridIMGs /> : <GridDuplicates />}
 
