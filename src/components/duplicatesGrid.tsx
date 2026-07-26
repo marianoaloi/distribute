@@ -68,21 +68,31 @@ export const GridDuplicates = (() => {
         ))
     }
 
-    // Within each group, checks the muted (no-audio) video copies for removal,
+    // Within each group: checks the muted (no-audio) video copies for removal,
     // keeping a sounded copy unchecked as the survivor. If every video in a
     // group is muted (no sounded copy to keep instead), one muted copy is
-    // spared - checking all of them would leave nothing to keep.
-    const selectMutedDuplicates = () => {
+    // spared - checking all of them would leave nothing to keep. Images follow
+    // a separate rule: check every image in the group for removal except the
+    // largest (by file size), which is kept as the survivor.
+    const selectDuplicatesToRemove = () => {
         const decided: Media[] = []
         for (const group of groups) {
             const videos = group.filter(m => m.mime && m.mime.includes('video'))
             const muted = videos.filter(m => !m.hasAudio)
             const sounded = videos.filter(m => m.hasAudio)
-            if (muted.length === 0) continue
+            if (muted.length > 0) {
+                const spared = sounded.length > 0 ? null : muted[0]
+                for (const video of videos) {
+                    decided.push({ ...video, checked: video !== spared && !video.hasAudio })
+                }
+            }
 
-            const spared = sounded.length > 0 ? null : muted[0]
-            for (const video of videos) {
-                decided.push({ ...video, checked: video !== spared && !video.hasAudio })
+            const images = group.filter(m => m.mime && m.mime.includes('image'))
+            if (images.length > 0) {
+                const biggest = images.reduce((a, b) => b.size > a.size ? b : a)
+                for (const image of images) {
+                    decided.push({ ...image, checked: image !== biggest })
+                }
             }
         }
         dispatch(updateManyArrayItem(decided))
@@ -168,8 +178,8 @@ export const GridDuplicates = (() => {
                         : "Rebuild the compareImg vector index from the currently loaded media (use this if indexing errors show up in the console, e.g. a corrupted index)"}>
                     {indexRebuilding ? <CircularProgress size={20} /> : <RestartAlt />}
                 </IconButton>
-                <IconButton onClick={selectMutedDuplicates} disabled={groups.length === 0}
-                    title="Check muted video duplicates for removal in every group, keeping one sounded copy (or, if a group has no sounded copy, one muted copy) unchecked">
+                <IconButton onClick={selectDuplicatesToRemove} disabled={groups.length === 0}
+                    title="Check duplicates for removal in every group: muted video copies (keeping one sounded, or one muted if none are sounded) and images (keeping the largest)">
                     <VolumeOff />
                 </IconButton>
                 <span>{groups.length} duplicate group{groups.length === 1 ? "" : "s"}</span>
