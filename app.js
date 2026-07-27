@@ -17,6 +17,7 @@ const { dirCache } = require("./DirectorioCache");
 const duplicateFinder = require("./compareImg/duplicateFinder");
 const compareImgStore = require("./compareImg/HashStore");
 const mediaIndexer = require("./compareImg/mediaIndexer");
+const onnxDetector = require("./objectDetection/onnxDetector");
 const transformData = util.transformData;
 const transformDataStreaming = util.transformDataStreaming;
 
@@ -210,6 +211,31 @@ const findIndexDuplicates = async () => {
     }
 }
 ipcMain.on("findIndexDuplicates", findIndexDuplicates)
+
+// Runs ONNX object detection (objectDetection/onnxDetector.js) over the
+// media the renderer currently has loaded, one at a time, streaming each
+// result back as it finishes rather than waiting for the whole batch (same
+// streaming shape as indexRebuildProgress/addOneMedia).
+ipcMain.on("detectObjects", async (event, data) => {
+    const medias = (data && data.medias) || [];
+    if (!onnxDetector.isAvailable()) {
+        mainWindow.webContents.send("detectionsComplete", { error: "Model not found in ./xcxv" });
+        return;
+    }
+    let processed = 0;
+    for (const media of medias) {
+        try {
+            const boxes = await onnxDetector.detect(media.media);
+            mainWindow.webContents.send("detectionFound", { id: media.id, boxes });
+        } catch (error) {
+            console.error("detectObjects failed for", media.media, error);
+            mainWindow.webContents.send("detectionFound", { id: media.id, boxes: [], error: error.message });
+        }
+        processed++;
+        mainWindow.webContents.send("detectionProgress", { processed, total: medias.length });
+    }
+    mainWindow.webContents.send("detectionsComplete", {});
+})
 
 // Wipes the (possibly corrupted) compareImg sqlite index and re-indexes the
 // media the renderer already has loaded in redux, so the user doesn't need

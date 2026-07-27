@@ -18,6 +18,7 @@ const ipc = {
             'findDuplicates',
             'findIndexDuplicates',
             'rebuildIndex',
+            'detectObjects',
         ],
         // From main to render.
         'receive': ['directoryOpen',
@@ -52,6 +53,9 @@ const ipc = {
             'indexRebuildProgress',
             'mediaLoadStart',
             'mediaLoadComplete',
+            'detectionFound',
+            'detectionProgress',
+            'detectionsComplete',
         ]
     }
 };

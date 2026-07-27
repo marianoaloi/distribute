@@ -4,6 +4,7 @@ import { Media } from '../../../../entity/Media';
 import { addFolder } from '../folders';
 import { mediaLoadComplete, mediaLoadStart, zoomIn, zoomOut } from '../configurations';
 import { setDuplicateGroups, indexRebuildFinished, setIndexRebuildProgress } from '../duplicates';
+import { setDetectionResult, setDetectionProgress, detectingFinished } from '../detections';
 import { FileDTO } from '../../../../entity/FileDTO';
 
 
@@ -23,7 +24,7 @@ export const ElectronConnection = () => {
 
     return (dispatch: any) => {
         if (ipcRender) {
-            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete'];
+            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete'];
             channels.forEach(ch => ipcRender.removeAllListeners(ch));
 
             ipcRender.on('directoryOpen', (e: any, args: any) => {
@@ -91,6 +92,15 @@ export const ElectronConnection = () => {
             })
             ipcRender.on('mediaLoadComplete', () => {
                 dispatch(mediaLoadComplete())
+            })
+            ipcRender.on('detectionFound', (e: any, result: { id: string, boxes: any[] }) => {
+                dispatch(setDetectionResult(result))
+            })
+            ipcRender.on('detectionProgress', (e: any, progress: { processed: number, total: number }) => {
+                dispatch(setDetectionProgress(progress))
+            })
+            ipcRender.on('detectionsComplete', (e: any, result: { error?: string }) => {
+                dispatch(detectingFinished(result))
             })
             ipcRender.send("verifyOpen", undefined)
         }

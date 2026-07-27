@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react';
 import { IconButton } from '@mui/material';
-import { GridView, Difference } from '@mui/icons-material';
+import { GridView, Difference, Radar } from '@mui/icons-material';
 import './App.css';
 import { ElectronConnection, useDispatch } from './lib/redux';
 import { GridIMGs } from './components/gridImg';
 import { GridDuplicates } from './components/duplicatesGrid';
+import { GridDetections } from './components/objectDetectionGrid';
 
 function App() {
 
   const dispatch = useDispatch();
-  const [view, setView] = useState<'grid' | 'duplicates'>('grid');
+  const [view, setView] = useState<'grid' | 'duplicates' | 'detections'>('grid');
 
   useEffect(() => {
     dispatch(ElectronConnection())
@@ -31,8 +32,11 @@ function App() {
         <IconButton onClick={() => setView('duplicates')} color={view === 'duplicates' ? 'primary' : 'default'} title="Duplicates">
           <Difference />
         </IconButton>
+        <IconButton onClick={() => setView('detections')} color={view === 'detections' ? 'primary' : 'default'} title="Object Detection">
+          <Radar />
+        </IconButton>
       </header>
-      {view === 'grid' ? <GridIMGs /> : <GridDuplicates />}
+      {view === 'grid' ? <GridIMGs /> : view === 'duplicates' ? <GridDuplicates /> : <GridDetections />}
 
     </div>
   );
