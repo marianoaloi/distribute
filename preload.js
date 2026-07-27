@@ -15,6 +15,9 @@ const ipc = {
             'openRecursive',
             'sort',
             'open',
+            'findDuplicates',
+            'findIndexDuplicates',
+            'rebuildIndex',
         ],
         // From main to render.
         'receive': ['directoryOpen',
@@ -28,6 +31,7 @@ const ipc = {
             'sort',
             'open',
             'cleanGrid',
+            'duplicatesFound',
          ],
         // From render to main and back again.
         'sendReceive': [
@@ -43,6 +47,11 @@ const ipc = {
             'open',
             "addOneMedia",
             'cleanGrid',
+            'duplicatesFound',
+            'indexRebuilt',
+            'indexRebuildProgress',
+            'mediaLoadStart',
+            'mediaLoadComplete',
         ]
     }
 };

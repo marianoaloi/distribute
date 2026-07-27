@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { OpenDirectory, OpenDirectoryRecursive, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
-import { FilterBar, ImgGrid, Qtd, Resume } from "./gridImg.styled"
+import { FilterBar, ImgGrid, NoMediaFound, Qtd, Resume } from "./gridImg.styled"
 import { MediaIMG } from "./media"
 import { Media } from "../entity/Media"
 import { useDispatch } from "react-redux"
@@ -8,7 +8,7 @@ import { IconButton, Menu, MenuItem, ListItemIcon, ListItemText } from "@mui/mat
 import { Folders } from "./folder"
 import { KeyboardArrowLeft, KeyboardArrowRight, KeyboardDoubleArrowLeft, KeyboardDoubleArrowRight, RadioButtonChecked, RadioButtonUnchecked, Gif, Movie, Image, AllInclusive } from "@mui/icons-material"
 import ModalZoom from "./modalZoom"
-import { configurationsSelector, setMediaType } from "../lib/redux/slices/configurations"
+import { configurationsSelector, setMediaType, setPage, setPostsPerPage, setScrollPosition } from "../lib/redux/slices/configurations"
 
 
 import { FolderCopyTwoTone, FolderOpen, Pause, PlayArrow } from '@mui/icons-material';
@@ -29,8 +29,10 @@ export const GridIMGs = (() => {
             if (config.mediaType === "image") return m.mime.includes("image") && !m.mime.includes("gif");
             return true;
         })
-    const [currentPage, setCurrentPage] = useState(0);
-    const [postsPerPage, setPostsPerPage] = useState(50);
+    const currentPage = config.page;
+    const setCurrentPage = (page: number) => dispatch(setPage(page));
+    const postsPerPage = config.postsPerPage;
+    const setPostsPerPageValue = (qty: number) => dispatch(setPostsPerPage(qty));
 
 
     const [speed, setSpeed] = useState(4);
@@ -186,6 +188,32 @@ export const GridIMGs = (() => {
         };
     }, [scrollIntervalId]);
 
+    // Restores the remembered scroll position once this page's media has
+    // actually rendered - restoring any earlier would just scroll an empty page.
+    const restoredScrollRef = useRef(false);
+    useEffect(() => {
+        if (restoredScrollRef.current) return;
+        if (mediaSliced.length === 0) return;
+        restoredScrollRef.current = true;
+        window.scrollTo({ top: config.scrollPosition, behavior: 'auto' });
+    }, [mediaSliced.length, config.scrollPosition]);
+
+    // Debounced so scrolling doesn't spam dispatch/localStorage writes on every pixel.
+    useEffect(() => {
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        const handleScroll = () => {
+            if (timeoutId) clearTimeout(timeoutId);
+            timeoutId = setTimeout(() => {
+                dispatch(setScrollPosition(window.scrollY));
+            }, 300);
+        };
+        window.addEventListener('scroll', handleScroll);
+        return () => {
+            window.removeEventListener('scroll', handleScroll);
+            if (timeoutId) clearTimeout(timeoutId);
+        };
+    }, [dispatch]);
+
 
 
 
@@ -288,7 +316,8 @@ export const GridIMGs = (() => {
         <div onKeyUp={(ev) => pressedKeyUp(ev)}>
             <Resume>
                 <Qtd title="Total items not deleted">{medias.length}</Qtd>
-                <select value={postsPerPage} title="How many items for page" onChange={(val) => setPostsPerPage(parseInt(val.currentTarget.value))}>
+                {config.mediaLoading && <span title="Videos are still being added one at a time in the background">Loading media…</span>}
+                <select value={postsPerPage} title="How many items for page" onChange={(val) => setPostsPerPageValue(parseInt(val.currentTarget.value))}>
                     <option value="20">20</option>
                     <option value="50">50</option>
                     <option value="100">100</option>
@@ -325,7 +354,7 @@ export const GridIMGs = (() => {
                         shiftControlSelect={shiftControlSelect}
                         handleOpenPreview={handleOpenPreview}
                     />)
-                    : <h1>No Media</h1>
+                    : <NoMediaFound>No Media</NoMediaFound>
                 }
 
 
@@ -343,6 +372,7 @@ export const GridIMGs = (() => {
                 anchorEl={anchorEl}
                 open={openMenu}
                 onClose={handleCloseMenu}
+                sx={{ zIndex: 1001 }}
                 anchorOrigin={{
                     vertical: 'top',
                     horizontal: 'left',
@@ -392,9 +422,9 @@ export const GridIMGs = (() => {
                 </MenuItem>
             </Menu>
 
- {lastZoom ?
 
-                    <ModalZoom mediaWithPreview={lastZoom} handleExternalClose={handleClose} openModal={open} ref={modalZoomRefMethods}
+
+                    {lastZoom && <ModalZoom mediaWithPreview={lastZoom} handleExternalClose={handleClose} openModal={open} ref={modalZoomRefMethods}
                         onPrev={() => {
                             const absIdx = medias.findIndex(m => m.id === lastZoom.id);
                             if (absIdx <= 0) return;
@@ -409,10 +439,9 @@ export const GridIMGs = (() => {
                             setCurrentPage(Math.floor(newIdx / postsPerPage));
                             setLastZoom({ ...medias[newIdx], screenIndex: newIdx % postsPerPage });
                         }}
-                    ></ModalZoom>
+                    ></ModalZoom>}
 
 
-                    : <p>No Media found</p>}
 
         </div>)
 })

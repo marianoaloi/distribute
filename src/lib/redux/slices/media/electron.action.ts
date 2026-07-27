@@ -2,7 +2,8 @@ import { addListinActualArray, addOnceMedia, orderByFolder, orderByName, orderBy
 import { example } from './populateExample';
 import { Media } from '../../../../entity/Media';
 import { addFolder } from '../folders';
-import { zoomIn, zoomOut } from '../configurations';
+import { mediaLoadComplete, mediaLoadStart, zoomIn, zoomOut } from '../configurations';
+import { setDuplicateGroups, indexRebuildFinished, setIndexRebuildProgress } from '../duplicates';
 import { FileDTO } from '../../../../entity/FileDTO';
 
 
@@ -22,7 +23,7 @@ export const ElectronConnection = () => {
 
     return (dispatch: any) => {
         if (ipcRender) {
-            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid'];
+            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete'];
             channels.forEach(ch => ipcRender.removeAllListeners(ch));
 
             ipcRender.on('directoryOpen', (e: any, args: any) => {
@@ -43,7 +44,7 @@ export const ElectronConnection = () => {
 
             ipcRender.on("addOneMedia", (e: any, media: FileDTO) => {
 
-                console.log("Receive one media ", media.id);
+                // console.log("Receive one media ", media.id);
 
                 dispatch(addOnceMedia(media))
 
@@ -75,6 +76,21 @@ export const ElectronConnection = () => {
             })
             ipcRender.on('cleanGrid', () => {
                 dispatch(purgeArray())
+            })
+            ipcRender.on('duplicatesFound', (e: any, groups: string[][]) => {
+                dispatch(setDuplicateGroups(groups))
+            })
+            ipcRender.on('indexRebuilt', (e: any, result: { success: boolean, error?: string }) => {
+                dispatch(indexRebuildFinished(result.success ? null : (result.error || 'Rebuild failed')))
+            })
+            ipcRender.on('indexRebuildProgress', (e: any, progress: { processed: number, total: number }) => {
+                dispatch(setIndexRebuildProgress(progress))
+            })
+            ipcRender.on('mediaLoadStart', () => {
+                dispatch(mediaLoadStart())
+            })
+            ipcRender.on('mediaLoadComplete', () => {
+                dispatch(mediaLoadComplete())
             })
             ipcRender.send("verifyOpen", undefined)
         }

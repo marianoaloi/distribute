@@ -28,7 +28,6 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         const imgRef = useRef<HTMLImageElement | null>(null)
         const videoRef = useRef<HTMLVideoElement | null>(null)
         const dispatch = useDispatch();
-        const [soundIsMuted, setSoundIsMuted] = useState(false);
         const [volumeLevel, setVolumeLevel] = useState(0);
         const [currentTime, setCurrentTime] = useState(0);
         const [duration, setDuration] = useState(0);
@@ -120,7 +119,6 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             if (!video) return
             event.currentTarget.volume = 0.05
             setDuration(video.duration)
-            enableIconVideoNoSound()
         }
 
         function updateVideoTime(event: SyntheticEvent<HTMLVideoElement, Event>): void {
@@ -185,25 +183,6 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                 }
                 event.stopPropagation();
             }
-        }
-        const enableIconVideoNoSound = async () => {
-            const videoInZoom: any = videoRef.current
-            if (!videoInZoom)
-                return
-            setTimeout(() => {
-                setSoundIsMuted(!hasAudio(videoInZoom))
-            }, 300);
-        }
-        const hasAudio = (video: any): boolean => {
-            // audioTracks is reliable after loadedmetadata in Chromium/Electron
-            if (video.audioTracks !== undefined) {
-                return video.audioTracks.length > 0;
-            }
-            if (video.mozHasAudio !== undefined) {
-                return video.mozHasAudio;
-            }
-            console.log("No audio track information available, guessing based on webkitAudioDecodedByteCount", video.webkitAudioDecodedByteCount);
-            return Boolean(video.webkitAudioDecodedByteCount);
         }
         const MediaControllers = () => {
             return <MediaControllersCSS onWheel={(ev) => zoomImg(ev)}>
@@ -302,7 +281,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                         onTimeUpdate={updateVideoTime}
                                         autoPlay title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></VideoPresentation>
                                     <InfoBox>
-                                        {soundIsMuted ? <MuteIcon color="error" /> : <span>{`${(volumeLevel * 100).toFixed(2)}%`}</span>}
+                                        {!mediaWithPreview.hasAudio ? <MuteIcon color="error" /> : <span>{`${(volumeLevel * 100).toFixed(2)}%`}</span>}
                                         <span>{`${formatTime(currentTime)} / ${formatTime(duration)}`}</span>
                                     </InfoBox>
                                 </>

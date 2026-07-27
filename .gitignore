@@ -30,7 +30,9 @@ distribute-win32-x64
 distribute-win32-x64/**
 dist/**
 tmp/**
+/debug/**
 .claude/**
 .claude-flow/**
 **.tgz
 .swarm/**
+ruvector.db

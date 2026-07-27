@@ -56,7 +56,9 @@ export const MediaIMG: React.FC<TheMediaProps> = ({ media, lastClickedEvent,
                 src={toMediaUrl(media.media)}  
                 title={`${media.path}\n${prettifySizeF(media.size)} ${media.id} ${media.screenIndex}`}  ></ImageMaloi>
         <CheckBoxSelect readOnly onClick={(val) => changeCkecked(val)} checked={media.checked} type="checkbox"></CheckBoxSelect>
-        <PreviewMedia onClick={openPreview} isVideo={media.mime.includes('video')}>{media.mime.includes('video') ? "V" : "F"}</PreviewMedia>
+        <PreviewMedia onClick={openPreview} isVideo={media.mime.includes('video')} hasSound={media.hasAudio}>
+            {media.mime.includes('video') ? "V" : "F"}
+        </PreviewMedia>
     </ThePhoto>
 
 }

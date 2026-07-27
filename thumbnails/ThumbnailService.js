@@ -5,7 +5,6 @@ const { getPlaceholderPath } = require("./providers/placeholder");
 
 const providers = [
     require("./providers/ffmpegStatic"),
-    require("./providers/ffmpegthumbnailer"),
 ];
 
 let selected;
