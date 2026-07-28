@@ -1,6 +1,6 @@
 {
   "name": "distribute",
-  "version": "0.2.7",
+  "version": "1.0.5",
   "private": true,
   "main": "app.js",
   "homepage": "./",
