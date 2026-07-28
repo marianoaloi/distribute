@@ -9,17 +9,19 @@ import { MediaIMG } from "./media"
 import ModalZoom from "./modalZoom"
 import { CounterImgIndex, DuplicateGroupCard, DuplicateGroupRow, DuplicatesList, DuplicatesResume, EmptyState, GroupLabel, RebuildIndexInfo } from "./duplicatesGrid.styled"
 import { Folders } from "./folder"
+import { MediaTypeFilter, matchesMediaType } from "./mediaTypeFilter"
 
 export const GridDuplicates = (() => {
 
     const dispatch = useDispatch<any>();
 
+    const config = useSelector(configurationsSelector)
     const medias = useSelector(selectMedias).filter(m => !m.deleted)
+        .filter(m => matchesMediaType(m.mime, config.mediaType))
     const groupIds = useSelector(selectDuplicateGroups)
     const indexRebuilding = useSelector(selectIndexRebuilding)
     const indexRebuildError = useSelector(selectIndexRebuildError)
     const indexRebuildProgress = useSelector(selectIndexRebuildProgress)
-    const config = useSelector(configurationsSelector)
 
     const mediaById = new Map(medias.map(m => [m.id, m]))
 
@@ -235,6 +237,8 @@ export const GridDuplicates = (() => {
                 </DuplicatesList>
                 : <EmptyState>No duplicates found yet. Click the scan button to compare the loaded media by content.</EmptyState>
             }
+
+            <MediaTypeFilter />
 
             {lastZoom &&
                 <ModalZoom mediaWithPreview={lastZoom} handleExternalClose={handleClose} openModal={open} ref={modalZoomRefMethods}
