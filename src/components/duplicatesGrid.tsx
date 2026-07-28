@@ -1,9 +1,9 @@
 import { KeyboardEvent, useRef, useState } from "react"
 import { useDispatch } from "react-redux"
 import { IconButton, CircularProgress, LinearProgress } from "@mui/material"
-import { Refresh, ImageSearch, RestartAlt, FolderOpen, FolderCopyTwoTone, VolumeOff } from "@mui/icons-material"
+import { Refresh, ImageSearch, RestartAlt, FolderOpen, FolderCopyTwoTone, VolumeOff, FileDownload } from "@mui/icons-material"
 import { Media } from "../entity/Media"
-import { FindDuplicates, FindIndexDuplicates, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
+import { ExportDatabase, FindDuplicates, FindIndexDuplicates, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { MediaIMG } from "./media"
 import ModalZoom from "./modalZoom"
@@ -22,6 +22,8 @@ export const GridDuplicates = (() => {
     const indexRebuilding = useSelector(selectIndexRebuilding)
     const indexRebuildError = useSelector(selectIndexRebuildError)
     const indexRebuildProgress = useSelector(selectIndexRebuildProgress)
+    const dbExporting = useSelector(selectDbExporting)
+    const dbExportError = useSelector(selectDbExportError)
 
     const mediaById = new Map(medias.map(m => [m.id, m]))
 
@@ -114,6 +116,7 @@ export const GridDuplicates = (() => {
         }
         dispatch(RebuildIndex(medias))
     }
+    const exportDatabase = () => dispatch(ExportDatabase())
 
     const nextMedia = () => {
         if (!lastZoom) return;
@@ -184,6 +187,10 @@ export const GridDuplicates = (() => {
                     title="Check duplicates for removal in every group: muted video copies (keeping one sounded, or one muted if none are sounded) and images (keeping the largest)">
                     <VolumeOff />
                 </IconButton>
+                <IconButton onClick={exportDatabase} disabled={dbExporting}
+                    title="Export the duplicate-detection database to a file, for importing and comparing against another library later">
+                    {dbExporting ? <CircularProgress size={20} /> : <FileDownload />}
+                </IconButton>
                 <span>{groups.length} duplicate group{groups.length === 1 ? "" : "s"}</span>
 
                 <div className="spacer" />
@@ -197,6 +204,7 @@ export const GridDuplicates = (() => {
 
                 {config.mediaLoading && <span>Still loading media…</span>}
                 {indexRebuildError && <CounterImgIndex>Index rebuild failed: {indexRebuildError}</CounterImgIndex>}
+                {dbExportError && <CounterImgIndex>Database export failed: {dbExportError}</CounterImgIndex>}
 
             </div>
 

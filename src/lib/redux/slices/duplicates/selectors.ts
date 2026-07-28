@@ -4,3 +4,5 @@ export const selectDuplicateGroups = (state: ReduxState) => state.duplicates.gro
 export const selectIndexRebuilding = (state: ReduxState) => state.duplicates.indexRebuilding;
 export const selectIndexRebuildError = (state: ReduxState) => state.duplicates.indexRebuildError;
 export const selectIndexRebuildProgress = (state: ReduxState) => state.duplicates.indexRebuildProgress;
+export const selectDbExporting = (state: ReduxState) => state.duplicates.dbExporting;
+export const selectDbExportError = (state: ReduxState) => state.duplicates.dbExportError;

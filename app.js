@@ -260,6 +260,29 @@ ipcMain.on("rebuildIndex", async (event, data) => {
     findIndexDuplicates();
 })
 
+// Exports a consistent snapshot of the compareImg sqlite index so it can be
+// carried to another machine/folder and later imported for cross-library
+// duplicate comparison (the import/compare side is a follow-up feature).
+ipcMain.on("exportDatabase", async () => {
+    const options = {
+        title: "Export duplicate-detection database",
+        defaultPath: path.join(app.getPath("documents"), `index-export-${Date.now()}.db`),
+        filters: [{ name: "SQLite Database", extensions: ["db"] }],
+    };
+    try {
+        const result = await dialog.showSaveDialog(mainWindow, options);
+        if (result.canceled || !result.filePath) {
+            mainWindow.webContents.send("databaseExported", { success: false, canceled: true });
+            return;
+        }
+        await compareImgStore.exportDatabase(result.filePath);
+        mainWindow.webContents.send("databaseExported", { success: true, path: result.filePath });
+    } catch (error) {
+        console.error("exportDatabase failed", error);
+        mainWindow.webContents.send("databaseExported", { success: false, error: error.message });
+    }
+})
+
 ipcMain.on("verifyOpen", async () => {
     if (process.env.FixFiles && fs.existsSync(process.env.FixFiles)) {
         fs.readFile(process.env.FixFiles, 'utf8', (err, data) => {

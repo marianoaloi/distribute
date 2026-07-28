@@ -1,5 +1,5 @@
 import { Media } from "../../../../entity/Media";
-import { startIndexRebuild } from "./duplicates.reduce";
+import { startIndexRebuild, startDatabaseExport } from "./duplicates.reduce";
 
 const isElectronApp = typeof window !== 'undefined' && !!window.electron;
 const ipcRender = isElectronApp ? window.electron.ipcRenderer : undefined;
@@ -51,6 +51,22 @@ export const RebuildIndex = (medias: Media[]) => {
             ipcRender.send('rebuildIndex', {
                 medias: medias.map(m => ({ id: m.id, path: m.path, mime: m.mime }))
             });
+        }
+    }
+}
+
+// Exports the compareImg sqlite index to a file the user picks, for later
+// import/comparison against another library's index (a follow-up feature).
+export const ExportDatabase = () => {
+
+    if (!isElectronApp) {
+        return (dispatch: any) => { }
+    }
+
+    return (dispatch: any) => {
+        dispatch(startDatabaseExport());
+        if (ipcRender) {
+            ipcRender.send('exportDatabase', undefined);
         }
     }
 }

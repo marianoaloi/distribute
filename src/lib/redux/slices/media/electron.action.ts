@@ -3,7 +3,7 @@ import { example } from './populateExample';
 import { Media } from '../../../../entity/Media';
 import { addFolder } from '../folders';
 import { mediaLoadComplete, mediaLoadStart, zoomIn, zoomOut } from '../configurations';
-import { setDuplicateGroups, indexRebuildFinished, setIndexRebuildProgress } from '../duplicates';
+import { setDuplicateGroups, indexRebuildFinished, setIndexRebuildProgress, databaseExportFinished } from '../duplicates';
 import { setDetectionResult, setDetectionProgress, detectingFinished } from '../detections';
 import { FileDTO } from '../../../../entity/FileDTO';
 
@@ -24,7 +24,7 @@ export const ElectronConnection = () => {
 
     return (dispatch: any) => {
         if (ipcRender) {
-            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete'];
+            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete', 'databaseExported'];
             channels.forEach(ch => ipcRender.removeAllListeners(ch));
 
             ipcRender.on('directoryOpen', (e: any, args: any) => {
@@ -101,6 +101,12 @@ export const ElectronConnection = () => {
             })
             ipcRender.on('detectionsComplete', (e: any, result: { error?: string }) => {
                 dispatch(detectingFinished(result))
+            })
+            ipcRender.on('databaseExported', (e: any, result: { success: boolean, path?: string, error?: string, canceled?: boolean }) => {
+                dispatch(databaseExportFinished({
+                    error: result.canceled ? null : (result.success ? null : (result.error || 'Export failed')),
+                    path: result.success ? result.path : undefined,
+                }))
             })
             ipcRender.send("verifyOpen", undefined)
         }

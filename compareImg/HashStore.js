@@ -102,10 +102,19 @@ const allBaseGreyRows = () => db
     .prepare("SELECT actualPosition, baseGrey FROM items WHERE baseGrey IS NOT NULL")
     .all();
 
+// Uses SQLite's online backup API (safe on a live connection, unlike copying
+// the file directly which could race a write) so the exported file is a
+// consistent snapshot other machines can later import and compare against.
+const exportDatabase = (destPath) => {
+    ensureReady();
+    return db.backup(destPath);
+};
+
 module.exports = {
     ensureReady,
     rebuildIndex,
     getItem,
     upsertItem,
     allBaseGreyRows,
+    exportDatabase,
 };

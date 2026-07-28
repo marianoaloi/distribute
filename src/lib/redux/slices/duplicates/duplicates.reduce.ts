@@ -10,6 +10,9 @@ interface DuplicatesState {
     indexRebuilding: boolean
     indexRebuildError: string | null
     indexRebuildProgress: IndexRebuildProgress | null
+    dbExporting: boolean
+    dbExportError: string | null
+    lastDbExportPath: string | null
 }
 
 const initialState: DuplicatesState = {
@@ -17,6 +20,9 @@ const initialState: DuplicatesState = {
     indexRebuilding: false,
     indexRebuildError: null,
     indexRebuildProgress: null,
+    dbExporting: false,
+    dbExportError: null,
+    lastDbExportPath: null,
 }
 
 const duplicatesSlice = createSlice({
@@ -47,8 +53,19 @@ const duplicatesSlice = createSlice({
             indexRebuildError: action.payload ?? null,
             indexRebuildProgress: null,
         }),
+        startDatabaseExport: (state) => ({
+            ...state,
+            dbExporting: true,
+            dbExportError: null,
+        }),
+        databaseExportFinished: (state, action) => ({
+            ...state,
+            dbExporting: false,
+            dbExportError: action.payload.error ?? null,
+            lastDbExportPath: action.payload.path ?? state.lastDbExportPath,
+        }),
     }
 })
 
-export const { setDuplicateGroups, clearDuplicateGroups, startIndexRebuild, setIndexRebuildProgress, indexRebuildFinished } = duplicatesSlice.actions;
+export const { setDuplicateGroups, clearDuplicateGroups, startIndexRebuild, setIndexRebuildProgress, indexRebuildFinished, startDatabaseExport, databaseExportFinished } = duplicatesSlice.actions;
 export default duplicatesSlice.reducer;

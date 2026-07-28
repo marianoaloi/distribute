@@ -19,6 +19,7 @@ const ipc = {
             'findIndexDuplicates',
             'rebuildIndex',
             'detectObjects',
+            'exportDatabase',
         ],
         // From main to render.
         'receive': ['directoryOpen',
@@ -56,6 +57,7 @@ const ipc = {
             'detectionFound',
             'detectionProgress',
             'detectionsComplete',
+            'databaseExported',
         ]
     }
 };
