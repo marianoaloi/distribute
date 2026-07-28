@@ -136,5 +136,6 @@ module.exports = {
     findDuplicates,
     findIndexDuplicates,
     contentHashFor,
+    meanAbsDiff,
     MEAN_DIFF_THRESHOLD,
 };

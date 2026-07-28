@@ -13,6 +13,11 @@ interface DuplicatesState {
     dbExporting: boolean
     dbExportError: string | null
     lastDbExportPath: string | null
+    dbImporting: boolean
+    dbImportError: string | null
+    // How many cross-folder duplicate files the last import matched
+    // (null until an import succeeds; 0 means "imported fine, nothing matched").
+    dbImportMatched: number | null
 }
 
 const initialState: DuplicatesState = {
@@ -23,6 +28,9 @@ const initialState: DuplicatesState = {
     dbExporting: false,
     dbExportError: null,
     lastDbExportPath: null,
+    dbImporting: false,
+    dbImportError: null,
+    dbImportMatched: null,
 }
 
 const duplicatesSlice = createSlice({
@@ -64,8 +72,20 @@ const duplicatesSlice = createSlice({
             dbExportError: action.payload.error ?? null,
             lastDbExportPath: action.payload.path ?? state.lastDbExportPath,
         }),
+        startDatabaseImport: (state) => ({
+            ...state,
+            dbImporting: true,
+            dbImportError: null,
+            dbImportMatched: null,
+        }),
+        databaseImportFinished: (state, action) => ({
+            ...state,
+            dbImporting: false,
+            dbImportError: action.payload.error ?? null,
+            dbImportMatched: action.payload.matched ?? null,
+        }),
     }
 })
 
-export const { setDuplicateGroups, clearDuplicateGroups, startIndexRebuild, setIndexRebuildProgress, indexRebuildFinished, startDatabaseExport, databaseExportFinished } = duplicatesSlice.actions;
+export const { setDuplicateGroups, clearDuplicateGroups, startIndexRebuild, setIndexRebuildProgress, indexRebuildFinished, startDatabaseExport, databaseExportFinished, startDatabaseImport, databaseImportFinished } = duplicatesSlice.actions;
 export default duplicatesSlice.reducer;

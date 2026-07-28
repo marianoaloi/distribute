@@ -3,7 +3,7 @@ import { example } from './populateExample';
 import { Media } from '../../../../entity/Media';
 import { addFolder } from '../folders';
 import { mediaLoadComplete, mediaLoadStart, zoomIn, zoomOut } from '../configurations';
-import { setDuplicateGroups, indexRebuildFinished, setIndexRebuildProgress, databaseExportFinished } from '../duplicates';
+import { setDuplicateGroups, indexRebuildFinished, setIndexRebuildProgress, databaseExportFinished, databaseImportFinished } from '../duplicates';
 import { setDetectionResult, setDetectionProgress, detectingFinished } from '../detections';
 import { FileDTO } from '../../../../entity/FileDTO';
 
@@ -24,7 +24,7 @@ export const ElectronConnection = () => {
 
     return (dispatch: any) => {
         if (ipcRender) {
-            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete', 'databaseExported'];
+            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete', 'databaseExported', 'databaseImported'];
             channels.forEach(ch => ipcRender.removeAllListeners(ch));
 
             ipcRender.on('directoryOpen', (e: any, args: any) => {
@@ -106,6 +106,12 @@ export const ElectronConnection = () => {
                 dispatch(databaseExportFinished({
                     error: result.canceled ? null : (result.success ? null : (result.error || 'Export failed')),
                     path: result.success ? result.path : undefined,
+                }))
+            })
+            ipcRender.on('databaseImported', (e: any, result: { success: boolean, matched?: number, error?: string, canceled?: boolean }) => {
+                dispatch(databaseImportFinished({
+                    error: result.canceled ? null : (result.success ? null : (result.error || 'Import failed')),
+                    matched: result.success ? result.matched : undefined,
                 }))
             })
             ipcRender.send("verifyOpen", undefined)

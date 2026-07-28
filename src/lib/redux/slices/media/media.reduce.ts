@@ -74,7 +74,7 @@ const itemsSlice = createSlice({
     }
 })
 
-const transformMedia = (f: FileDTO) => { return { "id": f.id, "path": f.item, size: f.size, media: f.fileName, filename: f.filename, mime: f.mime, checked: false, deleted: false , hash:f.hash , hasAudio: f.hasAudio , screenIndex: 0} as Media }
+const transformMedia = (f: FileDTO) => { return { "id": f.id, "path": f.item, size: f.size, media: f.fileName, filename: f.filename, mime: f.mime, checked: false, deleted: false , hash:f.hash , hasAudio: f.hasAudio , imported: f.imported ?? false, screenIndex: 0} as Media }
 
 function transformStringToMedias(paths: FileDTO[]): Media[] {
 

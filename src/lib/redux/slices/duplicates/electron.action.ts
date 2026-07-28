@@ -1,5 +1,5 @@
 import { Media } from "../../../../entity/Media";
-import { startIndexRebuild, startDatabaseExport } from "./duplicates.reduce";
+import { startIndexRebuild, startDatabaseExport, startDatabaseImport } from "./duplicates.reduce";
 
 const isElectronApp = typeof window !== 'undefined' && !!window.electron;
 const ipcRender = isElectronApp ? window.electron.ipcRenderer : undefined;
@@ -67,6 +67,23 @@ export const ExportDatabase = () => {
         dispatch(startDatabaseExport());
         if (ipcRender) {
             ipcRender.send('exportDatabase', undefined);
+        }
+    }
+}
+
+// Imports another folder's exported index database (readonly, never merged
+// into this folder's index) and streams back cross-folder duplicates as
+// transient fake items — see app.js's importDatabase handler.
+export const ImportDatabase = () => {
+
+    if (!isElectronApp) {
+        return (dispatch: any) => { }
+    }
+
+    return (dispatch: any) => {
+        dispatch(startDatabaseImport());
+        if (ipcRender) {
+            ipcRender.send('importDatabase', undefined);
         }
     }
 }

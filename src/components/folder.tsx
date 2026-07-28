@@ -44,7 +44,9 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
         function sendSelected(folder: string): void {
             if (!mediaOnlyCopy) {
 
-                const mediasFilter = medias.filter(m => m.checked && !m.deleted).map(m => {
+                // Imported fake items represent files in OTHER folders — even
+                // when checked they must never be moved (app.js re-filters too).
+                const mediasFilter = medias.filter(m => m.checked && !m.deleted && !m.imported).map(m => {
                     const aux = { ...m }
                     aux.deleted = true
                     return aux

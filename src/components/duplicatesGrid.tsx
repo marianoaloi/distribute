@@ -1,13 +1,13 @@
 import { KeyboardEvent, useRef, useState } from "react"
 import { useDispatch } from "react-redux"
 import { IconButton, CircularProgress, LinearProgress } from "@mui/material"
-import { Refresh, ImageSearch, RestartAlt, FolderOpen, FolderCopyTwoTone, VolumeOff, FileDownload } from "@mui/icons-material"
+import { Refresh, ImageSearch, RestartAlt, FolderOpen, FolderCopyTwoTone, VolumeOff, FileDownload, FileUpload, RadioButtonChecked, RadioButtonUnchecked } from "@mui/icons-material"
 import { Media } from "../entity/Media"
-import { ExportDatabase, FindDuplicates, FindIndexDuplicates, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
+import { ExportDatabase, FindDuplicates, FindIndexDuplicates, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { MediaIMG } from "./media"
 import ModalZoom from "./modalZoom"
-import { CounterImgIndex, DuplicateGroupCard, DuplicateGroupRow, DuplicatesList, DuplicatesResume, EmptyState, GroupLabel, RebuildIndexInfo } from "./duplicatesGrid.styled"
+import { CounterImgIndex, DuplicateGroupCard, DuplicateGroupRow, DuplicatesList, DuplicatesResume, EmptyState, GroupLabel, ImportedMediaWrap, RebuildIndexInfo } from "./duplicatesGrid.styled"
 import { Folders } from "./folder"
 import { MediaTypeFilter, matchesMediaType } from "./mediaTypeFilter"
 
@@ -24,6 +24,9 @@ export const GridDuplicates = (() => {
     const indexRebuildProgress = useSelector(selectIndexRebuildProgress)
     const dbExporting = useSelector(selectDbExporting)
     const dbExportError = useSelector(selectDbExportError)
+    const dbImporting = useSelector(selectDbImporting)
+    const dbImportError = useSelector(selectDbImportError)
+    const dbImportMatched = useSelector(selectDbImportMatched)
 
     const mediaById = new Map(medias.map(m => [m.id, m]))
 
@@ -72,6 +75,11 @@ export const GridDuplicates = (() => {
         ))
     }
 
+    // Select-all skips imported fake items — they can never be moved, so a
+    // check mark on them would only be noise. Unselect clears everything.
+    const selectAll = () => processChoice(flatList.filter(m => !m.imported), true)
+    const unselectAll = () => processChoice(flatList, false)
+
     // Within each group: checks the muted (no-audio) video copies for removal,
     // keeping a sounded copy unchecked as the survivor. If every video in a
     // group is muted (no sounded copy to keep instead), one muted copy is
@@ -81,7 +89,11 @@ export const GridDuplicates = (() => {
     const selectDuplicatesToRemove = () => {
         const decided: Media[] = []
         for (const group of groups) {
-            const videos = group.filter(m => m.mime && m.mime.includes('video'))
+            // Only actual-folder items get checked/spared: imported fake items
+            // (database import) are other folders' files — not movable, and
+            // they must not count as a group's surviving copy either.
+            const own = group.filter(m => !m.imported)
+            const videos = own.filter(m => m.mime && m.mime.includes('video'))
             const muted = videos.filter(m => !m.hasAudio)
             const sounded = videos.filter(m => m.hasAudio)
             if (muted.length > 0) {
@@ -91,7 +103,7 @@ export const GridDuplicates = (() => {
                 }
             }
 
-            const images = group.filter(m => m.mime && m.mime.includes('image'))
+            const images = own.filter(m => m.mime && m.mime.includes('image'))
             if (images.length > 0) {
                 const biggest = images.reduce((a, b) => b.size > a.size ? b : a)
                 for (const image of images) {
@@ -102,7 +114,11 @@ export const GridDuplicates = (() => {
         dispatch(updateManyArrayItem(decided))
     }
 
-    const scan = () => dispatch(FindDuplicates(medias))
+    // Imported fake items (database import) stay out of scanning/indexing:
+    // they live in other folders and must never enter this folder's index.
+    const actualMedias = medias.filter(m => !m.imported)
+
+    const scan = () => dispatch(FindDuplicates(actualMedias))
     const scanByHash = () => dispatch(FindIndexDuplicates())
     const openDiretory = () => dispatch(OpenDirectory())
     const openDiretoryRecursive = () => dispatch(OpenDirectoryRecursive())
@@ -110,13 +126,14 @@ export const GridDuplicates = (() => {
         // Guards against the folder still being loaded (videos stream in one
         // at a time, so medias here can be empty or a small partial list —
         // rebuilding against it would silently "succeed" with nothing indexed).
-        if (medias.length === 0) {
+        if (actualMedias.length === 0) {
             dispatch(indexRebuildFinished("No media loaded — open a folder first"))
             return
         }
-        dispatch(RebuildIndex(medias))
+        dispatch(RebuildIndex(actualMedias))
     }
     const exportDatabase = () => dispatch(ExportDatabase())
+    const importDatabase = () => dispatch(ImportDatabase())
 
     const nextMedia = () => {
         if (!lastZoom) return;
@@ -191,6 +208,12 @@ export const GridDuplicates = (() => {
                     title="Export the duplicate-detection database to a file, for importing and comparing against another library later">
                     {dbExporting ? <CircularProgress size={20} /> : <FileDownload />}
                 </IconButton>
+                <IconButton onClick={importDatabase} disabled={dbImporting || indexRebuilding}
+                    title="Import another folder's exported database and find items duplicated across the two folders (requires this folder's index to exist)">
+                    {dbImporting ? <CircularProgress size={20} /> : <FileUpload />}
+                </IconButton>
+                <IconButton onClick={selectAll} disabled={groups.length === 0} title="Select all items in the duplicate groups"><RadioButtonChecked /></IconButton>
+                <IconButton onClick={unselectAll} disabled={groups.length === 0} title="Unselect all items in the duplicate groups"><RadioButtonUnchecked /></IconButton>
                 <span>{groups.length} duplicate group{groups.length === 1 ? "" : "s"}</span>
 
                 <div className="spacer" />
@@ -205,6 +228,8 @@ export const GridDuplicates = (() => {
                 {config.mediaLoading && <span>Still loading media…</span>}
                 {indexRebuildError && <CounterImgIndex>Index rebuild failed: {indexRebuildError}</CounterImgIndex>}
                 {dbExportError && <CounterImgIndex>Database export failed: {dbExportError}</CounterImgIndex>}
+                {dbImportError && <CounterImgIndex>Database import failed: {dbImportError}</CounterImgIndex>}
+                {dbImportMatched === 0 && <CounterImgIndex>Import finished: no cross-folder duplicates found.</CounterImgIndex>}
 
             </div>
 
@@ -229,16 +254,19 @@ export const GridDuplicates = (() => {
                 ? <DuplicatesList>
                     {groups.map((group, idx) => (
                         <DuplicateGroupCard key={group[0].id}>
-                            <GroupLabel>Group {idx + 1} — {group.length} identical files</GroupLabel>
+                            <GroupLabel>Group {idx + 1} — {group.length} identical files{group.some(m => m.imported) ? ` (${group.filter(m => m.imported).length} from other folder)` : ""}</GroupLabel>
                             <DuplicateGroupRow>
-                                {group.map(media => (
-                                    <MediaIMG key={media.id} media={media}
+                                {group.map(media => {
+                                    const tile = <MediaIMG key={media.id} media={media}
                                         lastClickedEvent={lastClickedEvent}
                                         shiftSelect={shiftSelect}
                                         shiftControlSelect={shiftControlSelect}
                                         handleOpenPreview={handleOpenPreview}
                                     />
-                                ))}
+                                    return media.imported
+                                        ? <ImportedMediaWrap key={media.id}>{tile}</ImportedMediaWrap>
+                                        : tile
+                                })}
                             </DuplicateGroupRow>
                         </DuplicateGroupCard>
                     ))}

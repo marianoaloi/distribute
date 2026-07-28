@@ -9,8 +9,14 @@ const videoFrames = require("./compareImg/videoFrames");
 // onDone fires once every video's thumbnail has been generated and sent —
 // videos are added one at a time (each awaits its own thumbnail), so the
 // caller has no other way to know the grid is still being populated.
-const transformDataStreaming = async (data, folderOpened, onImages, onVideo, onDone) => {
-    const allPaths = data.map(item => path.join(folderOpened, item));
+//
+// extraFields is stamped onto every produced item — used by the database
+// import flow to mark cross-folder "fake" items ({ imported: true }) while
+// still reusing this same thumbnail/metadata pipeline. Pass an empty
+// folderOpened to treat data as absolute paths (import items live outside
+// the opened folder).
+const transformDataStreaming = async (data, folderOpened, onImages, onVideo, onDone, extraFields = {}) => {
+    const allPaths = folderOpened ? data.map(item => path.join(folderOpened, item)) : data;
 
     const withMeta = allPaths
         .filter(filepath => { try { return fs.statSync(filepath).isFile(); } catch { return false; } })
@@ -24,7 +30,8 @@ const transformDataStreaming = async (data, folderOpened, onImages, onVideo, onD
             // MD5 of the absolute path: stable across reloads (unlike a load-order
             // counter), so it survives a re-scan and stays valid as the key
             // compareImg's duplicate index stores duplicate-group membership under.
-            id: hashFor(item)
+            id: hashFor(item),
+            ...extraFields
         }))
         .filter(item => item.mime && (item.mime.includes('image') || item.mime.includes('video')));
 

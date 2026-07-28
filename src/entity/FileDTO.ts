@@ -7,4 +7,5 @@ export interface FileDTO {
     size: number
     hash: string
     hasAudio: boolean
+    imported?: boolean
 }

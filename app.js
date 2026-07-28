@@ -17,6 +17,8 @@ const { dirCache } = require("./DirectorioCache");
 const duplicateFinder = require("./compareImg/duplicateFinder");
 const compareImgStore = require("./compareImg/HashStore");
 const mediaIndexer = require("./compareImg/mediaIndexer");
+const dbImport = require("./compareImg/dbImport");
+const { hashFor } = require("./thumbnails/cache");
 const onnxDetector = require("./objectDetection/onnxDetector");
 const transformData = util.transformData;
 const transformDataStreaming = util.transformDataStreaming;
@@ -283,6 +285,14 @@ ipcMain.on("exportDatabase", async () => {
     }
 })
 
+// Compares another folder's exported index against the live one (readonly —
+// nothing is merged into index.db) and streams each matched external file to
+// the renderer as a transient "imported" fake item, so the duplicates page
+// can show cross-folder groups and the user can decide what to move.
+// Full flow lives in compareImg/dbImport.js.
+ipcMain.on("importDatabase", () =>
+    dbImport.runImportFlow({ dialog, mainWindow, transformDataStreaming, hashFor }))
+
 ipcMain.on("verifyOpen", async () => {
     if (process.env.FixFiles && fs.existsSync(process.env.FixFiles)) {
         fs.readFile(process.env.FixFiles, 'utf8', (err, data) => {
@@ -303,7 +313,10 @@ const moveFile = (bol, dest, onlyCopy, data) => {
 
         return;
     }
-    data.filter(f => f.checked === bol).forEach(media => {
+    // Imported fake items point at files in OTHER folders (database import
+    // feature) — they exist only to inform the move decision, never to be
+    // moved themselves.
+    data.filter(f => f.checked === bol && !f.imported).forEach(media => {
         // let completeDestine = path.join(path.dirname(media.path), dest);
         let completeDestine = path.join(fileGlobal, dest);
         if (!fs.existsSync(completeDestine)) {

@@ -20,6 +20,7 @@ const ipc = {
             'rebuildIndex',
             'detectObjects',
             'exportDatabase',
+            'importDatabase',
         ],
         // From main to render.
         'receive': ['directoryOpen',
@@ -58,6 +59,7 @@ const ipc = {
             'detectionProgress',
             'detectionsComplete',
             'databaseExported',
+            'databaseImported',
         ]
     }
 };

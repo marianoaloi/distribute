@@ -86,3 +86,24 @@ export const RebuildIndexInfo = styled.div`
     flex-direction: column;
     gap: 4px;
 `
+
+export const ImportedMediaWrap = styled.div`
+    position: relative;
+    outline: 2px dashed #e6a23c;
+    outline-offset: -2px;
+    border-radius: 4px;
+
+    &::after {
+        content: "other folder";
+        position: absolute;
+        top: 4px;
+        left: 4px;
+        background: rgba(230, 162, 60, 0.9);
+        color: #1e222b;
+        font-size: 11px;
+        padding: 1px 6px;
+        border-radius: 4px;
+        pointer-events: none;
+        z-index: 2;
+    }
+`

@@ -11,7 +11,7 @@ export const GridDetections = (() => {
 
     const dispatch = useDispatch<any>();
 
-    const medias = useSelector(selectMedias).filter((m: Media) => !m.deleted)
+    const medias = useSelector(selectMedias).filter((m: Media) => !m.deleted && !m.imported)
     const detections = useSelector(selectDetections)
     const detecting = useSelector(selectDetecting)
     const detectionError = useSelector(selectDetectionError)

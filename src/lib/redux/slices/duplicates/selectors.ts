@@ -6,3 +6,6 @@ export const selectIndexRebuildError = (state: ReduxState) => state.duplicates.i
 export const selectIndexRebuildProgress = (state: ReduxState) => state.duplicates.indexRebuildProgress;
 export const selectDbExporting = (state: ReduxState) => state.duplicates.dbExporting;
 export const selectDbExportError = (state: ReduxState) => state.duplicates.dbExportError;
+export const selectDbImporting = (state: ReduxState) => state.duplicates.dbImporting;
+export const selectDbImportError = (state: ReduxState) => state.duplicates.dbImportError;
+export const selectDbImportMatched = (state: ReduxState) => state.duplicates.dbImportMatched;

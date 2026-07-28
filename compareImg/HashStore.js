@@ -99,8 +99,14 @@ const upsertItem = ({ id, metadata }) => {
 // mean-pixel-difference comparison (baseGrey has no index - distance can't
 // be expressed as a SQL equality/range lookup on a blob).
 const allBaseGreyRows = () => db
-    .prepare("SELECT actualPosition, baseGrey FROM items WHERE baseGrey IS NOT NULL")
+    .prepare("SELECT actualPosition, baseGrey, localPath FROM items WHERE baseGrey IS NOT NULL")
     .all();
+
+// Column names of the live items table, for validating that an imported
+// (exported-elsewhere) database has the identical structure before comparing.
+const columnNames = () => db.pragma("table_info(items)").map((c) => c.name);
+
+const countItems = () => db.prepare("SELECT COUNT(*) AS n FROM items").get().n;
 
 // Uses SQLite's online backup API (safe on a live connection, unlike copying
 // the file directly which could race a write) so the exported file is a
@@ -116,5 +122,7 @@ module.exports = {
     getItem,
     upsertItem,
     allBaseGreyRows,
+    columnNames,
+    countItems,
     exportDatabase,
 };
