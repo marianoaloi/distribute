@@ -22,3 +22,19 @@ export const RunDetection = (medias: Media[]) => {
         }
     }
 }
+
+// Asks the main process to stop after the item currently being detected —
+// results already streamed back stay on screen. detectingFinished arrives
+// through the normal 'detectionsComplete' listener.
+export const StopDetection = () => {
+
+    if (!isElectronApp) {
+        return (dispatch: any) => { }
+    }
+
+    return (dispatch: any) => {
+        if (ipcRender) {
+            ipcRender.send('stopDetection', undefined);
+        }
+    }
+}

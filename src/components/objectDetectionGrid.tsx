@@ -1,7 +1,7 @@
 import { IconButton, CircularProgress, LinearProgress } from "@mui/material"
-import { PlayArrow } from "@mui/icons-material"
+import { PlayArrow, Stop } from "@mui/icons-material"
 import { Media } from "../entity/Media"
-import { RunDetection, selectDetecting, selectDetectionError, selectDetectionProgress, selectDetections, selectMedias, useSelector } from "../lib/redux"
+import { RunDetection, StopDetection, selectDetecting, selectDetectionError, selectDetectionProgress, selectDetections, selectMedias, useSelector } from "../lib/redux"
 import { useDispatch } from "react-redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { toMediaUrl } from "../lib/mediaUrl"
@@ -19,6 +19,7 @@ export const GridDetections = (() => {
     const config = useSelector(configurationsSelector)
 
     const runDetection = () => dispatch(RunDetection(medias))
+    const stopDetection = () => dispatch(StopDetection())
 
     return (
         <div>
@@ -26,6 +27,10 @@ export const GridDetections = (() => {
                 <IconButton onClick={runDetection} disabled={detecting || medias.length === 0}
                     title="Run ONNX object detection (xcxv/best.onnx) over every loaded media">
                     {detecting ? <CircularProgress size={20} /> : <PlayArrow />}
+                </IconButton>
+                <IconButton onClick={stopDetection} disabled={!detecting}
+                    title="Stop after the current item — results found so far stay on screen">
+                    <Stop />
                 </IconButton>
                 <span>{Object.keys(detections).length} media scanned</span>
                 {detectionError && <span>Detection failed: {detectionError}</span>}

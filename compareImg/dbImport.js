@@ -1,4 +1,5 @@
 const fs = require("fs");
+const path = require("path");
 const Database = require("better-sqlite3");
 const compareImgStore = require("./HashStore");
 const { meanAbsDiff, MEAN_DIFF_THRESHOLD } = require("./duplicateFinder");
@@ -48,12 +49,14 @@ const compareImportedDatabase = (importedPath) => {
             return existsCache.get(p);
         };
 
+        // Files missing from disk still participate: the match proves the
+        // ACTUAL folder's item is duplicated elsewhere, which is what the
+        // user decides on — the missing file just gets a placeholder tile.
         const matchesByPath = new Map();
         for (const row of importedRows) {
             // Same physical file indexed in both databases is not a
             // cross-folder duplicate (e.g. re-importing this folder's own export).
             if (actualPaths.has(row.localPath)) continue;
-            if (!stillExists(row.localPath)) continue;
             for (const actual of actualRows) {
                 if (meanAbsDiff(row.baseGrey, actual.baseGrey) <= MEAN_DIFF_THRESHOLD) {
                     if (!matchesByPath.has(row.localPath)) matchesByPath.set(row.localPath, new Set());
@@ -66,12 +69,35 @@ const compareImportedDatabase = (importedPath) => {
             matches: [...matchesByPath.entries()].map(([localPath, ids]) => ({
                 localPath,
                 actualIds: [...ids],
+                exists: stillExists(localPath),
             })),
         };
     } finally {
         imported.close();
     }
 };
+
+// Inline SVG shown for an imported match whose file no longer exists on
+// disk — a data: URI needs no file to load (toMediaUrl passes it through).
+const MISSING_PLACEHOLDER = "data:image/svg+xml;utf8," + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">' +
+    '<rect width="200" height="200" fill="#2a2f3a"/>' +
+    '<text x="100" y="92" fill="#e6a23c" font-size="16" text-anchor="middle" font-family="sans-serif">file not on disk</text>' +
+    '<text x="100" y="116" fill="#8a8f99" font-size="12" text-anchor="middle" font-family="sans-serif">imported reference</text>' +
+    '</svg>');
+
+// Same shape transformDataStreaming produces, but for a file that is gone:
+// rendered as an image tile backed by the placeholder above.
+const missingFileItem = (localPath, id) => ({
+    item: localPath,
+    mime: "image/svg+xml",
+    fileName: MISSING_PLACEHOLDER,
+    filename: path.basename(localPath),
+    size: 0,
+    hasAudio: false,
+    id,
+    imported: true,
+});
 
 // The whole ipc flow behind app.js's "importDatabase" handler, with the
 // electron/util pieces injected so app.js stays a thin dispatcher (and this
@@ -105,9 +131,15 @@ const runImportFlow = async ({ dialog, mainWindow, transformDataStreaming, hashF
             report({ success: true, matched: 0 });
             return;
         }
+        const onDisk = compared.matches.filter(m => m.exists);
+        // Matches whose file has since disappeared can't go through the
+        // thumbnail pipeline — they become inline placeholder tiles instead,
+        // so the actual folder's duplicated item still shows in its group.
+        compared.matches.filter(m => !m.exists).forEach(m =>
+            mainWindow.webContents.send("addOneMedia", missingFileItem(m.localPath, hashFor(m.localPath))));
         // addOneMedia dedupes by id in the renderer, so re-importing is idempotent.
         await new Promise((resolve) => transformDataStreaming(
-            compared.matches.map(m => m.localPath),
+            onDisk.map(m => m.localPath),
             "",
             (images) => images.forEach(img => mainWindow.webContents.send("addOneMedia", img)),
             (video) => mainWindow.webContents.send("addOneMedia", video),

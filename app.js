@@ -218,14 +218,23 @@ ipcMain.on("findIndexDuplicates", findIndexDuplicates)
 // media the renderer currently has loaded, one at a time, streaming each
 // result back as it finishes rather than waiting for the whole batch (same
 // streaming shape as indexRebuildProgress/addOneMedia).
+// Set by the renderer's stop button: detection runs one media at a time, so
+// the loop below just stops picking up the next item. Already-computed boxes
+// stay valid — stopping only cuts the run short (e.g. the model is clearly
+// not good enough to be worth finishing the whole library).
+let detectionStopRequested = false;
+ipcMain.on("stopDetection", () => { detectionStopRequested = true; });
+
 ipcMain.on("detectObjects", async (event, data) => {
     const medias = (data && data.medias) || [];
     if (!onnxDetector.isAvailable()) {
         mainWindow.webContents.send("detectionsComplete", { error: "Model not found in ./xcxv" });
         return;
     }
+    detectionStopRequested = false;
     let processed = 0;
     for (const media of medias) {
+        if (detectionStopRequested) break;
         try {
             const boxes = await onnxDetector.detect(media.media);
             mainWindow.webContents.send("detectionFound", { id: media.id, boxes });
@@ -236,7 +245,7 @@ ipcMain.on("detectObjects", async (event, data) => {
         processed++;
         mainWindow.webContents.send("detectionProgress", { processed, total: medias.length });
     }
-    mainWindow.webContents.send("detectionsComplete", {});
+    mainWindow.webContents.send("detectionsComplete", detectionStopRequested ? { stopped: true } : {});
 })
 
 // Wipes the (possibly corrupted) compareImg sqlite index and re-indexes the

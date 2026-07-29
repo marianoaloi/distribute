@@ -19,6 +19,7 @@ const ipc = {
             'findIndexDuplicates',
             'rebuildIndex',
             'detectObjects',
+            'stopDetection',
             'exportDatabase',
             'importDatabase',
         ],
