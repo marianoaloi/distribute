@@ -1,5 +1,5 @@
 import { createReducer } from "@reduxjs/toolkit"
-import { mediaLoadComplete, mediaLoadStart, setMediaType, setPage, setPostsPerPage, setScrollPosition, zoomIn, zoomOut } from "./thunks"
+import { mediaLoadComplete, mediaLoadStart, setMediaType, setPage, setPostsPerPage, setScrollPosition, setVideoVolume, zoomIn, zoomOut } from "./thunks"
 import { populateArray } from "../media/media.reduce"
 import { loadPersistedConfig } from "./persistConfig"
 
@@ -11,6 +11,7 @@ interface Config {
     mediaLoading: boolean
     postsPerPage: number
     scrollPosition: number
+    videoVolume: number
 }
 
 const initialState: Config = {
@@ -19,6 +20,7 @@ const initialState: Config = {
     mediaLoading: false,
     postsPerPage: 50,
     scrollPosition: 0,
+    videoVolume: 0.05,
     ...loadPersistedConfig(),
 }
 
@@ -34,6 +36,10 @@ export const ConfigReduce = createReducer(initialState, (build) => {
     build.addCase(setMediaType, (state, action) => ({
         ...state,
         mediaType: action.payload
+    }))
+    build.addCase(setVideoVolume, (state, action) => ({
+        ...state,
+        videoVolume: action.payload
     }))
     build.addCase(setPage, (state, action) => ({
         ...state,
