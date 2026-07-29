@@ -1,4 +1,4 @@
-import { addListinActualArray, addOnceMedia, orderByFolder, orderByName, orderBySize, populateArray, purgeArray, updateArrayItem } from './media.reduce';
+import { addListinActualArray, addOnceMedia, orderByFolder, orderByName, orderBySize, orderBySizeInverted, populateArray, purgeArray, updateArrayItem } from './media.reduce';
 import { example } from './populateExample';
 import { Media } from '../../../../entity/Media';
 import { addFolder } from '../folders';
@@ -66,6 +66,7 @@ export const ElectronConnection = () => {
                 switch (sort) {
                     case 'sortByName': dispatch(orderByName()); break;
                     case 'sortBySize': dispatch(orderBySize()); break;
+                    case 'sortBySizeInverted': dispatch(orderBySizeInverted()); break;
                     case 'sortByFolder': dispatch(orderByFolder()); break;
 
                     default:

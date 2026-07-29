@@ -63,6 +63,7 @@ var menuTemplate = () => [
         submenu: [
             { label: "Sort by Name", click: sortByName },
             { label: "Sort by Size", click: sortBySize },
+            { label: "Sort by Size Inverted", click: sortBySizeInverted },
             { label: "Sort by Folder", click: sortByFolder },
         ]
     },
@@ -474,6 +475,11 @@ const sortByName = async () => {
 const sortBySize = async () => {
     if (mainWindow) {
         mainWindow.webContents.send("sort", "sortBySize");
+    }
+}
+const sortBySizeInverted = async () => {
+    if (mainWindow) {
+        mainWindow.webContents.send("sort", "sortBySizeInverted");
     }
 }
 const sortByFolder = async () => {

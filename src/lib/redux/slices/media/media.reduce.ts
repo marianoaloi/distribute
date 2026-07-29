@@ -68,6 +68,9 @@ const itemsSlice = createSlice({
         orderBySize:(state) => {
             state.medias.sort((a:Media,b:Media) => b.size-a.size)
         },
+        orderBySizeInverted:(state) => {
+            state.medias.sort((a:Media,b:Media) => a.size-b.size)
+        },
         orderByFolder:(state) => {
             state.medias.sort((a:Media,b:Media) => a.path.localeCompare(b.path))
         },
@@ -93,7 +96,7 @@ export const mediasApi = createApi({
 }); 
 
 
-export const { populateArray, updateArrayItem, updateManyArrayItem, addOnceMedia , addListinActualArray, purgeArray ,orderByName, orderBySize, orderByFolder} = itemsSlice.actions;
+export const { populateArray, updateArrayItem, updateManyArrayItem, addOnceMedia , addListinActualArray, purgeArray ,orderByName, orderBySize, orderBySizeInverted, orderByFolder} = itemsSlice.actions;
 export default itemsSlice.reducer;
 
 // Export hooks for usage in functional components, which are
