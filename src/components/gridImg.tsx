@@ -305,7 +305,7 @@ export const GridIMGs = (() => {
                 <IconButton className="buttonControl" onClick={() => unselectAllSelectAll()}><RadioButtonUnchecked /></IconButton>
 
 
-                <Folders />
+                <Folders screenMedias={mediaSliced} />
                 <div className="buttons">
                     <IconButton className="buttonControl" onClick={() => openDiretory()}><FolderOpen /></IconButton>
                     <IconButton className="buttonControl" onClick={() => openDiretoryRecursive()}><FolderCopyTwoTone /></IconButton>

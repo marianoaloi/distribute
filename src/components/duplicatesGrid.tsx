@@ -207,7 +207,7 @@ export const GridDuplicates = (() => {
 
                 <div className="spacer" />
 
-                <Folders />
+                <Folders screenMedias={flatList} />
 
                 <IconButton onClick={openDiretory} title="Open folder to choose medias"><FolderOpen /></IconButton>
                 <IconButton onClick={openDiretoryRecursive} title="Open folder recursively to choose medias"><FolderCopyTwoTone /></IconButton>
