@@ -1,6 +1,6 @@
 import { Add, CallSplit, Delete } from "@mui/icons-material"
 import { selectMedias, SendSelectedFiles, updateArrayItem, updateManyArrayItem, useDispatch, useSelector } from "../lib/redux"
-import { addFolder, removeFolder, workFolder } from "../lib/redux/slices/folders"
+import { addFolder, removeFolder, setSplitMoveCheckedFolder, setSplitMoveUncheckedFolder, splitMoveCheckedFolder, splitMoveUncheckedFolder, workFolder } from "../lib/redux/slices/folders"
 import { AddFolder, ButtonDelete, ButtonFolder, FolderGrid } from "./folder.styled"
 import React from "react"
 import { Button, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, MenuItem, Select, TextField } from "@mui/material"
@@ -17,8 +17,16 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
     const [folderDelete, setFolderDelete] = React.useState("");
     const [onlyCopy, setOnlyCopy] = React.useState((mediaOnlyCopy === undefined))
     const [openSplitMove, setOpenSplitMove] = React.useState(false);
-    const [uncheckedDestFolder, setUncheckedDestFolder] = React.useState("");
-    const [checkedDestFolder, setCheckedDestFolder] = React.useState("");
+
+    // Remembered in redux (not local state) so the same checked/unchecked
+    // destinations carry over the next time this dialog is opened - the
+    // whole point being to repeat the same split-move strategy without
+    // re-picking folders every time. Falls back to "" if the remembered
+    // folder was since removed from the folders list.
+    const savedUncheckedDestFolder = useSelector(splitMoveUncheckedFolder)
+    const savedCheckedDestFolder = useSelector(splitMoveCheckedFolder)
+    const uncheckedDestFolder = folders.includes(savedUncheckedDestFolder) ? savedUncheckedDestFolder : ""
+    const checkedDestFolder = folders.includes(savedCheckedDestFolder) ? savedCheckedDestFolder : ""
 
     const dispatch = useDispatch();
 
@@ -39,8 +47,6 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
     const checkedCount = splitScreenMedias.filter(m => m.checked && !m.deleted && !m.imported).length
 
     const handleClickOpenSplitMove = () => {
-        setUncheckedDestFolder("");
-        setCheckedDestFolder("");
         setOpenSplitMove(true);
     };
 
@@ -231,7 +237,7 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
                         fullWidth
                         displayEmpty
                         value={uncheckedDestFolder}
-                        onChange={(ev) => setUncheckedDestFolder(ev.target.value)}
+                        onChange={(ev) => dispatch(setSplitMoveUncheckedFolder(ev.target.value))}
                         margin="dense"
                         sx={{ mt: 2 }}
                     >
@@ -242,7 +248,7 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
                         fullWidth
                         displayEmpty
                         value={checkedDestFolder}
-                        onChange={(ev) => setCheckedDestFolder(ev.target.value)}
+                        onChange={(ev) => dispatch(setSplitMoveCheckedFolder(ev.target.value))}
                         margin="dense"
                         sx={{ mt: 2 }}
                     >
