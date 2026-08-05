@@ -3,7 +3,7 @@ import { selectMedias, SendSelectedFiles, updateArrayItem, updateManyArrayItem, 
 import { addFolder, removeFolder, setSplitMoveCheckedFolder, setSplitMoveUncheckedFolder, splitMoveCheckedFolder, splitMoveUncheckedFolder, workFolder } from "../lib/redux/slices/folders"
 import { AddFolder, ButtonDelete, ButtonFolder, FolderGrid } from "./folder.styled"
 import React from "react"
-import { Button, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, MenuItem, Select, TextField } from "@mui/material"
+import { Button, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, FormControl, InputLabel, MenuItem, Select, TextField } from "@mui/material"
 import { Media } from "../entity/Media"
 
 
@@ -233,28 +233,34 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
                     <DialogContentText>
                         Moves the unchecked media to one folder and the checked media to another, in a single action.
                     </DialogContentText>
-                    <Select
-                        fullWidth
-                        displayEmpty
-                        value={uncheckedDestFolder}
-                        onChange={(ev) => dispatch(setSplitMoveUncheckedFolder(ev.target.value))}
-                        margin="dense"
-                        sx={{ mt: 2 }}
-                    >
-                        <MenuItem value="" disabled>{`Destination for unchecked (${uncheckedCount})`}</MenuItem>
-                        {folders.map(fol => <MenuItem key={fol} value={fol}>{fol}</MenuItem>)}
-                    </Select>
-                    <Select
-                        fullWidth
-                        displayEmpty
-                        value={checkedDestFolder}
-                        onChange={(ev) => dispatch(setSplitMoveCheckedFolder(ev.target.value))}
-                        margin="dense"
-                        sx={{ mt: 2 }}
-                    >
-                        <MenuItem value="" disabled>{`Destination for checked (${checkedCount})`}</MenuItem>
-                        {folders.map(fol => <MenuItem key={fol} value={fol}>{fol}</MenuItem>)}
-                    </Select>
+                    <FormControl fullWidth margin="dense" sx={{ mt: 2 }}>
+                        <InputLabel id="split-move-unchecked-label">{`Destination for UNCHECKED (${uncheckedCount})`}</InputLabel>
+                        <Select
+                            labelId="split-move-unchecked-label"
+                            label={`Destination for UNCHECKED (${uncheckedCount})`}
+                            fullWidth
+                            displayEmpty
+                            value={uncheckedDestFolder}
+                            onChange={(ev) => dispatch(setSplitMoveUncheckedFolder(ev.target.value))}
+                        >
+                            <MenuItem value="" disabled>Choose a folder</MenuItem>
+                            {folders.map(fol => <MenuItem key={fol} value={fol}>{fol}</MenuItem>)}
+                        </Select>
+                    </FormControl>
+                    <FormControl fullWidth margin="dense" sx={{ mt: 2 }}>
+                        <InputLabel id="split-move-checked-label">{`Destination for CHECKED (${checkedCount})`}</InputLabel>
+                        <Select
+                            labelId="split-move-checked-label"
+                            label={`Destination for CHECKED (${checkedCount})`}
+                            fullWidth
+                            displayEmpty
+                            value={checkedDestFolder}
+                            onChange={(ev) => dispatch(setSplitMoveCheckedFolder(ev.target.value))}
+                        >
+                            <MenuItem value="" disabled>Choose a folder</MenuItem>
+                            {folders.map(fol => <MenuItem key={fol} value={fol}>{fol}</MenuItem>)}
+                        </Select>
+                    </FormControl>
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={handleCloseSplitMove}>Cancel</Button>
