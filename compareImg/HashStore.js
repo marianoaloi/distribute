@@ -1,6 +1,6 @@
 const fs = require("fs");
 const Database = require("better-sqlite3");
-const { dbDir, dbPath } = require("./cache");
+const { getDbDir, getDbPath } = require("./cache");
 
 // baseGrey (the raw cropped/greyscale pixel buffer) has no index:
 // duplicateFinder.js compares it by pixel distance, not SQL equality, so
@@ -50,17 +50,27 @@ const createSchema = (database) => {
 };
 
 const openDb = () => {
-    fs.mkdirSync(dbDir, { recursive: true });
-    return new Database(dbPath);
+    fs.mkdirSync(getDbDir(), { recursive: true });
+    return new Database(getDbPath());
 };
 
 // Wipes and recreates an empty database. Used both to self-heal a corrupted
 // db (rare with SQLite) and for the user-triggered "rebuild index" action.
 const rebuildIndex = () => {
     if (db) db.close();
-    fs.rmSync(dbPath, { force: true });
+    fs.rmSync(getDbPath(), { force: true });
     db = openDb();
     createSchema(db);
+};
+
+// Closes the current connection without deleting anything, so the next
+// ensureReady() call re-opens against whatever folder is active - used when
+// the user switches to a different folder (its own tmp/hashIndex/index.db).
+const closeConnection = () => {
+    if (db) {
+        db.close();
+        db = null;
+    }
 };
 
 const verifyIntegrity = () => {
@@ -119,6 +129,7 @@ const exportDatabase = (destPath) => {
 module.exports = {
     ensureReady,
     rebuildIndex,
+    closeConnection,
     getItem,
     upsertItem,
     allBaseGreyRows,

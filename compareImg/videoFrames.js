@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const { execFile, execFileSync } = require("child_process");
-const { framesDir, ensureFramesDir } = require("./cache");
+const { getFramesDir, ensureFramesDir } = require("./cache");
 const { hashFor } = require("../thumbnails/cache");
 
 let ffmpegPath = null;
@@ -62,7 +62,7 @@ const timestampsFor = (duration) => ({
 
 const FRAME_POSITIONS = ["start10s", "end10s", "pct50", "pct10"];
 
-const framePathFor = (input, position) => path.join(framesDir, `${hashFor(input)}_${position}.jpg`);
+const framePathFor = (input, position) => path.join(getFramesDir(), `${hashFor(input)}_${position}.jpg`);
 
 const extractFrame = (input, output, seconds) => new Promise((resolve, reject) => {
     const args = ["-y", "-loglevel", "error", "-ss", String(seconds), "-i", input, "-frames:v", "1", output];

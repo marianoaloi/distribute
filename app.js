@@ -13,7 +13,7 @@ protocol.registerSchemesAsPrivileged([
 
 const os = require('os');
 const util = require("./util");
-const { dirCache } = require("./DirectorioCache");
+const { setActiveFolder } = require("./DirectorioCache");
 const duplicateFinder = require("./compareImg/duplicateFinder");
 const compareImgStore = require("./compareImg/HashStore");
 const mediaIndexer = require("./compareImg/mediaIndexer");
@@ -181,6 +181,8 @@ ipcMain.on("open", () => {
     dialog.showOpenDialog(options).then(file => {
         if (!file.canceled) {
             fileGlobal = file.filePaths[0];
+            setActiveFolder(fileGlobal);
+            compareImgStore.closeConnection();
         }
         openfile();
     }).catch(err => {
@@ -414,7 +416,7 @@ const loadFolders = async () => {
                 mainWindow.webContents.send("menuOpen",
 
                     data
-                        .filter(d => d.isDirectory())
+                        .filter(d => d.isDirectory() && d.name !== "tmp")
                         .map(d => d.name)
                 );
 
@@ -439,6 +441,8 @@ const loadRecursive = async () => {
     if (fileGlobal) options["defaultPath"] = fileGlobal;
     dialog.showOpenDialog(options).then(file => {
         if (!file.canceled) {
+            setActiveFolder(file.filePaths[0]);
+            compareImgStore.closeConnection();
             openfileRecursive(file.filePaths[0]);
 
             mainWindow.title = `Get Images in ${fileGlobal} recursive in ${file.filePaths[0]}`
