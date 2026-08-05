@@ -321,6 +321,7 @@ export const GridIMGs = (() => {
                         shiftSelect={shiftSelect}
                         shiftControlSelect={shiftControlSelect}
                         handleOpenPreview={handleOpenPreview}
+                        isLastSeen={lastZoom?.id === media.id}
                     />)
                     : <NoMediaFound>No Media</NoMediaFound>
                 }

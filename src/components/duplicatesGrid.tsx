@@ -34,6 +34,7 @@ export const GridDuplicates = (() => {
     const groups: Media[][] = groupIds
         .map(ids => ids.map(id => mediaById.get(id)).filter((m): m is Media => !!m))
         .filter(group => group.length > 1)
+        .map(group => [...group].sort((a, b) => b.size - a.size))
         .map(group => group.map(m => ({ ...m, screenIndex: counterIndex++ })))
 
     const flatList = groups.flat()
@@ -80,12 +81,10 @@ export const GridDuplicates = (() => {
     const selectAll = () => processChoice(flatList.filter(m => !m.imported), true)
     const unselectAll = () => processChoice(flatList, false)
 
-    // Within each group: checks the muted (no-audio) video copies for removal,
-    // keeping a sounded copy unchecked as the survivor. If every video in a
-    // group is muted (no sounded copy to keep instead), one muted copy is
-    // spared - checking all of them would leave nothing to keep. Images follow
-    // a separate rule: check every image in the group for removal except the
-    // largest (by file size), which is kept as the survivor.
+    // Within each group: checks every item for removal except one survivor,
+    // chosen in priority order — the biggest item with sound, or if none of
+    // the group's items has sound, the biggest muted item (images count as
+    // muted, since they carry no audio).
     const selectDuplicatesToRemove = () => {
         const decided: Media[] = []
         for (const group of groups) {
@@ -93,22 +92,12 @@ export const GridDuplicates = (() => {
             // (database import) are other folders' files — not movable, and
             // they must not count as a group's surviving copy either.
             const own = group.filter(m => !m.imported)
-            const videos = own.filter(m => m.mime && m.mime.includes('video'))
-            const muted = videos.filter(m => !m.hasAudio)
-            const sounded = videos.filter(m => m.hasAudio)
-            if (muted.length > 0) {
-                const spared = sounded.length > 0 ? null : muted[0]
-                for (const video of videos) {
-                    decided.push({ ...video, checked: video !== spared && !video.hasAudio })
-                }
-            }
-
-            const images = own.filter(m => m.mime && m.mime.includes('image'))
-            if (images.length > 0) {
-                const biggest = images.reduce((a, b) => b.size > a.size ? b : a)
-                for (const image of images) {
-                    decided.push({ ...image, checked: image !== biggest })
-                }
+            if (own.length === 0) continue
+            const sounded = own.filter(m => m.hasAudio)
+            const candidates = sounded.length > 0 ? sounded : own
+            const spared = candidates.reduce((a, b) => b.size > a.size ? b : a)
+            for (const media of own) {
+                decided.push({ ...media, checked: media !== spared })
             }
         }
         dispatch(updateManyArrayItem(decided))
@@ -201,7 +190,7 @@ export const GridDuplicates = (() => {
                     {indexRebuilding ? <CircularProgress size={20} /> : <RestartAlt />}
                 </IconButton>
                 <IconButton onClick={selectDuplicatesToRemove} disabled={groups.length === 0}
-                    title="Check duplicates for removal in every group: muted video copies (keeping one sounded, or one muted if none are sounded) and images (keeping the largest)">
+                    title="Check duplicates for removal in every group, keeping one survivor: the biggest item with sound, or if none has sound, the biggest muted item">
                     <VolumeOff />
                 </IconButton>
                 <IconButton onClick={exportDatabase} disabled={dbExporting}
@@ -262,6 +251,7 @@ export const GridDuplicates = (() => {
                                         shiftSelect={shiftSelect}
                                         shiftControlSelect={shiftControlSelect}
                                         handleOpenPreview={handleOpenPreview}
+                                        isLastSeen={lastZoom?.id === media.id}
                                     />
                                     return media.imported
                                         ? <ImportedMediaWrap key={media.id}>{tile}</ImportedMediaWrap>

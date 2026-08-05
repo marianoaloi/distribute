@@ -1,6 +1,6 @@
 import React from "react"
 import { Media } from "../entity/Media"
-import { CheckBoxSelect, ImageMaloi, PreviewMedia, ThePhoto } from "./media.styled"
+import { CheckBoxSelect, ImageMaloi, LastSeenStar, PreviewMedia, ThePhoto } from "./media.styled"
 import { updateArrayItem, useDispatch, useSelector } from "../lib/redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { toMediaUrl } from "../lib/mediaUrl"
@@ -11,11 +11,13 @@ type TheMediaProps = {
     shiftSelect: any
     shiftControlSelect: any
     handleOpenPreview: any
+    isLastSeen?: boolean
 }
 export const MediaIMG: React.FC<TheMediaProps> = ({ media, lastClickedEvent,
     shiftSelect,
     shiftControlSelect
-    , handleOpenPreview }) => {
+    , handleOpenPreview
+    , isLastSeen }) => {
 
     const dispatch = useDispatch();
 
@@ -59,6 +61,7 @@ export const MediaIMG: React.FC<TheMediaProps> = ({ media, lastClickedEvent,
         <PreviewMedia onClick={openPreview} isVideo={media.mime.includes('video')} hasSound={media.hasAudio}>
             {media.mime.includes('video') ? "V" : "F"}
         </PreviewMedia>
+        {isLastSeen && <LastSeenStar>★</LastSeenStar>}
     </ThePhoto>
 
 }
