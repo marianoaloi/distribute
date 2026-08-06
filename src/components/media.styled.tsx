@@ -25,6 +25,7 @@ export const CheckBoxSelect = styled.input`
 
 export const ThePhoto = styled.div`
         display: unset;
+        position: relative;
 `
 
 export const PreviewMedia = styled.div<{ isVideo?: boolean , hasSound?: boolean }>((props: any) => `
@@ -45,3 +46,18 @@ export const PreviewMedia = styled.div<{ isVideo?: boolean , hasSound?: boolean 
   width: 20px;
 
 `)
+
+export const LastSeenStar = styled.div`
+  color: white;
+  -webkit-text-stroke: 1px black;
+  font-size: 20px;
+  height: 20px;
+  line-height: 20px;
+  opacity: 90%;
+  pointer-events: none;
+  position: absolute;
+  right: 20px;
+  text-align: center;
+  top: 65px;
+  width: 20px;
+`

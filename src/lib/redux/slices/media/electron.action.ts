@@ -1,9 +1,10 @@
-import { addListinActualArray, addOnceMedia, orderByFolder, orderByName, orderBySize, populateArray, purgeArray, updateArrayItem } from './media.reduce';
+import { addListinActualArray, addOnceMedia, orderByFolder, orderByName, orderBySize, orderBySizeInverted, populateArray, purgeArray, updateArrayItem } from './media.reduce';
 import { example } from './populateExample';
 import { Media } from '../../../../entity/Media';
 import { addFolder } from '../folders';
 import { mediaLoadComplete, mediaLoadStart, zoomIn, zoomOut } from '../configurations';
-import { setDuplicateGroups, indexRebuildFinished, setIndexRebuildProgress } from '../duplicates';
+import { setDuplicateGroups, indexRebuildFinished, setIndexRebuildProgress, databaseExportFinished, databaseImportFinished } from '../duplicates';
+import { setDetectionResult, setDetectionProgress, detectingFinished, setModelPath } from '../detections';
 import { FileDTO } from '../../../../entity/FileDTO';
 
 
@@ -23,7 +24,7 @@ export const ElectronConnection = () => {
 
     return (dispatch: any) => {
         if (ipcRender) {
-            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete'];
+            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete', 'onnxModelChosen', 'databaseExported', 'databaseImported'];
             channels.forEach(ch => ipcRender.removeAllListeners(ch));
 
             ipcRender.on('directoryOpen', (e: any, args: any) => {
@@ -65,6 +66,7 @@ export const ElectronConnection = () => {
                 switch (sort) {
                     case 'sortByName': dispatch(orderByName()); break;
                     case 'sortBySize': dispatch(orderBySize()); break;
+                    case 'sortBySizeInverted': dispatch(orderBySizeInverted()); break;
                     case 'sortByFolder': dispatch(orderByFolder()); break;
 
                     default:
@@ -91,6 +93,30 @@ export const ElectronConnection = () => {
             })
             ipcRender.on('mediaLoadComplete', () => {
                 dispatch(mediaLoadComplete())
+            })
+            ipcRender.on('detectionFound', (e: any, result: { id: string, boxes: any[] }) => {
+                dispatch(setDetectionResult(result))
+            })
+            ipcRender.on('detectionProgress', (e: any, progress: { processed: number, total: number }) => {
+                dispatch(setDetectionProgress(progress))
+            })
+            ipcRender.on('detectionsComplete', (e: any, result: { error?: string }) => {
+                dispatch(detectingFinished(result))
+            })
+            ipcRender.on('onnxModelChosen', (e: any, result: { path: string | null }) => {
+                dispatch(setModelPath(result.path))
+            })
+            ipcRender.on('databaseExported', (e: any, result: { success: boolean, path?: string, error?: string, canceled?: boolean }) => {
+                dispatch(databaseExportFinished({
+                    error: result.canceled ? null : (result.success ? null : (result.error || 'Export failed')),
+                    path: result.success ? result.path : undefined,
+                }))
+            })
+            ipcRender.on('databaseImported', (e: any, result: { success: boolean, matched?: number, error?: string, canceled?: boolean }) => {
+                dispatch(databaseImportFinished({
+                    error: result.canceled ? null : (result.success ? null : (result.error || 'Import failed')),
+                    matched: result.success ? result.matched : undefined,
+                }))
             })
             ipcRender.send("verifyOpen", undefined)
         }

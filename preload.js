@@ -18,6 +18,11 @@ const ipc = {
             'findDuplicates',
             'findIndexDuplicates',
             'rebuildIndex',
+            'detectObjects',
+            'stopDetection',
+            'chooseOnnxModel',
+            'exportDatabase',
+            'importDatabase',
         ],
         // From main to render.
         'receive': ['directoryOpen',
@@ -52,6 +57,12 @@ const ipc = {
             'indexRebuildProgress',
             'mediaLoadStart',
             'mediaLoadComplete',
+            'detectionFound',
+            'detectionProgress',
+            'detectionsComplete',
+            'onnxModelChosen',
+            'databaseExported',
+            'databaseImported',
         ]
     }
 };

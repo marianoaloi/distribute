@@ -1,5 +1,5 @@
 import styled from "@emotion/styled";
-import { Box, Slider } from "@mui/material";
+import { Box, LinearProgress, Slider } from "@mui/material";
 import { Folders } from "./folder";
 import { VolumeMuteRounded } from "@mui/icons-material";
 
@@ -53,6 +53,18 @@ export const ControlSlider = styled(Slider)`
 
 max-width: 30%;
 
+`
+
+// Sits right under the header, spanning the modal's full width regardless of
+// the video's own width — a passive readout of playback position, not a
+// scrubber (pointer-events left alone; native video controls still seek).
+export const VideoProgress = styled(LinearProgress)`
+    position: absolute;
+    top: 40px;
+    left: 0;
+    width: 100%;
+    height: 4px;
+    z-index: 3;
 `
 
 export const ZoomHeader = styled.div`

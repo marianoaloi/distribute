@@ -1,6 +1,6 @@
 const fs = require("fs");
 const Database = require("better-sqlite3");
-const { dbDir, dbPath } = require("./cache");
+const { getDbDir, getDbPath } = require("./cache");
 
 // baseGrey (the raw cropped/greyscale pixel buffer) has no index:
 // duplicateFinder.js compares it by pixel distance, not SQL equality, so
@@ -50,17 +50,27 @@ const createSchema = (database) => {
 };
 
 const openDb = () => {
-    fs.mkdirSync(dbDir, { recursive: true });
-    return new Database(dbPath);
+    fs.mkdirSync(getDbDir(), { recursive: true });
+    return new Database(getDbPath());
 };
 
 // Wipes and recreates an empty database. Used both to self-heal a corrupted
 // db (rare with SQLite) and for the user-triggered "rebuild index" action.
 const rebuildIndex = () => {
     if (db) db.close();
-    fs.rmSync(dbPath, { force: true });
+    fs.rmSync(getDbPath(), { force: true });
     db = openDb();
     createSchema(db);
+};
+
+// Closes the current connection without deleting anything, so the next
+// ensureReady() call re-opens against whatever folder is active - used when
+// the user switches to a different folder (its own tmp/hashIndex/index.db).
+const closeConnection = () => {
+    if (db) {
+        db.close();
+        db = null;
+    }
 };
 
 const verifyIntegrity = () => {
@@ -99,13 +109,31 @@ const upsertItem = ({ id, metadata }) => {
 // mean-pixel-difference comparison (baseGrey has no index - distance can't
 // be expressed as a SQL equality/range lookup on a blob).
 const allBaseGreyRows = () => db
-    .prepare("SELECT actualPosition, baseGrey FROM items WHERE baseGrey IS NOT NULL")
+    .prepare("SELECT actualPosition, baseGrey, localPath FROM items WHERE baseGrey IS NOT NULL")
     .all();
+
+// Column names of the live items table, for validating that an imported
+// (exported-elsewhere) database has the identical structure before comparing.
+const columnNames = () => db.pragma("table_info(items)").map((c) => c.name);
+
+const countItems = () => db.prepare("SELECT COUNT(*) AS n FROM items").get().n;
+
+// Uses SQLite's online backup API (safe on a live connection, unlike copying
+// the file directly which could race a write) so the exported file is a
+// consistent snapshot other machines can later import and compare against.
+const exportDatabase = (destPath) => {
+    ensureReady();
+    return db.backup(destPath);
+};
 
 module.exports = {
     ensureReady,
     rebuildIndex,
+    closeConnection,
     getItem,
     upsertItem,
     allBaseGreyRows,
+    columnNames,
+    countItems,
+    exportDatabase,
 };

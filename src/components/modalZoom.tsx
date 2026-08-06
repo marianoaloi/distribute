@@ -1,11 +1,12 @@
 import { forwardRef, SyntheticEvent, useImperativeHandle, useRef, useState } from "react"
 import { Media } from "../entity/Media"
 import { prettifySizeF } from "./media"
-import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, MediaControllersCSS, FoldersZoom, MuteIcon, InfoBox, ZoomHeader } from "./modalZoom.styled"
+import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, MediaControllersCSS, FoldersZoom, MuteIcon, InfoBox, ZoomHeader, VideoProgress } from "./modalZoom.styled"
 import { IconButton, Slider, Modal } from "@mui/material"
 import { toMediaUrl } from "../lib/mediaUrl"
 import { ArrowBackIos, ArrowForwardIos, CleaningServices } from "@mui/icons-material"
-import { updateArrayItem, useDispatch } from "../lib/redux"
+import { updateArrayItem, useDispatch, useSelector } from "../lib/redux"
+import { configurationsSelector, setVideoVolume } from "../lib/redux/slices/configurations"
 
 interface ModalZoomMethods {
     chamgeImageClass: () => void,
@@ -28,6 +29,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         const imgRef = useRef<HTMLImageElement | null>(null)
         const videoRef = useRef<HTMLVideoElement | null>(null)
         const dispatch = useDispatch();
+        const config = useSelector(configurationsSelector)
         const [volumeLevel, setVolumeLevel] = useState(0);
         const [currentTime, setCurrentTime] = useState(0);
         const [duration, setDuration] = useState(0);
@@ -117,8 +119,14 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         function startVid(event: SyntheticEvent<HTMLVideoElement, Event>): void {
             const video = event.currentTarget
             if (!video) return
-            event.currentTarget.volume = 0.05
+            event.currentTarget.volume = config.videoVolume
             setDuration(video.duration)
+        }
+
+        function saveVideoVolume(event: SyntheticEvent<HTMLVideoElement, Event>): void {
+            const volume = event.currentTarget.volume
+            setVolumeLevel(volume)
+            dispatch(setVideoVolume(volume))
         }
 
         function updateVideoTime(event: SyntheticEvent<HTMLVideoElement, Event>): void {
@@ -268,6 +276,9 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                         <label htmlFor="selectMedia" style={{ cursor: 'pointer', userSelect: 'none', fontSize: '14px', marginRight: '8px' }}>Select</label>
                         <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
                     </ZoomHeader>
+                    {mediaWithPreview.mime.includes('video') &&
+                        <VideoProgress variant="determinate" value={duration > 0 ? (currentTime / duration) * 100 : 0} />
+                    }
                     <MediaPresentation>
                         {
                             mediaWithPreview.mime.includes('video')
@@ -277,7 +288,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                         onLoadedMetadata={startVid}
                                         onDoubleClick={changeCheckbox}
                                         onWheel={controlVolumeByAltPresed}
-                                        onVolumeChange={(ev) => setVolumeLevel(ev.currentTarget.volume)}
+                                        onVolumeChange={saveVideoVolume}
                                         onTimeUpdate={updateVideoTime}
                                         autoPlay title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></VideoPresentation>
                                     <InfoBox>

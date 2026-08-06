@@ -16,6 +16,15 @@ export const setMediaType = createAction(
     })
 )
 
+// Remembered so the next video opened in the zoom modal (this one or the
+// next media the user navigates to) starts at the volume the user left off at.
+export const setVideoVolume = createAction(
+    'config/setVideoVolume',
+    (volume: number) => ({
+        payload: volume
+    })
+)
+
 export const setPage = createAction(
     'config/setPage',
     (page: number) => ({

@@ -17,7 +17,7 @@ const getProvider = () => {
 };
 
 // Some filenames break the encoder: retry through a hard link with a safe name
-const linkPathFor = (input) => path.join(cache.linkDir, cache.hashFor(input) + path.extname(input));
+const linkPathFor = (input) => path.join(cache.getLinkDir(), cache.hashFor(input) + path.extname(input));
 
 const withLinkRetrySync = (provider, input, output) => {
     try {

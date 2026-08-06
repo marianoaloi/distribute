@@ -68,13 +68,16 @@ const itemsSlice = createSlice({
         orderBySize:(state) => {
             state.medias.sort((a:Media,b:Media) => b.size-a.size)
         },
+        orderBySizeInverted:(state) => {
+            state.medias.sort((a:Media,b:Media) => a.size-b.size)
+        },
         orderByFolder:(state) => {
             state.medias.sort((a:Media,b:Media) => a.path.localeCompare(b.path))
         },
     }
 })
 
-const transformMedia = (f: FileDTO) => { return { "id": f.id, "path": f.item, size: f.size, media: f.fileName, filename: f.filename, mime: f.mime, checked: false, deleted: false , hash:f.hash , hasAudio: f.hasAudio , screenIndex: 0} as Media }
+const transformMedia = (f: FileDTO) => { return { "id": f.id, "path": f.item, size: f.size, media: f.fileName, filename: f.filename, mime: f.mime, checked: false, deleted: false , hash:f.hash , hasAudio: f.hasAudio , imported: f.imported ?? false, screenIndex: 0} as Media }
 
 function transformStringToMedias(paths: FileDTO[]): Media[] {
 
@@ -93,7 +96,7 @@ export const mediasApi = createApi({
 }); 
 
 
-export const { populateArray, updateArrayItem, updateManyArrayItem, addOnceMedia , addListinActualArray, purgeArray ,orderByName, orderBySize, orderByFolder} = itemsSlice.actions;
+export const { populateArray, updateArrayItem, updateManyArrayItem, addOnceMedia , addListinActualArray, purgeArray ,orderByName, orderBySize, orderBySizeInverted, orderByFolder} = itemsSlice.actions;
 export default itemsSlice.reducer;
 
 // Export hooks for usage in functional components, which are

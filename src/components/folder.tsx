@@ -1,21 +1,50 @@
-import { Add, Delete } from "@mui/icons-material"
+import { Add, CallSplit, Delete } from "@mui/icons-material"
 import { selectMedias, SendSelectedFiles, updateArrayItem, updateManyArrayItem, useDispatch, useSelector } from "../lib/redux"
-import { addFolder, removeFolder, workFolder } from "../lib/redux/slices/folders"
+import { addFolder, removeFolder, setSplitMoveCheckedFolder, setSplitMoveUncheckedFolder, splitMoveCheckedFolder, splitMoveUncheckedFolder, workFolder } from "../lib/redux/slices/folders"
 import { AddFolder, ButtonDelete, ButtonFolder, FolderGrid } from "./folder.styled"
 import React from "react"
-import { Button, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, TextField } from "@mui/material"
+import { Button, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, FormControl, InputLabel, MenuItem, Select, TextField } from "@mui/material"
 import { Media } from "../entity/Media"
 
 
 
 
-export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: any, className?: string }> = ({ mediaOnlyCopy, handleExternalClose, className }) => {
+export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: any, className?: string, screenMedias?: Media[] }> = ({ mediaOnlyCopy, handleExternalClose, className, screenMedias }) => {
 
     const folders = useSelector(workFolder)
     const [openNewFolder, setOpenNewFolder] = React.useState(false);
     const [openDelete, setOpenDelete] = React.useState(false);
     const [folderDelete, setFolderDelete] = React.useState("");
     const [onlyCopy, setOnlyCopy] = React.useState((mediaOnlyCopy === undefined))
+    const [openSplitMove, setOpenSplitMove] = React.useState(false);
+
+    const [ctrlPressed, setCtrlPressed] = React.useState(false);
+
+    React.useEffect(() => {
+        const onKeyDown = (ev: KeyboardEvent) => { if (ev.key === "Control") setCtrlPressed(true) }
+        const onKeyUp = (ev: KeyboardEvent) => { if (ev.key === "Control") setCtrlPressed(false) }
+        // Alt-tab/Ctrl-tab steals focus before keyup lands, which would leave
+        // the icon stuck gold long after Ctrl was released.
+        const onBlur = () => setCtrlPressed(false)
+        window.addEventListener("keydown", onKeyDown)
+        window.addEventListener("keyup", onKeyUp)
+        window.addEventListener("blur", onBlur)
+        return () => {
+            window.removeEventListener("keydown", onKeyDown)
+            window.removeEventListener("keyup", onKeyUp)
+            window.removeEventListener("blur", onBlur)
+        }
+    }, [])
+
+    // Remembered in redux (not local state) so the same checked/unchecked
+    // destinations carry over the next time this dialog is opened - the
+    // whole point being to repeat the same split-move strategy without
+    // re-picking folders every time. Falls back to "" if the remembered
+    // folder was since removed from the folders list.
+    const savedUncheckedDestFolder = useSelector(splitMoveUncheckedFolder)
+    const savedCheckedDestFolder = useSelector(splitMoveCheckedFolder)
+    const uncheckedDestFolder = folders.includes(savedUncheckedDestFolder) ? savedUncheckedDestFolder : ""
+    const checkedDestFolder = folders.includes(savedCheckedDestFolder) ? savedCheckedDestFolder : ""
 
     const dispatch = useDispatch();
 
@@ -25,6 +54,55 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
 
     const handleCloseNewFolder = () => {
         setOpenNewFolder(false);
+    };
+
+    // Scoped to exactly what the caller has on screen (e.g. gridImg's
+    // current page, or duplicatesGrid's flat list) - NOT the whole redux
+    // store. "Unchecked" is the default state, so acting on the global store
+    // would sweep in every other page/screen's untouched media too.
+    const splitScreenMedias = screenMedias ?? []
+    const uncheckedCount = splitScreenMedias.filter(m => !m.checked && !m.deleted && !m.imported).length
+    const checkedCount = splitScreenMedias.filter(m => m.checked && !m.deleted && !m.imported).length
+
+    const handleClickOpenSplitMove = (ev: React.MouseEvent) => {
+        if (ev.ctrlKey && uncheckedDestFolder && checkedDestFolder) {
+            handleSplitMove();
+            return;
+        }
+        setOpenSplitMove(true);
+    };
+
+    const handleCloseSplitMove = () => {
+        setOpenSplitMove(false);
+    };
+
+    // Moves the unchecked media to one folder and the checked media to
+    // another in a single action, so both halves of a duplicates pass can be
+    // filed away without the unchecked side (which never gets a "process"
+    // button of its own) being left behind.
+    const handleSplitMove = () => {
+        // moveFile (app.js) only acts on items whose payload `checked` is
+        // true, so the unchecked group is sent with checked forced true -
+        // same trick the single-media onlyCopy-false path below already
+        // uses - then restored to its real value for the redux update
+        // (harmless either way since `deleted: true` hides it regardless).
+        const uncheckedWire = splitScreenMedias
+            .filter(m => !m.checked && !m.deleted && !m.imported)
+            .map(m => ({ ...m, checked: true }))
+        if (uncheckedWire.length > 0) {
+            SendSelectedFiles(uncheckedDestFolder, false, uncheckedWire)
+            dispatch(updateManyArrayItem(uncheckedWire.map(m => ({ ...m, checked: false, deleted: true }))))
+        }
+
+        const checkedMedias = splitScreenMedias
+            .filter(m => m.checked && !m.deleted && !m.imported)
+            .map(m => ({ ...m, deleted: true }))
+        if (checkedMedias.length > 0) {
+            SendSelectedFiles(checkedDestFolder, false, checkedMedias)
+            dispatch(updateManyArrayItem(checkedMedias))
+        }
+
+        handleCloseSplitMove();
     };
 
 
@@ -44,7 +122,9 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
         function sendSelected(folder: string): void {
             if (!mediaOnlyCopy) {
 
-                const mediasFilter = medias.filter(m => m.checked && !m.deleted).map(m => {
+                // Imported fake items represent files in OTHER folders — even
+                // when checked they must never be moved (app.js re-filters too).
+                const mediasFilter = medias.filter(m => m.checked && !m.deleted && !m.imported).map(m => {
                     const aux = { ...m }
                     aux.deleted = true
                     return aux
@@ -89,6 +169,11 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
         <AddFolder onClick={handleClickOpenNewFolder}  >
             <Add titleAccess="Add folder" />
         </AddFolder>
+        {!mediaOnlyCopy && screenMedias &&
+            <AddFolder onClick={handleClickOpenSplitMove} title="Move checked and unchecked media to two different folders in one action">
+                <CallSplit titleAccess="Move checked/unchecked to different folders" sx={ctrlPressed ? { color: "gold" } : undefined} />
+            </AddFolder>
+        }
         {mediaOnlyCopy ?
             <label className="onlyCopyLabel">
                 <input type="checkbox" readOnly onClick={(ev) => setOnlyCopy(ev.currentTarget.checked)} checked={onlyCopy} aria-label="Only Copy" title="Only copy" />
@@ -157,6 +242,52 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
                     <Button onClick={handleCloseDelete}>Disagree</Button>
                     <Button onClick={deleteFolder} autoFocus>
                         Agree
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
+            <Dialog
+                open={openSplitMove}
+                onClose={handleCloseSplitMove}
+            >
+                <DialogTitle>Move checked and unchecked media</DialogTitle>
+                <DialogContent>
+                    <DialogContentText>
+                        Moves the unchecked media to one folder and the checked media to another, in a single action.
+                    </DialogContentText>
+                    <FormControl fullWidth margin="dense" sx={{ mt: 2 }}>
+                        <InputLabel id="split-move-unchecked-label">{`Destination for UNCHECKED (${uncheckedCount})`}</InputLabel>
+                        <Select
+                            labelId="split-move-unchecked-label"
+                            label={`Destination for UNCHECKED (${uncheckedCount})`}
+                            fullWidth
+                            displayEmpty
+                            value={uncheckedDestFolder}
+                            onChange={(ev) => dispatch(setSplitMoveUncheckedFolder(ev.target.value))}
+                        >
+                            <MenuItem value="" disabled>Choose a folder</MenuItem>
+                            {folders.map(fol => <MenuItem key={fol} value={fol}>{fol}</MenuItem>)}
+                        </Select>
+                    </FormControl>
+                    <FormControl fullWidth margin="dense" sx={{ mt: 2 }}>
+                        <InputLabel id="split-move-checked-label">{`Destination for CHECKED (${checkedCount})`}</InputLabel>
+                        <Select
+                            labelId="split-move-checked-label"
+                            label={`Destination for CHECKED (${checkedCount})`}
+                            fullWidth
+                            displayEmpty
+                            value={checkedDestFolder}
+                            onChange={(ev) => dispatch(setSplitMoveCheckedFolder(ev.target.value))}
+                        >
+                            <MenuItem value="" disabled>Choose a folder</MenuItem>
+                            {folders.map(fol => <MenuItem key={fol} value={fol}>{fol}</MenuItem>)}
+                        </Select>
+                    </FormControl>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={handleCloseSplitMove}>Cancel</Button>
+                    <Button onClick={handleSplitMove} disabled={!uncheckedDestFolder || !checkedDestFolder}>
+                        Move
                     </Button>
                 </DialogActions>
             </Dialog>

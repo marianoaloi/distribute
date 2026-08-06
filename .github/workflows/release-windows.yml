@@ -25,7 +25,10 @@ jobs:
         run: npm install --force
 
       - name: Evolve version
-        run: npm version major --no-git-tag-version
+        run: npm version minor --no-git-tag-version
+
+      - name: Commit version
+        run: git commit -am "Evolve version to $(node -p "require('./package.json').version")"
 
       - name: Build Windows executable
         run: npm run execWindows

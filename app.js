@@ -13,10 +13,13 @@ protocol.registerSchemesAsPrivileged([
 
 const os = require('os');
 const util = require("./util");
-const { dirCache } = require("./DirectorioCache");
+const { setActiveFolder } = require("./DirectorioCache");
 const duplicateFinder = require("./compareImg/duplicateFinder");
 const compareImgStore = require("./compareImg/HashStore");
 const mediaIndexer = require("./compareImg/mediaIndexer");
+const dbImport = require("./compareImg/dbImport");
+const { hashFor } = require("./thumbnails/cache");
+const onnxDetector = require("./objectDetection/onnxDetector");
 const transformData = util.transformData;
 const transformDataStreaming = util.transformDataStreaming;
 
@@ -60,6 +63,7 @@ var menuTemplate = () => [
         submenu: [
             { label: "Sort by Name", click: sortByName },
             { label: "Sort by Size", click: sortBySize },
+            { label: "Sort by Size Inverted", click: sortBySizeInverted },
             { label: "Sort by Folder", click: sortByFolder },
         ]
     },
@@ -177,6 +181,8 @@ ipcMain.on("open", () => {
     dialog.showOpenDialog(options).then(file => {
         if (!file.canceled) {
             fileGlobal = file.filePaths[0];
+            setActiveFolder(fileGlobal);
+            compareImgStore.closeConnection();
         }
         openfile();
     }).catch(err => {
@@ -211,6 +217,59 @@ const findIndexDuplicates = async () => {
 }
 ipcMain.on("findIndexDuplicates", findIndexDuplicates)
 
+// Runs ONNX object detection (objectDetection/onnxDetector.js) over the
+// media the renderer currently has loaded, one at a time, streaming each
+// result back as it finishes rather than waiting for the whole batch (same
+// streaming shape as indexRebuildProgress/addOneMedia).
+// Set by the renderer's stop button: detection runs one media at a time, so
+// the loop below just stops picking up the next item. Already-computed boxes
+// stay valid — stopping only cuts the run short (e.g. the model is clearly
+// not good enough to be worth finishing the whole library).
+let detectionStopRequested = false;
+ipcMain.on("stopDetection", () => { detectionStopRequested = true; });
+
+// Lets the user pick any .onnx model file instead of the old fixed
+// ./xcxv/best.onnx path. Sends the chosen path (or the still-unset current
+// one, if canceled) back so the renderer can reflect it and gate the run button.
+ipcMain.on("chooseOnnxModel", () => {
+    const options = {
+        properties: ["openFile"],
+        title: "Choose ONNX model for object detection",
+        filters: [{ name: "ONNX model", extensions: ["onnx"] }],
+    };
+    dialog.showOpenDialog(options).then(file => {
+        if (!file.canceled && file.filePaths[0]) {
+            onnxDetector.setModelPath(file.filePaths[0]);
+        }
+        mainWindow.webContents.send("onnxModelChosen", { path: onnxDetector.getModelPath() });
+    }).catch(err => {
+        console.error(err);
+    });
+});
+
+ipcMain.on("detectObjects", async (event, data) => {
+    const medias = (data && data.medias) || [];
+    if (!onnxDetector.isAvailable()) {
+        mainWindow.webContents.send("detectionsComplete", { error: "No ONNX model selected - choose a model file first" });
+        return;
+    }
+    detectionStopRequested = false;
+    let processed = 0;
+    for (const media of medias) {
+        if (detectionStopRequested) break;
+        try {
+            const boxes = await onnxDetector.detect(media.media);
+            mainWindow.webContents.send("detectionFound", { id: media.id, boxes });
+        } catch (error) {
+            console.error("detectObjects failed for", media.media, error);
+            mainWindow.webContents.send("detectionFound", { id: media.id, boxes: [], error: error.message });
+        }
+        processed++;
+        mainWindow.webContents.send("detectionProgress", { processed, total: medias.length });
+    }
+    mainWindow.webContents.send("detectionsComplete", detectionStopRequested ? { stopped: true } : {});
+})
+
 // Wipes the (possibly corrupted) compareImg sqlite index and re-indexes the
 // media the renderer already has loaded in redux, so the user doesn't need
 // to re-open/re-scan the folder to recover from a corrupted index.db.
@@ -234,6 +293,37 @@ ipcMain.on("rebuildIndex", async (event, data) => {
     findIndexDuplicates();
 })
 
+// Exports a consistent snapshot of the compareImg sqlite index so it can be
+// carried to another machine/folder and later imported for cross-library
+// duplicate comparison (the import/compare side is a follow-up feature).
+ipcMain.on("exportDatabase", async () => {
+    const options = {
+        title: "Export duplicate-detection database",
+        defaultPath: path.join(app.getPath("documents"), `index-export-${Date.now()}.db`),
+        filters: [{ name: "SQLite Database", extensions: ["db"] }],
+    };
+    try {
+        const result = await dialog.showSaveDialog(mainWindow, options);
+        if (result.canceled || !result.filePath) {
+            mainWindow.webContents.send("databaseExported", { success: false, canceled: true });
+            return;
+        }
+        await compareImgStore.exportDatabase(result.filePath);
+        mainWindow.webContents.send("databaseExported", { success: true, path: result.filePath });
+    } catch (error) {
+        console.error("exportDatabase failed", error);
+        mainWindow.webContents.send("databaseExported", { success: false, error: error.message });
+    }
+})
+
+// Compares another folder's exported index against the live one (readonly —
+// nothing is merged into index.db) and streams each matched external file to
+// the renderer as a transient "imported" fake item, so the duplicates page
+// can show cross-folder groups and the user can decide what to move.
+// Full flow lives in compareImg/dbImport.js.
+ipcMain.on("importDatabase", () =>
+    dbImport.runImportFlow({ dialog, mainWindow, transformDataStreaming, hashFor }))
+
 ipcMain.on("verifyOpen", async () => {
     if (process.env.FixFiles && fs.existsSync(process.env.FixFiles)) {
         fs.readFile(process.env.FixFiles, 'utf8', (err, data) => {
@@ -254,7 +344,10 @@ const moveFile = (bol, dest, onlyCopy, data) => {
 
         return;
     }
-    data.filter(f => f.checked === bol).forEach(media => {
+    // Imported fake items point at files in OTHER folders (database import
+    // feature) — they exist only to inform the move decision, never to be
+    // moved themselves.
+    data.filter(f => f.checked === bol && !f.imported).forEach(media => {
         // let completeDestine = path.join(path.dirname(media.path), dest);
         let completeDestine = path.join(fileGlobal, dest);
         if (!fs.existsSync(completeDestine)) {
@@ -342,7 +435,7 @@ const loadFolders = async () => {
                 mainWindow.webContents.send("menuOpen",
 
                     data
-                        .filter(d => d.isDirectory())
+                        .filter(d => d.isDirectory() && d.name !== "tmp")
                         .map(d => d.name)
                 );
 
@@ -367,6 +460,8 @@ const loadRecursive = async () => {
     if (fileGlobal) options["defaultPath"] = fileGlobal;
     dialog.showOpenDialog(options).then(file => {
         if (!file.canceled) {
+            setActiveFolder(file.filePaths[0]);
+            compareImgStore.closeConnection();
             openfileRecursive(file.filePaths[0]);
 
             mainWindow.title = `Get Images in ${fileGlobal} recursive in ${file.filePaths[0]}`
@@ -403,6 +498,11 @@ const sortByName = async () => {
 const sortBySize = async () => {
     if (mainWindow) {
         mainWindow.webContents.send("sort", "sortBySize");
+    }
+}
+const sortBySizeInverted = async () => {
+    if (mainWindow) {
+        mainWindow.webContents.send("sort", "sortBySizeInverted");
     }
 }
 const sortByFolder = async () => {

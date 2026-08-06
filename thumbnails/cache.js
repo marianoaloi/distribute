@@ -1,25 +1,27 @@
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
-const { dirCache } = require("../DirectorioCache");
+const { getTmpRoot } = require("../DirectorioCache");
 
-const cacheDir = path.join(dirCache, "tmp", "ffmpeg");
+const getCacheDir = () => path.join(getTmpRoot(), "ffmpeg");
 
 const ensureCacheDir = () => {
-    fs.mkdirSync(cacheDir, { recursive: true });
+    fs.mkdirSync(getCacheDir(), { recursive: true });
 };
 
 const hashFor = (videoPath) => crypto.createHash("md5").update(videoPath).digest("hex");
 
-const thumbnailPathFor = (videoPath) => path.join(cacheDir, `${hashFor(videoPath)}.jpeg`);
+const thumbnailPathFor = (videoPath) => path.join(getCacheDir(), `${hashFor(videoPath)}.jpeg`);
 
-// Directory for the hard-link retry: must be on the same volume as dirCache
-const linkDir = dirCache;
+// Directory for the hard-link retry: fs.linkSync requires the link to be on
+// the same volume as the source video, which the ffmpeg cache dir now is,
+// since both live under the folder the user opened.
+const getLinkDir = () => getCacheDir();
 
 module.exports = {
-    cacheDir,
+    getCacheDir,
     ensureCacheDir,
     hashFor,
     thumbnailPathFor,
-    linkDir,
+    getLinkDir,
 };

@@ -36,3 +36,6 @@ tmp/**
 **.tgz
 .swarm/**
 ruvector.db
+xcxv/**.onnx
+xcxv/**.data
+xcxv/**.pt

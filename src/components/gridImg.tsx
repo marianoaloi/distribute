@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from "react"
 import { OpenDirectory, OpenDirectoryRecursive, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
-import { FilterBar, ImgGrid, NoMediaFound, Qtd, Resume } from "./gridImg.styled"
+import { ImgGrid, NoMediaFound, Qtd, Resume } from "./gridImg.styled"
 import { MediaIMG } from "./media"
 import { Media } from "../entity/Media"
 import { useDispatch } from "react-redux"
-import { IconButton, Menu, MenuItem, ListItemIcon, ListItemText } from "@mui/material"
+import { IconButton } from "@mui/material"
 import { Folders } from "./folder"
-import { KeyboardArrowLeft, KeyboardArrowRight, KeyboardDoubleArrowLeft, KeyboardDoubleArrowRight, RadioButtonChecked, RadioButtonUnchecked, Gif, Movie, Image, AllInclusive } from "@mui/icons-material"
+import { KeyboardArrowLeft, KeyboardArrowRight, KeyboardDoubleArrowLeft, KeyboardDoubleArrowRight, RadioButtonChecked, RadioButtonUnchecked } from "@mui/icons-material"
 import ModalZoom from "./modalZoom"
-import { configurationsSelector, setMediaType, setPage, setPostsPerPage, setScrollPosition } from "../lib/redux/slices/configurations"
+import { configurationsSelector, setPage, setPostsPerPage, setScrollPosition } from "../lib/redux/slices/configurations"
+import { MediaTypeFilter, matchesMediaType } from "./mediaTypeFilter"
 
 
 import { FolderCopyTwoTone, FolderOpen, Pause, PlayArrow } from '@mui/icons-material';
@@ -21,14 +22,10 @@ export const GridIMGs = (() => {
     const dispatch = useDispatch<any>();
 
     const config = useSelector(configurationsSelector)
-    const medias = useSelector(selectMedias).filter(m => !m.deleted)
-        .filter(m => {
-            if (!config.mediaType) return true;
-            if (config.mediaType === "gif") return m.mime.includes("gif");
-            if (config.mediaType === "video") return m.mime.includes("video");
-            if (config.mediaType === "image") return m.mime.includes("image") && !m.mime.includes("gif");
-            return true;
-        })
+    // Imported fake items (database import feature) only make sense inside
+    // duplicate groups — the main grid stays a true view of the actual folder.
+    const medias = useSelector(selectMedias).filter(m => !m.deleted && !m.imported)
+        .filter(m => matchesMediaType(m.mime, config.mediaType))
     const currentPage = config.page;
     const setCurrentPage = (page: number) => dispatch(setPage(page));
     const postsPerPage = config.postsPerPage;
@@ -38,35 +35,6 @@ export const GridIMGs = (() => {
     const [speed, setSpeed] = useState(4);
     const [play, setPlay] = useState(true)
     const [scrollIntervalId, setScrollIntervalId] = useState<string | number | NodeJS.Timer | undefined>(undefined);
-
-    const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
-    const openMenu = Boolean(anchorEl);
-
-    const handleClickFilter = (event: React.MouseEvent<HTMLButtonElement>) => {
-        setAnchorEl(event.currentTarget);
-    };
-
-    const handleCloseMenu = () => {
-        setAnchorEl(null);
-    };
-
-    const handleSelectMediaType = (type: 'video' | 'image' | 'gif' | undefined) => {
-        dispatch(setMediaType(type));
-        handleCloseMenu();
-    };
-
-    const getFilterIcon = () => {
-        switch (config.mediaType) {
-            case 'gif':
-                return <Gif fontSize="medium" />;
-            case 'video':
-                return <Movie fontSize="medium" />;
-            case 'image':
-                return <Image fontSize="medium" />;
-            default:
-                return <AllInclusive fontSize="medium" />;
-        }
-    };
 
     const stepSpeed = 1500
     const inputRef = useRef<HTMLInputElement | null>(null);
@@ -331,13 +299,13 @@ export const GridIMGs = (() => {
                 <IconButton onClick={() => setCurrentPage(currentPage + 1)} ><KeyboardArrowRight fontSize="small" /></IconButton>
                 <IconButton onClick={() => setCurrentPage(qtdPages)} ><KeyboardDoubleArrowRight fontSize="small" /></IconButton>
 
+                <div className="spacer" />
 
                 <IconButton className="buttonControl" onClick={() => selectAll()}><RadioButtonChecked /></IconButton>
                 <IconButton className="buttonControl" onClick={() => unselectAllSelectAll()}><RadioButtonUnchecked /></IconButton>
 
-                <div className="spacer" />
 
-                <Folders />
+                <Folders screenMedias={mediaSliced} />
                 <div className="buttons">
                     <IconButton className="buttonControl" onClick={() => openDiretory()}><FolderOpen /></IconButton>
                     <IconButton className="buttonControl" onClick={() => openDiretoryRecursive()}><FolderCopyTwoTone /></IconButton>
@@ -353,76 +321,14 @@ export const GridIMGs = (() => {
                         shiftSelect={shiftSelect}
                         shiftControlSelect={shiftControlSelect}
                         handleOpenPreview={handleOpenPreview}
+                        isLastSeen={lastZoom?.id === media.id}
                     />)
                     : <NoMediaFound>No Media</NoMediaFound>
                 }
 
 
             </ImgGrid>
-            <FilterBar>
-                <IconButton 
-                    onClick={handleClickFilter} 
-                    color={config.mediaType ? "primary" : "default"}
-                    title={`Filter: ${config.mediaType || 'All'}`}
-                >
-                    {getFilterIcon()}
-                </IconButton>
-            </FilterBar>
-            <Menu
-                anchorEl={anchorEl}
-                open={openMenu}
-                onClose={handleCloseMenu}
-                sx={{ zIndex: 1001 }}
-                anchorOrigin={{
-                    vertical: 'top',
-                    horizontal: 'left',
-                }}
-                transformOrigin={{
-                    vertical: 'bottom',
-                    horizontal: 'right',
-                }}
-                slotProps={{
-                    paper: {
-                        sx: {
-                            background: '#1e222b',
-                            border: '1px solid rgba(255, 255, 255, 0.1)',
-                            color: '#fff',
-                            '& .MuiMenuItem-root': {
-                                gap: '10px',
-                                padding: '8px 16px',
-                                '&:hover': {
-                                    background: 'rgba(255, 255, 255, 0.08)',
-                                },
-                                '&.Mui-selected': {
-                                    background: 'rgba(25, 118, 210, 0.3)',
-                                    '&:hover': {
-                                        background: 'rgba(25, 118, 210, 0.4)',
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }}
-                >
-                <MenuItem selected={config.mediaType === undefined} onClick={() => handleSelectMediaType(undefined)}>
-                    <ListItemIcon><AllInclusive style={{ color: '#fff' }} /></ListItemIcon>
-                    <ListItemText>All</ListItemText>
-                </MenuItem>
-                <MenuItem selected={config.mediaType === 'gif'} onClick={() => handleSelectMediaType('gif')}>
-                    <ListItemIcon><Gif style={{ color: '#fff' }} /></ListItemIcon>
-                    <ListItemText>GIF</ListItemText>
-                </MenuItem>
-                <MenuItem selected={config.mediaType === 'video'} onClick={() => handleSelectMediaType('video')}>
-                    <ListItemIcon><Movie style={{ color: '#fff' }} /></ListItemIcon>
-                    <ListItemText>Video</ListItemText>
-                </MenuItem>
-                <MenuItem selected={config.mediaType === 'image'} onClick={() => handleSelectMediaType('image')}>
-                    <ListItemIcon><Image style={{ color: '#fff' }} /></ListItemIcon>
-                    <ListItemText>Image</ListItemText>
-                </MenuItem>
-            </Menu>
-
-
+            <MediaTypeFilter />
 
                     {lastZoom && <ModalZoom mediaWithPreview={lastZoom} handleExternalClose={handleClose} openModal={open} ref={modalZoomRefMethods}
                         onPrev={() => {
