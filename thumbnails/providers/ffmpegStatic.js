@@ -56,12 +56,13 @@ module.exports = {
 
     isAvailable: () => Boolean(ffmpegPath && fs.existsSync(ffmpegPath)),
 
-    // Seeks to 10% of the video's duration so the thumbnail isn't a black/title
-    // frame from the very start. Videos whose duration can't be probed, or that
-    // are shorter than that offset yields no frame, fall back to no seek at all.
+    // Seeks to 90% of the video's duration (10% before the end) so the
+    // thumbnail isn't a black/title frame from the very start. Videos whose
+    // duration can't be probed, or where that offset yields no frame, fall
+    // back to no seek at all.
     generate: async (input, output) => {
         const duration = await getDuration(input);
-        const seek = duration ? duration * 0.1 : 0;
+        const seek = duration ? duration * 0.9 : 0;
         await run(argsFor(input, output, seek));
         if (!fs.existsSync(output)) {
             await run(argsFor(input, output, 0));
@@ -70,7 +71,7 @@ module.exports = {
 
     generateSync: (input, output) => {
         const duration = getDurationSync(input);
-        const seek = duration ? duration * 0.1 : 0;
+        const seek = duration ? duration * 0.9 : 0;
         execFileSync(ffmpegPath, argsFor(input, output, seek), { encoding: "UTF-8" });
         if (!fs.existsSync(output)) {
             execFileSync(ffmpegPath, argsFor(input, output, 0), { encoding: "UTF-8" });
