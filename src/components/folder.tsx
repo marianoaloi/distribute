@@ -18,6 +18,24 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
     const [onlyCopy, setOnlyCopy] = React.useState((mediaOnlyCopy === undefined))
     const [openSplitMove, setOpenSplitMove] = React.useState(false);
 
+    const [ctrlPressed, setCtrlPressed] = React.useState(false);
+
+    React.useEffect(() => {
+        const onKeyDown = (ev: KeyboardEvent) => { if (ev.key === "Control") setCtrlPressed(true) }
+        const onKeyUp = (ev: KeyboardEvent) => { if (ev.key === "Control") setCtrlPressed(false) }
+        // Alt-tab/Ctrl-tab steals focus before keyup lands, which would leave
+        // the icon stuck gold long after Ctrl was released.
+        const onBlur = () => setCtrlPressed(false)
+        window.addEventListener("keydown", onKeyDown)
+        window.addEventListener("keyup", onKeyUp)
+        window.addEventListener("blur", onBlur)
+        return () => {
+            window.removeEventListener("keydown", onKeyDown)
+            window.removeEventListener("keyup", onKeyUp)
+            window.removeEventListener("blur", onBlur)
+        }
+    }, [])
+
     // Remembered in redux (not local state) so the same checked/unchecked
     // destinations carry over the next time this dialog is opened - the
     // whole point being to repeat the same split-move strategy without
@@ -46,7 +64,11 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
     const uncheckedCount = splitScreenMedias.filter(m => !m.checked && !m.deleted && !m.imported).length
     const checkedCount = splitScreenMedias.filter(m => m.checked && !m.deleted && !m.imported).length
 
-    const handleClickOpenSplitMove = () => {
+    const handleClickOpenSplitMove = (ev: React.MouseEvent) => {
+        if (ev.ctrlKey && uncheckedDestFolder && checkedDestFolder) {
+            handleSplitMove();
+            return;
+        }
         setOpenSplitMove(true);
     };
 
@@ -149,7 +171,7 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
         </AddFolder>
         {!mediaOnlyCopy && screenMedias &&
             <AddFolder onClick={handleClickOpenSplitMove} title="Move checked and unchecked media to two different folders in one action">
-                <CallSplit titleAccess="Move checked/unchecked to different folders" />
+                <CallSplit titleAccess="Move checked/unchecked to different folders" sx={ctrlPressed ? { color: "gold" } : undefined} />
             </AddFolder>
         }
         {mediaOnlyCopy ?
