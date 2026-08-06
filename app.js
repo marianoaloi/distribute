@@ -228,10 +228,29 @@ ipcMain.on("findIndexDuplicates", findIndexDuplicates)
 let detectionStopRequested = false;
 ipcMain.on("stopDetection", () => { detectionStopRequested = true; });
 
+// Lets the user pick any .onnx model file instead of the old fixed
+// ./xcxv/best.onnx path. Sends the chosen path (or the still-unset current
+// one, if canceled) back so the renderer can reflect it and gate the run button.
+ipcMain.on("chooseOnnxModel", () => {
+    const options = {
+        properties: ["openFile"],
+        title: "Choose ONNX model for object detection",
+        filters: [{ name: "ONNX model", extensions: ["onnx"] }],
+    };
+    dialog.showOpenDialog(options).then(file => {
+        if (!file.canceled && file.filePaths[0]) {
+            onnxDetector.setModelPath(file.filePaths[0]);
+        }
+        mainWindow.webContents.send("onnxModelChosen", { path: onnxDetector.getModelPath() });
+    }).catch(err => {
+        console.error(err);
+    });
+});
+
 ipcMain.on("detectObjects", async (event, data) => {
     const medias = (data && data.medias) || [];
     if (!onnxDetector.isAvailable()) {
-        mainWindow.webContents.send("detectionsComplete", { error: "Model not found in ./xcxv" });
+        mainWindow.webContents.send("detectionsComplete", { error: "No ONNX model selected - choose a model file first" });
         return;
     }
     detectionStopRequested = false;

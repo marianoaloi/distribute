@@ -4,9 +4,9 @@ import { startDetecting } from "./detections.reduce";
 const isElectronApp = typeof window !== 'undefined' && !!window.electron;
 const ipcRender = isElectronApp ? window.electron.ipcRenderer : undefined;
 
-// Runs ONNX object detection (objectDetection/onnxDetector.js, model in
-// ./xcxv) over the given media, streaming one result back per item via the
-// 'detectionFound' listener registered in media/electron.action.ts.
+// Runs ONNX object detection (objectDetection/onnxDetector.js, model chosen
+// via ChooseOnnxModel below) over the given media, streaming one result back
+// per item via the 'detectionFound' listener registered in media/electron.action.ts.
 export const RunDetection = (medias: Media[]) => {
 
     if (!isElectronApp) {
@@ -19,6 +19,23 @@ export const RunDetection = (medias: Media[]) => {
             ipcRender.send('detectObjects', {
                 medias: medias.map(m => ({ id: m.id, media: m.media }))
             });
+        }
+    }
+}
+
+// Opens a native file dialog (main process) so the user can point detection
+// at any .onnx model file instead of the old hardcoded ./xcxv/best.onnx path.
+// The chosen path (or the still-unset current one, if canceled) comes back
+// through the 'onnxModelChosen' listener in media/electron.action.ts.
+export const ChooseOnnxModel = () => {
+
+    if (!isElectronApp) {
+        return (dispatch: any) => { }
+    }
+
+    return (dispatch: any) => {
+        if (ipcRender) {
+            ipcRender.send('chooseOnnxModel', undefined);
         }
     }
 }

@@ -20,6 +20,7 @@ const ipc = {
             'rebuildIndex',
             'detectObjects',
             'stopDetection',
+            'chooseOnnxModel',
             'exportDatabase',
             'importDatabase',
         ],
@@ -59,6 +60,7 @@ const ipc = {
             'detectionFound',
             'detectionProgress',
             'detectionsComplete',
+            'onnxModelChosen',
             'databaseExported',
             'databaseImported',
         ]

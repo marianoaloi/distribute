@@ -1,29 +1,41 @@
-const path = require("path");
 const fs = require("fs");
 const { Jimp } = require("jimp");
 const ort = require("onnxruntime-node");
 
-const MODEL_PATH = path.join(__dirname, "..", "xcxv", "best.onnx");
+// Set by the renderer's "choose model" file dialog (see app.js's
+// chooseOnnxModel handler) - no longer a fixed path under ./xcxv.
+let modelPath = null;
 
 const SIZE = 640;
 const CONF = 0.25;
 const IOU = 0.45;
 
 // Fill in as the real class names are decided - falls back to "class N" for
-// any index left blank. The model itself (xcxv/best.onnx) is the source of
-// truth for how many classes there are (see numClasses in decode()), so this
-// list can grow later without touching the detection code.
+// any index left blank. The chosen model itself is the source of truth for
+// how many classes there are (see numClasses in decode()), so this list can
+// grow later without touching the detection code.
 const CLASS_NAMES = [];
 
 const classNameFor = (classId) => CLASS_NAMES[classId] || `class ${classId}`;
 
 let sessionPromise = null;
+
+// Resets the cached session so the next detect() call loads the newly
+// picked model instead of reusing one built from the old path.
+const setModelPath = (newPath) => {
+    if (newPath === modelPath) return;
+    modelPath = newPath;
+    sessionPromise = null;
+};
+
+const getModelPath = () => modelPath;
+
 const getSession = () => {
-    if (!sessionPromise) sessionPromise = ort.InferenceSession.create(MODEL_PATH);
+    if (!sessionPromise) sessionPromise = ort.InferenceSession.create(modelPath);
     return sessionPromise;
 };
 
-const isAvailable = () => fs.existsSync(MODEL_PATH);
+const isAvailable = () => Boolean(modelPath && fs.existsSync(modelPath));
 
 // Resizes onto a centered SIZE x SIZE canvas preserving aspect ratio (the
 // same letterbox preprocessing Ultralytics' export expects), returning the
@@ -131,4 +143,4 @@ const detect = async (imagePath) => {
     return decode(output.data, output.dims, ctx);
 };
 
-module.exports = { detect, isAvailable, SIZE, CONF, IOU, CLASS_NAMES };
+module.exports = { detect, isAvailable, setModelPath, getModelPath, SIZE, CONF, IOU, CLASS_NAMES };

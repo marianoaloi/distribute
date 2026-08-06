@@ -20,6 +20,7 @@ interface DetectionsState {
     detecting: boolean
     detectionError: string | null
     progress: DetectionProgress | null
+    modelPath: string | null
 }
 
 const initialState: DetectionsState = {
@@ -27,6 +28,7 @@ const initialState: DetectionsState = {
     detecting: false,
     detectionError: null,
     progress: null,
+    modelPath: null,
 }
 
 const detectionsSlice = createSlice({
@@ -57,8 +59,12 @@ const detectionsSlice = createSlice({
             ...state,
             byId: {},
         }),
+        setModelPath: (state, action) => ({
+            ...state,
+            modelPath: action.payload,
+        }),
     }
 })
 
-export const { startDetecting, setDetectionResult, setDetectionProgress, detectingFinished, clearDetections } = detectionsSlice.actions;
+export const { startDetecting, setDetectionResult, setDetectionProgress, detectingFinished, clearDetections, setModelPath } = detectionsSlice.actions;
 export default detectionsSlice.reducer;
