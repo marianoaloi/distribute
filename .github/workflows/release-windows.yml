@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - master
+  pull_request:
 
 jobs:
   build-and-release:
@@ -23,18 +24,6 @@ jobs:
 
       - name: Install dependencies
         run: npm install --force
-
-      - name: Evolve version
-        run: npm version minor --no-git-tag-version
-
-      - name: Commit version
-        run: git commit -am "Evolve version to $(node -p "require('./package.json').version")"
-
-      - name: Push changes
-        uses: ad-m/github-push-action@v0.6.0
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          branch: master
 
       - name: Build Windows executable
         run: npm run execWindows
