@@ -30,6 +30,12 @@ jobs:
       - name: Commit version
         run: git commit -am "Evolve version to $(node -p "require('./package.json').version")"
 
+      - name: Push changes
+        uses: ad-m/github-push-action@v0.6.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: master
+
       - name: Build Windows executable
         run: npm run execWindows
         env:
