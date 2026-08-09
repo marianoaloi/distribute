@@ -549,8 +549,9 @@ const loadRecursive = async () => {
     };
     if (fileGlobal) options["defaultPath"] = fileGlobal;
     dialog.showOpenDialog(options).then(file => {
-        if (!file.canceled) {
+        if (!file.canceled) {            
             setActiveFolder(file.filePaths[0]);
+            fileGlobal = path.join(file.filePaths[0], "tmp");
             compareImgStore.closeConnection();
             openfileRecursive(file.filePaths[0]);
 
