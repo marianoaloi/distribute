@@ -86,3 +86,19 @@ export const LoadDetectionClasses = () => {
         }
     }
 }
+
+// index.db is per-folder, so persisted detections must be re-hydrated whenever
+// a folder finishes loading - otherwise the class filter only sees media the
+// user re-ran detection on in this session.
+export const LoadDetections = () => {
+
+    if (!isElectronApp) {
+        return (dispatch: any) => { }
+    }
+
+    return (dispatch: any) => {
+        if (ipcRender) {
+            ipcRender.send('loadDetections', undefined);
+        }
+    }
+}

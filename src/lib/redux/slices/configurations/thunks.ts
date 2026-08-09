@@ -1,4 +1,5 @@
 import { createAction } from "@reduxjs/toolkit";
+import { ClassFilter } from "../../../../entity/FilterMedia";
 
 
 export const zoomIn = createAction(
@@ -13,6 +14,15 @@ export const setMediaType = createAction(
     'config/setMediaType',
     (mediaType: 'video' | 'image' | 'gif' | undefined) => ({
         payload: mediaType
+    })
+)
+
+// Boolean (AND/OR/NOT) filter over detected class names, applied by gridImg
+// before pagination. An empty array is "no filter" - that is what Reset sends.
+export const setClassFilter = createAction(
+    'config/setClassFilter',
+    (filter: ClassFilter) => ({
+        payload: filter
     })
 )
 

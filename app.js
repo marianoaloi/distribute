@@ -322,6 +322,28 @@ ipcMain.on("loadDetectionClasses", () => {
     }
 });
 
+// Hydrates every persisted detection for the current folder into the renderer
+// in one message, so the grid's class filter works on a freshly opened folder
+// without the user having to press Play again. index.db is per-folder, so no
+// id list is needed - the whole media_detection table is the current media.
+ipcMain.on("loadDetections", () => {
+    try {
+        MediaStore.ensureReady();
+        const rows = MediaStore.getAllDetections();
+        const byId = new Map();
+        for (const row of rows) {
+            const { mediaId, ...box } = row;
+            if (!byId.has(mediaId)) byId.set(mediaId, []);
+            byId.get(mediaId).push(box);
+        }
+        const items = [...byId].map(([id, boxes]) => ({ id, boxes }));
+        mainWindow.webContents.send("detectionsLoaded", { items });
+    } catch (error) {
+        console.error("loadDetections failed", error);
+        mainWindow.webContents.send("detectionsLoaded", { items: [], error: error.message });
+    }
+});
+
 // Wipes the (possibly corrupted) compareImg sqlite index and re-indexes the
 // media the renderer already has loaded in redux, so the user doesn't need
 // to re-open/re-scan the folder to recover from a corrupted index.db.
@@ -390,6 +412,21 @@ ipcMain.on("verifyOpen", async () => {
         }
 })
 
+// Reports whether a single media's file operation actually finished on
+// disk, so the renderer can mark it moved/deleted only once that's true
+// instead of assuming success the moment the button was clicked (a failed
+// move used to silently vanish the item from the grid while the file stayed
+// put in the source folder).
+const reportFileProcessed = (media, onlyCopy, error) => {
+    if (error) console.error(onlyCopy ? "Copy failed for" : "Move failed for", media.path, "-", error);
+    mainWindow.webContents.send("fileProcessed", {
+        id: media.id,
+        onlyCopy,
+        success: !error,
+        error: error ? error.message : undefined,
+    });
+};
+
 const moveFile = (bol, dest, onlyCopy, data) => {
     if (process.env.FixFiles) {
         console.log("##MOVEFILE", dest, data.filter(f => f.checked === bol).map(f => f.path).join(","));
@@ -405,33 +442,34 @@ const moveFile = (bol, dest, onlyCopy, data) => {
         if (!fs.existsSync(completeDestine)) {
             fs.mkdirSync(completeDestine)
         }
-        if (fs.existsSync(media.path)) {
-            const destination = path.join(completeDestine, path.basename(media.path));
-            if (onlyCopy) {
-                fs.copyFile(media.path, destination, (err) => {
-                    if (err) console.error("Copy failed for", media.path, "-", err);
-                })
-            } else {
-                fs.rename(media.path, destination, (err) => {
-                    if (!err) return;
-                    if (err.code !== "EXDEV") {
-                        console.error("Move failed for", media.path, "-", err);
+        if (!fs.existsSync(media.path)) {
+            reportFileProcessed(media, onlyCopy, new Error("Source file no longer exists"));
+            return;
+        }
+        const destination = path.join(completeDestine, path.basename(media.path));
+        if (onlyCopy) {
+            fs.copyFile(media.path, destination, (err) => {
+                reportFileProcessed(media, onlyCopy, err);
+            })
+        } else {
+            fs.rename(media.path, destination, (err) => {
+                if (!err) { reportFileProcessed(media, onlyCopy); return; }
+                if (err.code !== "EXDEV") {
+                    reportFileProcessed(media, onlyCopy, err);
+                    return;
+                }
+                // rename cannot cross volumes: fall back to copy + delete
+                fs.copyFile(media.path, destination, (copyErr) => {
+                    if (copyErr) {
+                        reportFileProcessed(media, onlyCopy, copyErr);
                         return;
                     }
-                    // rename cannot cross volumes: fall back to copy + delete
-                    fs.copyFile(media.path, destination, (copyErr) => {
-                        if (copyErr) {
-                            console.error("Move (copy fallback) failed for", media.path, "-", copyErr);
-                            return;
-                        }
-                        fs.unlink(media.path, (unlinkErr) => {
-                            if (unlinkErr) console.error("Move (source cleanup) failed for", media.path, "-", unlinkErr);
-                        });
+                    fs.unlink(media.path, (unlinkErr) => {
+                        reportFileProcessed(media, onlyCopy, unlinkErr);
                     });
-                })
-            }
+                });
+            })
         }
-        // mainWindow.ipcMain.send("delete", media)
     });
 }
 const openfile = () => {
@@ -529,7 +567,7 @@ const openfileRecursive = (folderPath) => {
     fs.readdir(folderPath, "utf8", (err, data) => {
         if (err) { console.error(err); return; }
         let qtdFiles = data.map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isFile()).length
-        data.map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isDirectory()).forEach(item => openfileRecursive(item))
+        data.filter(item => item !== "tmp").map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isDirectory()).forEach(item => openfileRecursive(item))
 
         if (qtdFiles > 0)
             mainWindow.webContents.send("loadMedias",

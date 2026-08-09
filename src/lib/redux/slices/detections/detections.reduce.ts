@@ -47,6 +47,17 @@ const detectionsSlice = createSlice({
             ...state,
             byId: { ...state.byId, [action.payload.id]: action.payload.boxes },
         }),
+        // Bulk hydration from the folder's persisted media_detection rows. Merges so
+        // results streamed by an in-flight detection run are not clobbered.
+        mergeDetections: (state, action) => ({
+            ...state,
+            byId: {
+                ...state.byId,
+                ...Object.fromEntries(
+                    action.payload.items.map((item: { id: string, boxes: DetectionBox[] }) => [item.id, item.boxes])
+                ),
+            },
+        }),
         setDetectionProgress: (state, action) => ({
             ...state,
             progress: action.payload,
@@ -72,5 +83,5 @@ const detectionsSlice = createSlice({
     }
 })
 
-export const { startDetecting, setDetectionResult, setDetectionProgress, detectingFinished, clearDetections, setModelPath, setDetectionClasses } = detectionsSlice.actions;
+export const { startDetecting, setDetectionResult, mergeDetections, setDetectionProgress, detectingFinished, clearDetections, setModelPath, setDetectionClasses } = detectionsSlice.actions;
 export default detectionsSlice.reducer;

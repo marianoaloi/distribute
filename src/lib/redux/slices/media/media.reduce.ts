@@ -61,6 +61,17 @@ const itemsSlice = createSlice({
             )
             return result;
         },
+        // Only dispatched once app.js's "fileProcessed" event confirms the
+        // physical move actually succeeded - never on click, so a failed
+        // move (permissions, disk full, locked file) leaves the item visible
+        // instead of silently vanishing from the grid while it's still sitting
+        // in the source folder.
+        confirmFileMoved: (state, action) => ({
+            ...state,
+            medias: state.medias.map(
+                media => media.id === action.payload.id ? { ...media, deleted: true, checked: false } : media
+            )
+        }),
 
         orderByName:(state) => {
             state.medias.sort((a:Media,b:Media) => a.filename.localeCompare(b.filename))
@@ -96,7 +107,7 @@ export const mediasApi = createApi({
 }); 
 
 
-export const { populateArray, updateArrayItem, updateManyArrayItem, addOnceMedia , addListinActualArray, purgeArray ,orderByName, orderBySize, orderBySizeInverted, orderByFolder} = itemsSlice.actions;
+export const { populateArray, updateArrayItem, updateManyArrayItem, confirmFileMoved, addOnceMedia , addListinActualArray, purgeArray ,orderByName, orderBySize, orderBySizeInverted, orderByFolder} = itemsSlice.actions;
 export default itemsSlice.reducer;
 
 // Export hooks for usage in functional components, which are

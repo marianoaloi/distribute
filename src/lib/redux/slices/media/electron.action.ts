@@ -1,10 +1,10 @@
-import { addListinActualArray, addOnceMedia, orderByFolder, orderByName, orderBySize, orderBySizeInverted, populateArray, purgeArray, updateArrayItem } from './media.reduce';
+import { addListinActualArray, addOnceMedia, confirmFileMoved, orderByFolder, orderByName, orderBySize, orderBySizeInverted, populateArray, purgeArray, updateArrayItem } from './media.reduce';
 import { example } from './populateExample';
 import { Media } from '../../../../entity/Media';
 import { addFolder } from '../folders';
 import { mediaLoadComplete, mediaLoadStart, zoomIn, zoomOut } from '../configurations';
 import { setDuplicateGroups, indexRebuildFinished, setIndexRebuildProgress, databaseExportFinished, databaseImportFinished } from '../duplicates';
-import { setDetectionResult, setDetectionProgress, detectingFinished, setModelPath, setDetectionClasses } from '../detections';
+import { setDetectionResult, mergeDetections, setDetectionProgress, detectingFinished, setModelPath, setDetectionClasses } from '../detections';
 import { FileDTO } from '../../../../entity/FileDTO';
 
 
@@ -24,7 +24,7 @@ export const ElectronConnection = () => {
 
     return (dispatch: any) => {
         if (ipcRender) {
-            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete', 'onnxModelChosen', 'databaseExported', 'databaseImported', 'detectionClassesLoaded'];
+            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete', 'onnxModelChosen', 'databaseExported', 'databaseImported', 'detectionClassesLoaded', 'detectionsLoaded', 'fileProcessed'];
             channels.forEach(ch => ipcRender.removeAllListeners(ch));
 
             ipcRender.on('directoryOpen', (e: any, args: any) => {
@@ -56,6 +56,18 @@ export const ElectronConnection = () => {
                 med.deleted = true
                 dispatch(updateArrayItem(med))
 
+            })
+            // app.js's moveFile reports this once the physical copy/rename
+            // (or the EXDEV copy+unlink fallback) actually finishes - only a
+            // successful MOVE (never a copy) hides the item, and only after
+            // the fact, so a failed move leaves it visible instead of the
+            // grid lying about a file that's still in the source folder.
+            ipcRender.on('fileProcessed', (e: any, result: { id: string, onlyCopy?: boolean, success: boolean, error?: string }) => {
+                if (result.success && !result.onlyCopy) {
+                    dispatch(confirmFileMoved({ id: result.id }))
+                } else if (!result.success) {
+                    console.error("File operation failed for media", result.id, result.error)
+                }
             })
             ipcRender.on('zoom', (e: any, zoom: number) => {
 
@@ -108,6 +120,9 @@ export const ElectronConnection = () => {
             })
             ipcRender.on('detectionClassesLoaded', (e: any, result: { names: string[] }) => {
                 dispatch(setDetectionClasses(result.names))
+            })
+            ipcRender.on('detectionsLoaded', (e: any, result: { items: { id: string, boxes: any[] }[] }) => {
+                dispatch(mergeDetections(result))
             })
             ipcRender.on('databaseExported', (e: any, result: { success: boolean, path?: string, error?: string, canceled?: boolean }) => {
                 dispatch(databaseExportFinished({

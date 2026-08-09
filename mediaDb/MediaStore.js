@@ -129,6 +129,16 @@ const getDetections = (mediaId) => {
     return db.prepare("SELECT classId, className, score, x, y, w, h, modelPath FROM media_detection WHERE mediaId = ?").all(mediaId);
 };
 
+// Every stored detection for the folder's index.db in one pass - index.db is
+// per-folder, so "all rows" is exactly the media the renderer has loaded.
+// Ordered by mediaId so app.js can group with a single linear scan.
+const getAllDetections = () => {
+    const db = HashStore.getDb();
+    return db.prepare(
+        "SELECT mediaId, classId, className, score, x, y, w, h, modelPath FROM media_detection ORDER BY mediaId"
+    ).all();
+};
+
 module.exports = {
     ensureReady,
     upsertMedia,
@@ -141,4 +151,5 @@ module.exports = {
     saveDetectionClasses,
     replaceDetections,
     getDetections,
+    getAllDetections,
 };

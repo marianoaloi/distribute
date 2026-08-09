@@ -36,9 +36,6 @@ tmp/**
 **.tgz
 .swarm/**
 ruvector.db
-xcxv/**.onnx
-xcxv/**.data
-xcxv/**.pt
-xcxv/spewc.md
+xcxv/** 
 agentdb.rvf
 agentdb.rvf.lock

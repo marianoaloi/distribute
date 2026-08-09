@@ -25,6 +25,7 @@ const ipc = {
             'importDatabase',
             'saveDetectionClasses',
             'loadDetectionClasses',
+            'loadDetections',
         ],
         // From main to render.
         'receive': ['directoryOpen',
@@ -66,6 +67,8 @@ const ipc = {
             'databaseExported',
             'databaseImported',
             'detectionClassesLoaded',
+            'detectionsLoaded',
+            'fileProcessed',
         ]
     }
 };
