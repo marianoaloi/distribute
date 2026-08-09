@@ -256,19 +256,33 @@ ipcMain.on("detectObjects", async (event, data) => {
     }
     detectionStopRequested = false;
     let processed = 0;
+    // A media already has a stored result for the *current* class list when
+    // its snapshot matches classesSnapshot below - skip re-running the model
+    // on it and just replay what's already in media_detection. Any class
+    // list edit changes the snapshot, so a redo is forced for everyone again.
+    const classesSnapshot = onnxDetector.getClassNames().join(",");
+    const mediaState = MediaStore.findMediaByIds(medias.map((media) => media.id));
     for (const media of medias) {
         if (detectionStopRequested) break;
-        try {
-            const boxes = await onnxDetector.detect(media.media);
+        const state = mediaState.get(media.id);
+        const alreadyRecognized = Boolean(state && state.detectionAt && state.detectionClasses === classesSnapshot);
+        if (alreadyRecognized) {
+            const boxes = MediaStore.getDetections(media.id);
             mainWindow.webContents.send("detectionFound", { id: media.id, boxes });
+        } else {
             try {
-                MediaStore.replaceDetections(media.id, boxes, onnxDetector.getModelPath());
+                const boxes = await onnxDetector.detect(media.media);
+                mainWindow.webContents.send("detectionFound", { id: media.id, boxes });
+                try {
+                    MediaStore.replaceDetections(media.id, boxes, onnxDetector.getModelPath());
+                    MediaStore.setDetectionState(media.id, classesSnapshot);
+                } catch (error) {
+                    console.error("Persisting detections failed for", media.media, error);
+                }
             } catch (error) {
-                console.error("Persisting detections failed for", media.media, error);
+                console.error("detectObjects failed for", media.media, error);
+                mainWindow.webContents.send("detectionFound", { id: media.id, boxes: [], error: error.message });
             }
-        } catch (error) {
-            console.error("detectObjects failed for", media.media, error);
-            mainWindow.webContents.send("detectionFound", { id: media.id, boxes: [], error: error.message });
         }
         processed++;
         mainWindow.webContents.send("detectionProgress", { processed, total: medias.length });

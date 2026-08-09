@@ -47,6 +47,15 @@ const setThumbPath = (id, thumbPath) => {
     db.prepare("UPDATE media SET thumbPath = ?, updatedAt = ? WHERE id = ?").run(thumbPath, Date.now(), id);
 };
 
+// Records the class-name snapshot a media was just detected against, so a
+// later detectObjects run can tell "already recognized with today's classes"
+// (skip) apart from "recognized under a class list that has since changed"
+// (redo). No-op update if the media row doesn't exist (e.g. an imported item).
+const setDetectionState = (id, classesSnapshot) => {
+    const db = HashStore.getDb();
+    db.prepare("UPDATE media SET detectionClasses = ?, detectionAt = ? WHERE id = ?").run(classesSnapshot, Date.now(), id);
+};
+
 // SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 999, so ids are looked up in
 // chunks. The only string interpolation is the placeholder list, built purely
 // from chunk.length - every id value itself is bound, never concatenated.
@@ -60,7 +69,7 @@ const findMediaByIds = (ids) => {
         if (chunk.length === 0) continue;
         const placeholders = chunk.map(() => "?").join(",");
         const rows = db.prepare(
-            `SELECT id, localPath, contentMd5, size, mtimeMs, hasAudio, thumbPath FROM media WHERE id IN (${placeholders})`
+            `SELECT id, localPath, contentMd5, size, mtimeMs, hasAudio, thumbPath, detectionClasses, detectionAt FROM media WHERE id IN (${placeholders})`
         ).all(...chunk);
         for (const row of rows) result.set(row.id, row);
     }
@@ -125,6 +134,7 @@ module.exports = {
     upsertMedia,
     setContentMd5,
     setThumbPath,
+    setDetectionState,
     findMediaByIds,
     mediaMissingContentMd5,
     getDetectionClasses,

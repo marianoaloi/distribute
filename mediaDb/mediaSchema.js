@@ -1,5 +1,13 @@
-// DDL only - requires nothing, so HashStore can require this without a cycle
-// (HashStore -> mediaSchema, MediaStore -> HashStore).
+// Duplicated from HashStore.js rather than imported: this file is DDL-only
+// and must stay requirable with no dependencies, so HashStore can require it
+// without a cycle (HashStore -> mediaSchema, MediaStore -> HashStore).
+const ensureColumn = (database, table, name, type) => {
+    const columns = database.pragma(`table_info(${table})`).map((c) => c.name);
+    if (!columns.includes(name)) {
+        database.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+    }
+};
+
 const createMediaSchema = (database) => {
     database.exec(`
         CREATE TABLE IF NOT EXISTS media (
@@ -18,6 +26,14 @@ const createMediaSchema = (database) => {
     `);
     database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_media_localPath ON media(localPath);");
     database.exec("CREATE INDEX IF NOT EXISTS idx_media_contentMd5 ON media(contentMd5);");
+
+    // Snapshot of the detection_class names active the last time this media
+    // was run through the detector, so detectObjects can skip re-running a
+    // media whose stored detections still match the currently-configured
+    // classes - only a changed class list (or a never-run media) forces
+    // a redo.
+    ensureColumn(database, "media", "detectionClasses", "TEXT");
+    ensureColumn(database, "media", "detectionAt", "INTEGER");
 
     // Index-only addition to the existing (frozen, see compareImg/dbImport.js)
     // items table: actualPosition already holds the media id.
