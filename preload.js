@@ -23,6 +23,8 @@ const ipc = {
             'chooseOnnxModel',
             'exportDatabase',
             'importDatabase',
+            'saveDetectionClasses',
+            'loadDetectionClasses',
         ],
         // From main to render.
         'receive': ['directoryOpen',
@@ -63,6 +65,7 @@ const ipc = {
             'onnxModelChosen',
             'databaseExported',
             'databaseImported',
+            'detectionClassesLoaded',
         ]
     }
 };

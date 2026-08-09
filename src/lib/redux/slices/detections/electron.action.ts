@@ -55,3 +55,34 @@ export const StopDetection = () => {
         }
     }
 }
+
+// Sends the raw, unsplit comma-separated string typed by the user — the main
+// process owns the split/trim/persist so the reply (detectionClassesLoaded,
+// handled in media/electron.action.ts) can never drift from the database.
+export const SaveDetectionClasses = (classes: string) => {
+
+    if (!isElectronApp) {
+        return (dispatch: any) => { }
+    }
+
+    return (dispatch: any) => {
+        if (ipcRender) {
+            ipcRender.send('saveDetectionClasses', { classes });
+        }
+    }
+}
+
+// index.db is per-folder, so this must be re-dispatched whenever a folder
+// finishes loading, not only on mount.
+export const LoadDetectionClasses = () => {
+
+    if (!isElectronApp) {
+        return (dispatch: any) => { }
+    }
+
+    return (dispatch: any) => {
+        if (ipcRender) {
+            ipcRender.send('loadDetectionClasses', undefined);
+        }
+    }
+}

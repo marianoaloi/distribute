@@ -1,0 +1,55 @@
+const { fileMd5, FILE_HASH_CONCURRENCY } = require("../hashing/fileHash");
+const MediaStore = require("./MediaStore");
+const ThumbnailService = require("../thumbnails/ThumbnailService");
+
+const BATCH_SIZE = 200;
+
+// Fire-and-forget pass that fills in media.contentMd5 for rows that don't
+// have it yet, off the folder-load critical path. Every file is hashed
+// exactly once, ever - later loads just read the memoised value.
+const backfillContentMd5 = async () => {
+    try {
+        MediaStore.ensureReady();
+        // Rows that fail (e.g. file deleted mid-scan) stay contentMd5-NULL,
+        // so the next LIMIT query would return the exact same set forever -
+        // stop once a batch makes no progress instead of looping forever.
+        let lastBatchKey = null;
+        for (;;) {
+            const batch = MediaStore.mediaMissingContentMd5(BATCH_SIZE);
+            if (batch.length === 0) break;
+            const batchKey = batch.map((r) => r.id).join(",");
+            if (batchKey === lastBatchKey) break;
+            lastBatchKey = batchKey;
+
+            let cursor = 0;
+            const runWorker = async () => {
+                while (cursor < batch.length) {
+                    const row = batch[cursor++];
+                    try {
+                        const contentMd5 = await fileMd5(row.localPath);
+                        if (!contentMd5) continue;
+                        MediaStore.setContentMd5(row.id, contentMd5);
+                        // Re-home the thumbnail under the contentMd5 name right
+                        // now, not on the next getThumbnail call - otherwise
+                        // the fast path in util.js keeps missing (it looks for
+                        // the contentMd5 name) for one extra load after the
+                        // hash becomes known even though the pixels are
+                        // already cached under the legacy path-hash name.
+                        if (row.kind === "video" || row.kind === "gif") {
+                            const thumbPath = ThumbnailService.adoptThumbnail(row.localPath, contentMd5);
+                            if (thumbPath) MediaStore.setThumbPath(row.id, thumbPath);
+                        }
+                    } catch (error) {
+                        console.error("backfillContentMd5 failed for", row.localPath, "-", error.message);
+                    }
+                }
+            };
+            const workerCount = Math.min(FILE_HASH_CONCURRENCY, batch.length);
+            await Promise.all(Array.from({ length: workerCount }, runWorker));
+        }
+    } catch (error) {
+        console.error("backfillContentMd5 aborted:", error.message);
+    }
+};
+
+module.exports = { backfillContentMd5 };

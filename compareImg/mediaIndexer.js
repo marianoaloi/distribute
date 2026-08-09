@@ -94,7 +94,12 @@ const indexMediaBackground = async (mediaItems, onProgress) => {
     const runWorker = async () => {
         while (cursor < mediaItems.length) {
             const mediaItem = mediaItems[cursor++];
-            if (mediaItem.mime && mediaItem.mime.includes("video")) {
+            if (mediaItem.mime && mediaItem.mime.includes("gif")) {
+                // A gif is many frames like a video, not a single still like
+                // an image - route it through indexVideo before the generic
+                // image/video mime checks below.
+                await indexVideo(mediaItem);
+            } else if (mediaItem.mime && mediaItem.mime.includes("video")) {
                 await indexVideo(mediaItem);
             } else if (mediaItem.mime && mediaItem.mime.includes("image")) {
                 await indexImage(mediaItem);

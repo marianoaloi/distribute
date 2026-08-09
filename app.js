@@ -20,6 +20,7 @@ const mediaIndexer = require("./compareImg/mediaIndexer");
 const dbImport = require("./compareImg/dbImport");
 const { hashFor } = require("./thumbnails/cache");
 const onnxDetector = require("./objectDetection/onnxDetector");
+const MediaStore = require("./mediaDb/MediaStore");
 const transformData = util.transformData;
 const transformDataStreaming = util.transformDataStreaming;
 
@@ -260,6 +261,11 @@ ipcMain.on("detectObjects", async (event, data) => {
         try {
             const boxes = await onnxDetector.detect(media.media);
             mainWindow.webContents.send("detectionFound", { id: media.id, boxes });
+            try {
+                MediaStore.replaceDetections(media.id, boxes, onnxDetector.getModelPath());
+            } catch (error) {
+                console.error("Persisting detections failed for", media.media, error);
+            }
         } catch (error) {
             console.error("detectObjects failed for", media.media, error);
             mainWindow.webContents.send("detectionFound", { id: media.id, boxes: [], error: error.message });
@@ -269,6 +275,38 @@ ipcMain.on("detectObjects", async (event, data) => {
     }
     mainWindow.webContents.send("detectionsComplete", detectionStopRequested ? { stopped: true } : {});
 })
+
+// Persists the user-typed comma-separated class list (mediaDb's
+// detection_class table, per-folder like the rest of index.db) and pushes it
+// into onnxDetector so subsequent detections use the real names instead of
+// "class N". The main process owns the split - the renderer always sends the
+// raw string. detectionClassesLoaded is the reply to both this and
+// loadDetectionClasses, so the UI can never drift from what got persisted.
+ipcMain.on("saveDetectionClasses", (event, data) => {
+    try {
+        const raw = (data && data.classes) || "";
+        const names = String(raw).split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+        MediaStore.ensureReady();
+        MediaStore.saveDetectionClasses(names);
+        onnxDetector.setClassNames(names);
+        mainWindow.webContents.send("detectionClassesLoaded", { names });
+    } catch (error) {
+        console.error("saveDetectionClasses failed", error);
+        mainWindow.webContents.send("detectionClassesLoaded", { names: [], error: error.message });
+    }
+});
+
+ipcMain.on("loadDetectionClasses", () => {
+    try {
+        MediaStore.ensureReady();
+        const names = MediaStore.getDetectionClasses();
+        onnxDetector.setClassNames(names);
+        mainWindow.webContents.send("detectionClassesLoaded", { names });
+    } catch (error) {
+        console.error("loadDetectionClasses failed", error);
+        mainWindow.webContents.send("detectionClassesLoaded", { names: [], error: error.message });
+    }
+});
 
 // Wipes the (possibly corrupted) compareImg sqlite index and re-indexes the
 // media the renderer already has loaded in redux, so the user doesn't need

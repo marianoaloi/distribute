@@ -1,6 +1,7 @@
 const fs = require("fs");
 const Database = require("better-sqlite3");
 const { getDbDir, getDbPath } = require("./cache");
+const { createMediaSchema } = require("../mediaDb/mediaSchema");
 
 // baseGrey (the raw cropped/greyscale pixel buffer) has no index:
 // duplicateFinder.js compares it by pixel distance, not SQL equality, so
@@ -47,6 +48,7 @@ const createSchema = (database) => {
     `);
     ensureColumn(database, "items", "baseGrey", "BLOB");
     database.exec("CREATE INDEX IF NOT EXISTS idx_items_baseMd5 ON items(baseMd5);");
+    createMediaSchema(database);
 };
 
 const openDb = () => {
@@ -56,11 +58,28 @@ const openDb = () => {
 
 // Wipes and recreates an empty database. Used both to self-heal a corrupted
 // db (rare with SQLite) and for the user-triggered "rebuild index" action.
+// detection_class rows are user-typed configuration, not derived data, so
+// they're read out before the wipe and re-inserted after - losing them on a
+// rebuild would be silent data loss. The read is best-effort: a corrupted db
+// must still be rebuildable even if this query itself fails.
 const rebuildIndex = () => {
-    if (db) db.close();
+    let savedClasses = [];
+    if (db) {
+        try {
+            savedClasses = db.prepare("SELECT classId, name, updatedAt FROM detection_class ORDER BY classId ASC").all();
+        } catch {
+            savedClasses = [];
+        }
+        db.close();
+    }
     fs.rmSync(getDbPath(), { force: true });
     db = openDb();
     createSchema(db);
+    if (savedClasses.length > 0) {
+        const insert = db.prepare("INSERT INTO detection_class (classId, name, updatedAt) VALUES (@classId, @name, @updatedAt)");
+        const insertAll = db.transaction((rows) => rows.forEach((row) => insert.run(row)));
+        insertAll(savedClasses);
+    }
 };
 
 // Closes the current connection without deleting anything, so the next
@@ -126,6 +145,13 @@ const exportDatabase = (destPath) => {
     return db.backup(destPath);
 };
 
+// Single shared connection for mediaDb/MediaStore.js - callers must not open
+// a second `new Database(...)` on the same file.
+const getDb = () => {
+    ensureReady();
+    return db;
+};
+
 module.exports = {
     ensureReady,
     rebuildIndex,
@@ -136,4 +162,5 @@ module.exports = {
     columnNames,
     countItems,
     exportDatabase,
+    getDb,
 };

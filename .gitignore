@@ -39,3 +39,6 @@ ruvector.db
 xcxv/**.onnx
 xcxv/**.data
 xcxv/**.pt
+xcxv/spewc.md
+agentdb.rvf
+agentdb.rvf.lock

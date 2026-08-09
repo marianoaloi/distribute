@@ -10,13 +10,18 @@ const SIZE = 640;
 const CONF = 0.25;
 const IOU = 0.45;
 
-// Fill in as the real class names are decided - falls back to "class N" for
-// any index left blank. The chosen model itself is the source of truth for
-// how many classes there are (see numClasses in decode()), so this list can
-// grow later without touching the detection code.
-const CLASS_NAMES = [];
+// Set by app.js's saveDetectionClasses/loadDetectionClasses handlers, backed
+// by the detection_class table (mediaDb/MediaStore.js) - falls back to
+// "class N" for any index left blank. The chosen model itself is the source
+// of truth for how many classes there are (see numClasses in decode()), so
+// this list can grow later without touching the detection code.
+let classNames = [];
 
-const classNameFor = (classId) => CLASS_NAMES[classId] || `class ${classId}`;
+const setClassNames = (names) => { classNames = Array.isArray(names) ? names : []; };
+
+const getClassNames = () => classNames;
+
+const classNameFor = (classId) => classNames[classId] || `class ${classId}`;
 
 let sessionPromise = null;
 
@@ -143,4 +148,4 @@ const detect = async (imagePath) => {
     return decode(output.data, output.dims, ctx);
 };
 
-module.exports = { detect, isAvailable, setModelPath, getModelPath, SIZE, CONF, IOU, CLASS_NAMES };
+module.exports = { detect, isAvailable, setModelPath, getModelPath, setClassNames, getClassNames, SIZE, CONF, IOU };
