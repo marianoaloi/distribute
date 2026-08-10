@@ -256,14 +256,21 @@ ipcMain.on("detectObjects", async (event, data) => {
     }
     detectionStopRequested = false;
     let processed = 0;
+    const total = medias.length;
     // A media already has a stored result for the *current* class list when
     // its snapshot matches classesSnapshot below - skip re-running the model
     // on it and just replay what's already in media_detection. Any class
     // list edit changes the snapshot, so a redo is forced for everyone again.
     const classesSnapshot = onnxDetector.getClassNames().join(",");
     const mediaState = MediaStore.findMediaByIds(medias.map((media) => media.id));
-    for (const media of medias) {
-        if (detectionStopRequested) break;
+
+    // Detection runs 20 medias at a time: the awaited parts (file read, JPEG
+    // decode, letterbox, session.run scheduling) overlap instead of queueing
+    // behind each other. The native inference itself still runs one at a time
+    // on the main process thread - the win is in everything around it.
+    const DETECTION_BATCH_SIZE = 20;
+
+    const processOne = async (media) => {
         const state = mediaState.get(media.id);
         const alreadyRecognized = Boolean(state && state.detectionAt && state.detectionClasses === classesSnapshot);
         if (alreadyRecognized) {
@@ -285,8 +292,16 @@ ipcMain.on("detectObjects", async (event, data) => {
             }
         }
         processed++;
-        mainWindow.webContents.send("detectionProgress", { processed, total: medias.length });
+        mainWindow.webContents.send("detectionProgress", { processed, total });
+    };
+
+    for (let i = 0; i < medias.length; i += DETECTION_BATCH_SIZE) {
+        // Stop is honoured between batches - an in-flight batch is allowed to
+        // finish so its already-computed boxes still get persisted and shown.
+        if (detectionStopRequested) break;
+        await Promise.allSettled(medias.slice(i, i + DETECTION_BATCH_SIZE).map(processOne));
     }
+
     mainWindow.webContents.send("detectionsComplete", detectionStopRequested ? { stopped: true } : {});
 })
 

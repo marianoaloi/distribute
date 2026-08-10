@@ -22,6 +22,7 @@ interface DetectionsState {
     progress: DetectionProgress | null
     modelPath: string | null
     classNames: string[]
+    lastProcessedId: string | null
 }
 
 const initialState: DetectionsState = {
@@ -31,6 +32,7 @@ const initialState: DetectionsState = {
     progress: null,
     modelPath: null,
     classNames: [],
+    lastProcessedId: null,
 }
 
 const detectionsSlice = createSlice({
@@ -42,10 +44,12 @@ const detectionsSlice = createSlice({
             detecting: true,
             detectionError: null,
             progress: null,
+            lastProcessedId: null,
         }),
         setDetectionResult: (state, action) => ({
             ...state,
             byId: { ...state.byId, [action.payload.id]: action.payload.boxes },
+            lastProcessedId: action.payload.id,
         }),
         // Bulk hydration from the folder's persisted media_detection rows. Merges so
         // results streamed by an in-flight detection run are not clobbered.
@@ -71,6 +75,7 @@ const detectionsSlice = createSlice({
         clearDetections: (state) => ({
             ...state,
             byId: {},
+            lastProcessedId: null,
         }),
         setModelPath: (state, action) => ({
             ...state,

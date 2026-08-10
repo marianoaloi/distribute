@@ -2,7 +2,7 @@ import { IconButton, CircularProgress, LinearProgress, Dialog, DialogActions, Di
 import { PlayArrow, Stop, FolderOpen, Label } from "@mui/icons-material"
 import React from "react"
 import { Media } from "../entity/Media"
-import { ChooseOnnxModel, LoadDetectionClasses, RunDetection, SaveDetectionClasses, StopDetection, selectDetecting, selectDetectionClassNames, selectDetectionError, selectDetectionProgress, selectDetections, selectMedias, selectModelPath, useSelector } from "../lib/redux"
+import { ChooseOnnxModel, LoadDetectionClasses, RunDetection, SaveDetectionClasses, StopDetection, selectDetecting, selectDetectionClassNames, selectDetectionError, selectDetectionProgress, selectDetections, selectLastProcessedId, selectMedias, selectModelPath, useSelector } from "../lib/redux"
 import { useDispatch } from "react-redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { toMediaUrl } from "../lib/mediaUrl"
@@ -21,6 +21,7 @@ export const GridDetections = (() => {
     const modelPath = useSelector(selectModelPath)
     const modelName = modelPath ? modelPath.split(/[\\/]/).pop() : null
     const classNames = useSelector(selectDetectionClassNames)
+    const lastProcessedId = useSelector(selectLastProcessedId)
 
     const [openClassNames, setOpenClassNames] = React.useState(false)
 
@@ -42,6 +43,24 @@ export const GridDetections = (() => {
         }
     }, [config.mediaLoading, dispatch])
 
+    // Follow the run: keep the image that was just processed on screen. Parallel
+    // batches finish several items a second, so this must be an instant scroll -
+    // queued smooth-scroll animations would lag behind the run and look janky.
+    const scrolledToRef = React.useRef<string | null>(null)
+    React.useEffect(() => {
+        if (scrolledToRef.current === null && lastProcessedId !== null) {
+            // First render after a (re)mount: adopt whatever the store already holds
+            // without scrolling, so switching back to this tab does not yank the
+            // view to an image from a run that already finished.
+            scrolledToRef.current = lastProcessedId
+            return
+        }
+        if (!lastProcessedId || lastProcessedId === scrolledToRef.current) return
+        scrolledToRef.current = lastProcessedId
+        document.getElementById(`detection-media-${lastProcessedId}`)
+            ?.scrollIntoView({ block: "center", behavior: "auto" })
+    }, [lastProcessedId])
+
     return (
         <div>
             <DetectionResume>
@@ -54,7 +73,7 @@ export const GridDetections = (() => {
                     {detecting ? <CircularProgress size={20} /> : <PlayArrow />}
                 </IconButton>
                 <IconButton onClick={stopDetection} disabled={!detecting || !modelPath}
-                    title="Stop after the current item — results found so far stay on screen">
+                    title="Stop after the current batch — results found so far stay on screen">
                     <Stop />
                 </IconButton>
                 <IconButton onClick={openClassNamesDialog}
@@ -115,7 +134,7 @@ export const GridDetections = (() => {
             {medias.length > 0
                 ? <DetectionGridWrap>
                     {medias.map(media => (
-                        <DetectionTile key={media.id} size={config.pxzoom}>
+                        <DetectionTile id={`detection-media-${media.id}`} key={media.id} size={config.pxzoom}>
                             <img src={toMediaUrl(media.media)} alt={media.filename} draggable={false} />
                             {(detections[media.id] || []).map((box, idx) => (
                                 <DetectionBoxOutline key={idx} x={box.x} y={box.y} w={box.w} h={box.h}>
