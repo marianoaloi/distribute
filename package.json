@@ -58,7 +58,8 @@
       "thumbnails/**/*",
       "compareImg/**/*",
       "objectDetection/**/*",
-      "xcxv/**/*",
+      "mediaDb/**/*",
+      "hashing/**/*",
       "package.json"
     ],
     "asarUnpack": [
