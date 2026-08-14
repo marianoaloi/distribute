@@ -1,12 +1,13 @@
 import { forwardRef, SyntheticEvent, useImperativeHandle, useRef, useState } from "react"
 import { Media } from "../entity/Media"
 import { prettifySizeF } from "./media"
-import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, MediaControllersCSS, FoldersZoom, MuteIcon, InfoBox, ZoomHeader, VideoProgress } from "./modalZoom.styled"
+import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, ImgWrapper, MediaControllersCSS, FoldersZoom, MuteIcon, InfoBox, ZoomHeader, VideoProgress } from "./modalZoom.styled"
 import { IconButton, Slider, Modal } from "@mui/material"
 import { toMediaUrl } from "../lib/mediaUrl"
-import { ArrowBackIos, ArrowForwardIos, CleaningServices } from "@mui/icons-material"
-import { updateArrayItem, useDispatch, useSelector } from "../lib/redux"
+import { ArrowBackIos, ArrowForwardIos, CleaningServices, Label } from "@mui/icons-material"
+import { updateArrayItem, useDispatch, useSelector, selectDetections } from "../lib/redux"
 import { configurationsSelector, setVideoVolume } from "../lib/redux/slices/configurations"
+import { DetectionBoxOutline, DetectionBoxLabel } from "./objectDetectionGrid.styled"
 
 interface ModalZoomMethods {
     chamgeImageClass: () => void,
@@ -30,9 +31,13 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         const videoRef = useRef<HTMLVideoElement | null>(null)
         const dispatch = useDispatch();
         const config = useSelector(configurationsSelector)
+        const detections = useSelector(selectDetections)
+        const detectedObjects = detections[mediaWithPreview.id] || []
         const [volumeLevel, setVolumeLevel] = useState(0);
         const [currentTime, setCurrentTime] = useState(0);
         const [duration, setDuration] = useState(0);
+        const [showDetections, setShowDetections] = useState(false);
+        const toggleDetections = () => setShowDetections(v => !v)
 
 
         useImperativeHandle(ref, () => ({
@@ -274,6 +279,11 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                         {onNext && <IconButton onClick={onNext}><ArrowForwardIos /></IconButton>}
                         <input style={{ cursor: 'pointer' }} type="checkbox" onClick={changeCheckbox} id="selectMedia" defaultChecked={mediaWithPreview.checked} />
                         <label htmlFor="selectMedia" style={{ cursor: 'pointer', userSelect: 'none', fontSize: '14px', marginRight: '8px' }}>Select</label>
+                        <IconButton onClick={toggleDetections}
+                            color={showDetections ? "primary" : "default"}
+                            title={detectedObjects.length > 0 ? `${showDetections ? "Hide" : "Show"} ${detectedObjects.length} detected object(s)` : "No objects detected for this media"}>
+                            <Label />
+                        </IconButton>
                         <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
                     </ZoomHeader>
                     {mediaWithPreview.mime.includes('video') &&
@@ -297,12 +307,19 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                     </InfoBox>
                                 </>
                                 :
-                                <ImgPresentation
-                                    onDoubleClick={changeCheckbox}
-                                    draggable={false}
-                                    onWheel={(ev) => zoomImage(ev, imgRef.current)}
-                                    ref={imgRef} src={toMediaUrl(mediaWithPreview.path)}
-                                    alt={mediaWithPreview.path} title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></ImgPresentation>
+                                <ImgWrapper>
+                                    <ImgPresentation
+                                        onDoubleClick={changeCheckbox}
+                                        draggable={false}
+                                        onWheel={(ev) => zoomImage(ev, imgRef.current)}
+                                        ref={imgRef} src={toMediaUrl(mediaWithPreview.path)}
+                                        alt={mediaWithPreview.path} title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></ImgPresentation>
+                                    {showDetections && detectedObjects.map((box, idx) => (
+                                        <DetectionBoxOutline key={idx} x={box.x} y={box.y} w={box.w} h={box.h}>
+                                            <DetectionBoxLabel>{box.className} {(box.score * 100).toFixed(0)}%</DetectionBoxLabel>
+                                        </DetectionBoxOutline>
+                                    ))}
+                                </ImgWrapper>
                         }
                     </MediaPresentation>
                     <MediaControllers />

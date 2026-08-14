@@ -44,9 +44,13 @@ export const VideoPresentation = styled.video`
       width: 100%;
 `
 
-export const ImgPresentation = styled.img`
+export const ImgWrapper = styled.div`
       position: absolute;
       overflow: auto;
+`
+
+export const ImgPresentation = styled.img`
+      display: block;
 `
 
 export const ControlSlider = styled(Slider)`
@@ -154,6 +158,21 @@ export const MuteIcon = styled(VolumeMuteRounded)`
     height: 100px;
     width: 100px;
 
+`
+
+export const DetectedObjectsList = styled.div`
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 220px;
+`
+
+export const DetectedObjectRow = styled.div`
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 4px 0;
+    border-bottom: 1px solid #eee;
 `
 
 export const MediaControllersCSS = styled.div`
