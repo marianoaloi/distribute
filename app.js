@@ -197,15 +197,6 @@ ipcMain.on("process", async (event, data) => {
     }
 })
 
-ipcMain.on("findDuplicates", async (event, data) => {
-    try {
-        const groups = await duplicateFinder.findDuplicates(data.medias);
-        mainWindow.webContents.send("duplicatesFound", groups);
-    } catch (error) {
-        console.error("findDuplicates failed", error);
-        mainWindow.webContents.send("duplicatesFound", []);
-    }
-})
 const findIndexDuplicates = async () => {
     try {
         const groups = await duplicateFinder.findIndexDuplicates();

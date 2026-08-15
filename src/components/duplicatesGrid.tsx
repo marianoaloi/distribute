@@ -1,9 +1,9 @@
 import { KeyboardEvent, useRef, useState } from "react"
 import { useDispatch } from "react-redux"
 import { IconButton, CircularProgress, LinearProgress } from "@mui/material"
-import { Refresh, ImageSearch, RestartAlt, FolderOpen, FolderCopyTwoTone, VolumeOff, FileDownload, FileUpload, RadioButtonChecked, RadioButtonUnchecked } from "@mui/icons-material"
+import { ImageSearch, RestartAlt, FolderOpen, FolderCopyTwoTone, VolumeOff, FileDownload, FileUpload, RadioButtonChecked, RadioButtonUnchecked } from "@mui/icons-material"
 import { Media } from "../entity/Media"
-import { ExportDatabase, FindDuplicates, FindIndexDuplicates, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
+import { ExportDatabase, FindIndexDuplicates, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { MediaIMG } from "./media"
 import ModalZoom from "./modalZoom"
@@ -114,7 +114,6 @@ export const GridDuplicates = (() => {
     // they live in other folders and must never enter this folder's index.
     const actualMedias = medias.filter(m => !m.imported)
 
-    const scan = () => dispatch(FindDuplicates(actualMedias))
     const scanByHash = () => dispatch(FindIndexDuplicates())
     const openDiretory = () => dispatch(OpenDirectory())
     const openDiretoryRecursive = () => dispatch(OpenDirectoryRecursive())
@@ -188,7 +187,6 @@ export const GridDuplicates = (() => {
     return (
         <div onKeyUp={(ev) => pressedKeyUp(ev)}>
             <DuplicatesResume>
-                <IconButton onClick={scan} title="Scan loaded media for identical content (MD5)"><Refresh /></IconButton>
                 <IconButton onClick={scanByHash} title="Scan indexed media for visual duplicates (perceptual hash)"><ImageSearch /></IconButton>
                 <IconButton onClick={rebuildIndex} disabled={indexRebuilding || config.mediaLoading}
                     title={config.mediaLoading

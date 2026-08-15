@@ -15,7 +15,6 @@ const ipc = {
             'openRecursive',
             'sort',
             'open',
-            'findDuplicates',
             'findIndexDuplicates',
             'rebuildIndex',
             'detectObjects',

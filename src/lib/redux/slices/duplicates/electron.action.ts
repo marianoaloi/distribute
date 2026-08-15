@@ -4,21 +4,6 @@ import { startIndexRebuild, startDatabaseExport, startDatabaseImport } from "./d
 const isElectronApp = typeof window !== 'undefined' && !!window.electron;
 const ipcRender = isElectronApp ? window.electron.ipcRenderer : undefined;
 
-export const FindDuplicates = (medias: Media[]) => {
-
-    if (!isElectronApp) {
-        return (dispatch: any) => { }
-    }
-
-    return (dispatch: any) => {
-        if (ipcRender) {
-            ipcRender.send('findDuplicates', {
-                medias: medias.map(m => ({ id: m.id, path: m.path, size: m.size }))
-            });
-        }
-    }
-}
-
 // Perceptual duplicates: groups media whose cropped/greyscale frame pixels
 // are within a mean-difference threshold (compareImg/duplicateFinder.js),
 // regardless of byte-identical content.
