@@ -86,7 +86,7 @@ const transformDataStreaming = async (data, folderOpened, onReadyGo, onSendOneMe
     let cached = new Map();
     try {
         MediaStore.ensureReady();
-        cached = MediaStore.findMediaByIds(framed.map(i => i.id));
+        cached = MediaStore.findAllMediaThatExists();
     } catch (error) {
         console.error("transformDataStreaming: media DB lookup failed, falling back to slow path:", error.message);
         cached = new Map();

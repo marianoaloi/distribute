@@ -72,7 +72,7 @@ const rebuildIndex = () => {
         }
         db.close();
     }
-    fs.rmSync(getDbPath(), { force: true });
+    // fs.rmSync(getDbPath(), { force: true });
     db = openDb();
     createSchema(db);
     if (savedClasses.length > 0) {

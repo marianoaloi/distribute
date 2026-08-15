@@ -4,6 +4,9 @@ const ensureReady = () => HashStore.ensureReady();
 
 const MEDIA_COLUMNS = ["localPath", "filename", "mime", "kind", "size", "mtimeMs", "contentMd5", "hasAudio", "thumbPath", "updatedAt"];
 
+const path = require("path");
+const fs = require("fs");
+
 // Callers (util.js's transformDataStreaming) re-upsert every media row on
 // every folder load without knowing the backfilled contentMd5, so a plain
 // `contentMd5 = excluded.contentMd5` would null out an already-hashed file
@@ -75,6 +78,17 @@ const findMediaByIds = (ids) => {
     }
     return result;
 };
+
+const findAllMediaThatExists = () => {
+    const db = HashStore.getDb();
+    return db.prepare("SELECT id, localPath, contentMd5, size, mtimeMs, hasAudio, thumbPath, detectionClasses, detectionAt FROM media")
+            .all()
+            .filter(row => fs.existsSync(row.localPath))
+            .reduce((map, row) => {
+                map.set(row.id, row);
+                return map;
+            }, new Map());
+}
 
 const mediaMissingContentMd5 = (limit) => {
     const db = HashStore.getDb();
@@ -152,4 +166,5 @@ module.exports = {
     replaceDetections,
     getDetections,
     getAllDetections,
+    findAllMediaThatExists,
 };

@@ -355,9 +355,9 @@ ipcMain.on("loadDetections", () => {
 ipcMain.on("rebuildIndex", async (event, data) => {
     try {
         await compareImgStore.rebuildIndex();
-        const medias = (data && data.medias) || [];
+        const medias = MediaStore.findAllMediaThatExists() || [];
         mainWindow.webContents.send("indexRebuildProgress", { processed: 0, total: medias.length });
-        await mediaIndexer.indexMediaBackground(medias.map(m => ({
+        await mediaIndexer.indexMediaBackground([...medias.values()].map(m => ({
             item: m.path,
             mime: m.mime,
             id: m.id,
@@ -365,11 +365,11 @@ ipcMain.on("rebuildIndex", async (event, data) => {
             mainWindow.webContents.send("indexRebuildProgress", { processed, total });
         });
         mainWindow.webContents.send("indexRebuilt", { success: true, count: medias.length });
+        findIndexDuplicates();
     } catch (error) {
         console.error("rebuildIndex failed", error);
         mainWindow.webContents.send("indexRebuilt", { success: false, error: error.message });
     }
-    findIndexDuplicates();
 })
 
 // Exports a consistent snapshot of the compareImg sqlite index so it can be
@@ -599,7 +599,7 @@ const openfileRecursive = (folderPath) => {
                 }
             });
         } else {
-                processedFolders[folderPath] = true;
+            processedFolders[folderPath] = true;
         }
 
 
