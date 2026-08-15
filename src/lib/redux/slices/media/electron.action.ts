@@ -29,7 +29,7 @@ export const ElectronConnection = () => {
 
             ipcRender.on('directoryOpen', (e: any, args: any) => {
 
-                console.log("Receive files ", args.length);
+                // console.log("Receive files ", args.length);
 
                 dispatch(populateArray(args))
 
@@ -37,7 +37,7 @@ export const ElectronConnection = () => {
 
             ipcRender.on('loadMedias', (e: any, args: any) => {
 
-                console.log("Receive upgrades ", args.length , " from ", e.sender.id, " with channel ", e.channel, " ids ", args.map((a:Media) => a.id));
+                // console.log("Receive upgrades ", args.length , " from ", e.sender.id, " with channel ", e.channel, " ids ", args.map((a:Media) => a.id));
 
                 dispatch(addListinActualArray(args))
 

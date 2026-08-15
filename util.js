@@ -47,7 +47,7 @@ const upsertMediaSafe = (item) => {
 // still reusing this same thumbnail/metadata pipeline. Pass an empty
 // folderOpened to treat data as absolute paths (import items live outside
 // the opened folder).
-const transformDataStreaming = async (data, folderOpened, onImages, onVideo, onDone, extraFields = {}) => {
+const transformDataStreaming = async (data, folderOpened, onReadyGo, onSendOneMedia, onDone, extraFields = {}) => {
     const allPaths = folderOpened ? data.map(item => path.join(folderOpened, item)) : data;
 
     const withMeta = allPaths
@@ -91,6 +91,11 @@ const transformDataStreaming = async (data, folderOpened, onImages, onVideo, onD
         console.error("transformDataStreaming: media DB lookup failed, falling back to slow path:", error.message);
         cached = new Map();
     }
+    
+    for (const item of images) {
+        upsertMediaSafe(item);
+    }
+    onReadyGo(images);
 
     const ready = [];
     const pending = [];
@@ -113,23 +118,29 @@ const transformDataStreaming = async (data, folderOpened, onImages, onVideo, onD
         }
     }
 
-    // onImages maps to the "directoryOpen" channel which REPLACES the grid
+    // onReadyGo maps to the "directoryOpen" channel which REPLACES the grid
     // (populateArray assigns, it does not append) - it may only be called
     // once per load, so the already-cached items are folded into this single
     // call instead of trickling in through onVideo like the slow ones.
-    onImages(images.concat(ready));
-
-    for (const item of pending) {
-        const row = cached.get(item.id);
-        item.fileName = await thumbnails.getThumbnail(item.item, row && row.contentMd5);
-        item.hasAudio = await videoFrames.hasAudio(item.item);
-        onVideo(item);
+    
+    for (const item of ready) {
         upsertMediaSafe(item);
     }
+    onReadyGo(ready);
 
-    for (const item of images) {
-        upsertMediaSafe(item);
+    const groupSize = 30;
+    for (let i = 0; i < pending.length; i += groupSize) {
+        const group = pending.slice(i, i + groupSize);
+        for (const item of group) {
+            const row = cached.get(item.id);
+            item.fileName = await thumbnails.getThumbnail(item.item, row && row.contentMd5);
+            item.hasAudio = await videoFrames.hasAudio(item.item);
+            upsertMediaSafe(item);
+        }
+            onReadyGo(group);
+
     }
+
 
     if (onDone) onDone();
 
@@ -139,46 +150,7 @@ const transformDataStreaming = async (data, folderOpened, onImages, onVideo, onD
     backfillContentMd5();
 };
 
-const transformFixedData = (data) => {
-    const result = data.filter(filepath => fs.statSync(filepath)
-        .isFile()
-    )
-        .map(item => {
-            const itemMime = mime.lookup(item);
-            return {
-                item: item,
-                mime: itemMime,
-                fileName: item,
-                filename: path.basename(item),
-                size: fs.statSync(item).size,
-                hasAudio: false,
-                kind: kindFor(itemMime),
-                id: hashFor(item)
-            }
-        })
-        .filter(item => {
-            const mime_type = item.mime
-            return mime_type && (mime_type.includes('image') || mime_type.includes('video'))
-        })
-        .map(item => {
-            item.hash = hashFor(item.item);
-            if (item.kind === 'video' || item.kind === 'gif') {
-                item.fileName = thumbnails.getThumbnailSync(item.item);
-                item.hasAudio = videoFrames.hasAudioSync(item.item);
-            }
-            return item
-
-        })
-
-    return result;
-}
-
-const transformData = (data, folderOpened) => {
-    return transformFixedData(data.map(item => path.join(folderOpened, item)))
-}
 
 module.exports = {
-    transformData,
-    transformFixedData,
     transformDataStreaming,
 }

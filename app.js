@@ -21,7 +21,6 @@ const dbImport = require("./compareImg/dbImport");
 const { hashFor } = require("./thumbnails/cache");
 const onnxDetector = require("./objectDetection/onnxDetector");
 const MediaStore = require("./mediaDb/MediaStore");
-const transformData = util.transformData;
 const transformDataStreaming = util.transformDataStreaming;
 
 var menuTemplate = () => [
@@ -493,28 +492,33 @@ const openfile = () => {
     fs.readdir(fileGlobal, "utf8", (err, data) => {
         if (err) { console.error(err); return; }
 
+        mainWindow.webContents.send("cleanGrid");
+
         console.log(`Get Images in ${fileGlobal}`, "files", data.length);
 
         mainWindow.webContents.send("mediaLoadStart");
-        transformDataStreaming(
-            data,
-            fileGlobal,
-            (images) => {
-                mainWindow.webContents.send("directoryOpen", images);
-            },
-            (video) => {
-                // console.log("Video found", video.id);
-                mainWindow.webContents.send("addOneMedia", video);
-            },
-            () => {
-                mainWindow.webContents.send("mediaLoadComplete");
-            }
-        );
+
+        streamingMedia(data, fileGlobal, () => {
+            mainWindow.webContents.send("mediaLoadComplete");
+        });
     });
 };
 
 
-
+const streamingMedia = (data, root, complete) => {
+    transformDataStreaming(
+        data,
+        root,
+        (mediaReady) => {
+            mainWindow.webContents.send("loadMedias", mediaReady);
+        },
+        (mediaLazy) => {
+            // console.log("Video found", video.id);
+            mainWindow.webContents.send("addOneMedia", mediaLazy);
+        },
+        complete
+    );
+}
 
 
 /************************************ MENU */
@@ -564,13 +568,18 @@ const loadRecursive = async () => {
     };
     if (fileGlobal) options["defaultPath"] = fileGlobal;
     dialog.showOpenDialog(options).then(file => {
-        if (!file.canceled) {            
+        if (!file.canceled) {
             setActiveFolder(file.filePaths[0]);
             fileGlobal = path.join(file.filePaths[0], "tmp");
             compareImgStore.closeConnection();
-            openfileRecursive(file.filePaths[0]);
-
             mainWindow.title = `Get Images in ${fileGlobal} recursive in ${file.filePaths[0]}`
+
+
+            mainWindow.webContents.send("cleanGrid");
+            mainWindow.webContents.send("mediaLoadStart");
+            openfileRecursive(file.filePaths[0]);
+            mainWindow.webContents.send("mediaLoadComplete");
+
         }
     }).catch(err => {
         console.error(err);
@@ -585,10 +594,11 @@ const openfileRecursive = (folderPath) => {
         let qtdFiles = data.map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isFile()).length
         data.filter(item => item !== "tmp").map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isDirectory()).forEach(item => openfileRecursive(item))
 
-        if (qtdFiles > 0)
-            mainWindow.webContents.send("loadMedias",
-                transformData(data, folderPath)
-            );
+        if (qtdFiles > 0) {
+            streamingMedia(data, folderPath, () => {
+                // nothing to do here, the onDone callback is just to signal the end of the stream
+            });
+        }
     })
 }
 
