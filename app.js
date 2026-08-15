@@ -357,9 +357,11 @@ ipcMain.on("rebuildIndex", async (event, data) => {
         await compareImgStore.rebuildIndex();
         const medias = MediaStore.findAllMediaThatExists() || [];
         mainWindow.webContents.send("indexRebuildProgress", { processed: 0, total: medias.length });
-        await mediaIndexer.indexMediaBackground([...medias.values()].map(m => ({
-            item: m.path,
+        await mediaIndexer.indexMediaBackground(medias.map(m => ({
+            item: m.localPath ,
             mime: m.mime,
+            kind: m.kind,
+            contentMd5 : m.contentMd5,
             id: m.id,
         })), (processed, total) => {
             mainWindow.webContents.send("indexRebuildProgress", { processed, total });

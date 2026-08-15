@@ -1,7 +1,6 @@
 const compareImgStore = require("./HashStore");
 const computePool = require("./computePool");
 const videoFrames = require("./videoFrames");
-const { hashFor } = require("../thumbnails/cache");
 
 // pixelSourcePath: what to read pixel data from (the frame file for videos, the
 // media file itself for images). metadataLocalPath: what to record as the
@@ -33,9 +32,9 @@ const indexUnit = async (id, pixelSourcePath, metadataLocalPath, kind, framePosi
 
 const indexImage = async (mediaItem) => {
     const localPath = mediaItem.item;
-    const id = hashFor(localPath);
+    if (!mediaItem.contentMd5) return;
     try {
-        await indexUnit(id, localPath, localPath, "image", "", mediaItem.id);
+        await indexUnit(mediaItem.contentMd5, localPath, localPath, "image", "", mediaItem.id);
     } catch (error) {
         console.error(`compareImg: failed to index image ${localPath}:`, error.message);
     }
@@ -43,22 +42,23 @@ const indexImage = async (mediaItem) => {
 
 // Frame positions are fixed labels (not duration-derived), so we can check
 // whether a video's frames are already indexed without probing it via ffmpeg.
-const videoAlreadyIndexed = async (localPath) => {
-    const baseId = hashFor(localPath);
+const videoAlreadyIndexed = async (mediaItem) => {
+    const baseId = mediaItem.contentMd5;
     try {
         for (const position of videoFrames.FRAME_POSITIONS) {
             if (!compareImgStore.getItem(`${baseId}_${position}`)) return false;
         }
         return true;
     } catch (error) {
-        console.error(`compareImg: failed to check index for ${localPath}:`, error.message);
+        console.error(`compareImg: failed to check index for ${mediaItem.item}:`, error.message);
         return false;
     }
 };
 
 const indexVideo = async (mediaItem) => {
     const localPath = mediaItem.item;
-    if (await videoAlreadyIndexed(localPath)) return;
+    if (!mediaItem.contentMd5) return;
+    if (await videoAlreadyIndexed(mediaItem)) return;
 
     const frames = await videoFrames.extractFrames(localPath).catch(error => {
         console.error(`compareImg: frame extraction failed for ${localPath}:`, error.message);
@@ -66,7 +66,7 @@ const indexVideo = async (mediaItem) => {
     });
 
     for (const frame of frames) {
-        const id = `${hashFor(localPath)}_${frame.position}`;
+        const id = `${mediaItem.contentMd5}_${frame.position}`;
         try {
             await indexUnit(id, frame.path, localPath, "video", frame.position, mediaItem.id);
         } catch (error) {

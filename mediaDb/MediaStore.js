@@ -72,7 +72,7 @@ const findMediaByIds = (ids) => {
         if (chunk.length === 0) continue;
         const placeholders = chunk.map(() => "?").join(",");
         const rows = db.prepare(
-            `SELECT id, localPath, contentMd5, size, mtimeMs, hasAudio, thumbPath, detectionClasses, detectionAt FROM media WHERE id IN (${placeholders})`
+            `SELECT id, localPath, contentMd5, size, mtimeMs, hasAudio, thumbPath , mime, kind, detectionClasses, detectionAt FROM media WHERE id IN (${placeholders})`
         ).all(...chunk);
         for (const row of rows) result.set(row.id, row);
     }
@@ -81,13 +81,10 @@ const findMediaByIds = (ids) => {
 
 const findAllMediaThatExists = () => {
     const db = HashStore.getDb();
-    return db.prepare("SELECT id, localPath, contentMd5, size, mtimeMs, hasAudio, thumbPath, detectionClasses, detectionAt FROM media")
+    return db.prepare("SELECT id, localPath, contentMd5, size, mtimeMs, hasAudio, thumbPath , mime, kind, detectionClasses, detectionAt FROM media")
             .all()
             .filter(row => fs.existsSync(row.localPath))
-            .reduce((map, row) => {
-                map.set(row.id, row);
-                return map;
-            }, new Map());
+            ;
 }
 
 const mediaMissingContentMd5 = (limit) => {
