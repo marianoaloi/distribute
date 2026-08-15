@@ -38,7 +38,12 @@ const compareImportedDatabase = (importedPath) => {
         const actualRows = compareImgStore.allBaseGreyRows();
         const actualPaths = new Set(actualRows.map((r) => r.localPath));
         const importedRows = imported
-            .prepare("SELECT localPath, baseGrey FROM items WHERE baseGrey IS NOT NULL")
+            .prepare(`
+                SELECT media.localPath AS localPath, items.baseGrey AS baseGrey
+                FROM items
+                JOIN media ON media.id = items.mediaId
+                WHERE items.baseGrey IS NOT NULL
+            `)
             .all();
 
         // Videos contribute one row per extracted frame sharing a localPath,
@@ -60,7 +65,7 @@ const compareImportedDatabase = (importedPath) => {
             for (const actual of actualRows) {
                 if (meanAbsDiff(row.baseGrey, actual.baseGrey) <= MEAN_DIFF_THRESHOLD) {
                     if (!matchesByPath.has(row.localPath)) matchesByPath.set(row.localPath, new Set());
-                    matchesByPath.get(row.localPath).add(actual.actualPosition);
+                    matchesByPath.get(row.localPath).add(actual.mediaId);
                 }
             }
         }

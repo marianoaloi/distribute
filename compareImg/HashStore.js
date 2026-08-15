@@ -15,7 +15,7 @@ const { createMediaSchema } = require("../mediaDb/mediaSchema");
 // whatever columns actually exist on disk from a previous run's config -
 // exactly the "no such column: blur_2" crash this replaced. A fixed schema
 // can't drift.
-const METADATA_COLUMNS = ["localPath", "kind", "framePosition", "actualPosition", "futurePosition", "baseMd5", "baseGrey"];
+const METADATA_COLUMNS = ["mediaId", "framePosition", "futurePosition", "baseMd5", "baseGrey"];
 
 let db = null;
 
@@ -31,23 +31,26 @@ const ensureColumn = (database, table, name, type) => {
 };
 
 const createSchema = (database) => {
-    // actualPosition is left untyped (BLOB affinity) so whatever type the
-    // caller's media id is (string or number) round-trips unchanged instead
-    // of SQLite coercing it to TEXT.
+    // mediaId is a logical FK to media.id (no declared REFERENCES), same
+    // pattern as media_detection.mediaId in mediaSchema.js: kept simple since
+    // better-sqlite3 would need PRAGMA foreign_keys=ON plus insert ordering
+    // guarantees a declared FK brings no real benefit for here. localPath and
+    // kind live on the related media row now - join through mediaId instead
+    // of duplicating them here.
     database.exec(`
         CREATE TABLE IF NOT EXISTS items (
             id TEXT PRIMARY KEY,
-            localPath TEXT NOT NULL,
-            kind TEXT NOT NULL,
+            mediaId TEXT NOT NULL,
             framePosition TEXT NOT NULL DEFAULT '',
-            actualPosition,
             futurePosition INTEGER NOT NULL DEFAULT -1,
             baseMd5 TEXT,
             baseGrey BLOB
         );
     `);
+    ensureColumn(database, "items", "mediaId", "TEXT");
     ensureColumn(database, "items", "baseGrey", "BLOB");
     database.exec("CREATE INDEX IF NOT EXISTS idx_items_baseMd5 ON items(baseMd5);");
+    database.exec("CREATE INDEX IF NOT EXISTS idx_items_mediaId ON items(mediaId);");
     createMediaSchema(database);
 };
 
@@ -126,9 +129,15 @@ const upsertItem = ({ id, metadata }) => {
 
 // Every row with a stored pixel buffer, for duplicateFinder.js's pairwise
 // mean-pixel-difference comparison (baseGrey has no index - distance can't
-// be expressed as a SQL equality/range lookup on a blob).
+// be expressed as a SQL equality/range lookup on a blob). localPath comes
+// from the related media row via mediaId, since items no longer duplicates it.
 const allBaseGreyRows = () => db
-    .prepare("SELECT actualPosition, baseGrey, localPath FROM items WHERE baseGrey IS NOT NULL")
+    .prepare(`
+        SELECT items.mediaId AS mediaId, items.baseGrey AS baseGrey, media.localPath AS localPath
+        FROM items
+        JOIN media ON media.id = items.mediaId
+        WHERE items.baseGrey IS NOT NULL
+    `)
     .all();
 
 // Column names of the live items table, for validating that an imported

@@ -67,11 +67,11 @@ const findIndexDuplicates = async () => {
         for (let j = i + 1; j < rows.length; j++) {
             const a = rows[i];
             const b = rows[j];
-            if (a.actualPosition === b.actualPosition) continue;
+            if (a.mediaId === b.mediaId) continue;
             if (meanAbsDiff(a.baseGrey, b.baseGrey) <= MEAN_DIFF_THRESHOLD) {
-                matchedIds.add(a.actualPosition);
-                matchedIds.add(b.actualPosition);
-                union(a.actualPosition, b.actualPosition);
+                matchedIds.add(a.mediaId);
+                matchedIds.add(b.mediaId);
+                union(a.mediaId, b.mediaId);
             }
         }
     }

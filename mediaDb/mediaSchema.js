@@ -35,10 +35,6 @@ const createMediaSchema = (database) => {
     ensureColumn(database, "media", "detectionClasses", "TEXT");
     ensureColumn(database, "media", "detectionAt", "INTEGER");
 
-    // Index-only addition to the existing (frozen, see compareImg/dbImport.js)
-    // items table: actualPosition already holds the media id.
-    database.exec("CREATE INDEX IF NOT EXISTS idx_items_actualPosition ON items(actualPosition);");
-
     database.exec(`
         CREATE TABLE IF NOT EXISTS detection_class (
             classId   INTEGER PRIMARY KEY,

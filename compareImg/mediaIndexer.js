@@ -3,9 +3,10 @@ const computePool = require("./computePool");
 const videoFrames = require("./videoFrames");
 
 // pixelSourcePath: what to read pixel data from (the frame file for videos, the
-// media file itself for images). metadataLocalPath: what to record as the
-// media's own location, always the source file the user actually has on disk.
-const indexUnit = async (id, pixelSourcePath, metadataLocalPath, kind, framePosition, actualPosition) => {
+// media file itself for images). mediaId: the related media row's id - items
+// no longer store localPath/kind themselves, those are read through the
+// media x item relation instead (see HashStore.js's items.mediaId).
+const indexUnit = async (id, pixelSourcePath, mediaId, framePosition) => {
     const existing = compareImgStore.getItem(id);
     if (existing) return;
 
@@ -15,10 +16,8 @@ const indexUnit = async (id, pixelSourcePath, metadataLocalPath, kind, framePosi
     const { baseMd5, grey } = await computePool.compute(pixelSourcePath);
 
     const metadata = {
-        localPath: metadataLocalPath,
-        kind,
+        mediaId,
         framePosition: framePosition || "",
-        actualPosition,
         futurePosition: -1,
         baseMd5,
         // Raw cropped/greyscale pixel buffer, stored so duplicateFinder.js
@@ -34,7 +33,7 @@ const indexImage = async (mediaItem) => {
     const localPath = mediaItem.item;
     if (!mediaItem.contentMd5) return;
     try {
-        await indexUnit(mediaItem.contentMd5, localPath, localPath, "image", "", mediaItem.id);
+        await indexUnit(mediaItem.contentMd5, localPath, mediaItem.id, "");
     } catch (error) {
         console.error(`compareImg: failed to index image ${localPath}:`, error.message);
     }
@@ -68,7 +67,7 @@ const indexVideo = async (mediaItem) => {
     for (const frame of frames) {
         const id = `${mediaItem.contentMd5}_${frame.position}`;
         try {
-            await indexUnit(id, frame.path, localPath, "video", frame.position, mediaItem.id);
+            await indexUnit(id, frame.path, mediaItem.id, frame.position);
         } catch (error) {
             console.error(`compareImg: failed to index video frame ${frame.path}:`, error.message);
         }
