@@ -570,15 +570,13 @@ const loadRecursive = async () => {
     dialog.showOpenDialog(options).then(file => {
         if (!file.canceled) {
             setActiveFolder(file.filePaths[0]);
-            fileGlobal = path.join(file.filePaths[0], "tmp");
+            fileGlobal = file.filePaths[0]; // path.join(file.filePaths[0], "tmp");
             compareImgStore.closeConnection();
-            mainWindow.title = `Get Images in ${fileGlobal} recursive in ${file.filePaths[0]}`
 
 
             mainWindow.webContents.send("cleanGrid");
             mainWindow.webContents.send("mediaLoadStart");
             openfileRecursive(file.filePaths[0]);
-            mainWindow.webContents.send("mediaLoadComplete");
 
         }
     }).catch(err => {
@@ -586,19 +584,34 @@ const loadRecursive = async () => {
     });
 }
 
+var processedFolders = {};
 const openfileRecursive = (folderPath) => {
 
+
+    mainWindow.title = `Get Images in ${fileGlobal} recursive in ${folderPath}`
 
     fs.readdir(folderPath, "utf8", (err, data) => {
         if (err) { console.error(err); return; }
         let qtdFiles = data.map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isFile()).length
-        data.filter(item => item !== "tmp").map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isDirectory()).forEach(item => openfileRecursive(item))
+        data.filter(item => item !== "tmp").map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isDirectory()).forEach(item => {
+            processedFolders[item] = false;
+            openfileRecursive(item)
+        });
 
         if (qtdFiles > 0) {
             streamingMedia(data, folderPath, () => {
                 // nothing to do here, the onDone callback is just to signal the end of the stream
+                processedFolders[folderPath] = true;
+                if (Object.values(processedFolders).every(v => v === true)) {
+                    console.log("All folders processed");
+                    mainWindow.webContents.send("mediaLoadComplete");
+                }
             });
+        } else {
+                processedFolders[folderPath] = true;
         }
+
+
     })
 }
 
