@@ -52,6 +52,14 @@ interface SaveDetectionClassesPayload {
     classes?: string;
 }
 
+interface MaloiFile {
+    onnx?: string;
+    classes?: string;
+}
+
+const splitClassNames = (raw: string): string[] =>
+    String(raw).split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+
 const menuTemplate = (): MenuItemConstructorOptions[] => [
     {
         label: 'File',
@@ -253,22 +261,41 @@ ipcMain.on("findIndexDuplicates", findIndexDuplicates);
 let detectionStopRequested = false;
 ipcMain.on("stopDetection", () => { detectionStopRequested = true; });
 
-// Lets the user pick any .onnx model file instead of the old fixed
-// ./xcxv/best.onnx path. Sends the chosen path (or the still-unset current
-// one, if canceled) back so the renderer can reflect it and gate the run button.
+// Lets the user pick either a bare .onnx model file (old fixed ./xcxv/best.onnx
+// path replacement) or a .maloi file - a small JSON sidecar of the shape
+// { "onnx": "<path>", "classes": "a,b,c" } that sets the model *and* its class
+// list in one pick, so switching models doesn't also mean re-typing classes.
+// Sends the chosen path (or the still-unset current one, if canceled) back so
+// the renderer can reflect it and gate the run button.
 ipcMain.on("chooseOnnxModel", () => {
     const options: OpenDialogOptions = {
         properties: ["openFile"],
-        title: "Choose ONNX model for object detection",
-        filters: [{ name: "ONNX model", extensions: ["onnx"] }],
+        title: "Choose ONNX model (or .maloi model+classes file) for object detection",
+        filters: [
+            { name: "Model files", extensions: ["onnx", "maloi"] },
+            { name: "ONNX model", extensions: ["onnx"] },
+            { name: "Maloi model set", extensions: ["maloi"] },
+        ],
     };
     dialog.showOpenDialog(options).then(file => {
         if (!file.canceled && file.filePaths[0]) {
-            onnxDetector.setModelPath(file.filePaths[0]);
+            const chosenPath = file.filePaths[0];
+            if (path.extname(chosenPath).toLowerCase() === ".maloi") {
+                const maloi: MaloiFile = JSON.parse(fs.readFileSync(chosenPath, "utf8"));
+                const onnxPath = path.resolve(path.dirname(chosenPath), maloi.onnx || "");
+                onnxDetector.setModelPath(onnxPath);
+                const names = splitClassNames(maloi.classes || "");
+                MediaStore.ensureReady();
+                MediaStore.saveDetectionClasses(names);
+                onnxDetector.setClassNames(names);
+                mainWindow!.webContents.send("detectionClassesLoaded", { names });
+            } else {
+                onnxDetector.setModelPath(chosenPath);
+            }
         }
         mainWindow!.webContents.send("onnxModelChosen", { path: onnxDetector.getModelPath() });
     }).catch(err => {
-        console.error(err);
+        console.error("chooseOnnxModel failed", err);
     });
 });
 
@@ -337,8 +364,7 @@ ipcMain.on("detectObjects", async (event: IpcMainEvent, data: DetectObjectsPaylo
 // loadDetectionClasses, so the UI can never drift from what got persisted.
 ipcMain.on("saveDetectionClasses", (event: IpcMainEvent, data: SaveDetectionClassesPayload) => {
     try {
-        const raw = (data && data.classes) || "";
-        const names = String(raw).split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+        const names = splitClassNames((data && data.classes) || "");
         MediaStore.ensureReady();
         MediaStore.saveDetectionClasses(names);
         onnxDetector.setClassNames(names);

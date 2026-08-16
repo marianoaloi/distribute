@@ -80,11 +80,18 @@ const framePathFor = (input: string, position: string): string => path.join(getF
 
 
 const extractFramesFFMPEG = (
-    input: string, 
-    frames: Array<{ seconds: number; exists: boolean; position: "start10s" | "end10s" | "pct50" | "pct10"; path: string; }>): Promise<void> => 
+    input: string,
+    frames: Array<{ seconds: number; exists: boolean; position: "start10s" | "end10s" | "pct50" | "pct10"; path: string; }>): Promise<void> =>
         new Promise((resolve, reject) => {
-    const possitions = frames.map(f => `eq(n\\,${f.seconds})`).join('+');
-    const args = ["-y", "-loglevel", "error", "-i", input, '-vf' , `select='${possitions}'`, "-vsync", "0", path.join(getFramesDir(), `frame_%d.jpg`)];
+    if (frames.length === 0) return resolve();
+
+    const splitLabels = frames.map((_, i) => `[v${i + 1}]`).join('');
+    const selects = frames.map((f, i) => `[v${i + 1}]select='gte(t\\,${f.seconds})'[out${i + 1}]`).join('; ');
+    const filterComplex = `[0:v]split=${frames.length}${splitLabels}; ${selects}`;
+
+    const args = ["-y", "-loglevel", "error", "-i", input, "-filter_complex", filterComplex];
+    frames.forEach((f, i) => args.push("-map", `[out${i + 1}]`, "-frames:v", "1", f.path));
+
     execFile(ffmpegPath as string, args, { encoding: "utf8" }, (error) => error ? reject(error) : resolve());
 });
 
@@ -149,6 +156,7 @@ export const extractFrames = async (input: string): Promise<VideoFrame[]> => {
             .map(position => ({ position, path: framePathFor(input, position) }))
             .map(position => ({ ...position, seconds: timestamps[position.position], exists: fs.existsSync(position.path) }));
         frames.push(...all.filter(f => f.exists).map(f => ({ position: f.position, path: f.path })));
+        if (all.filter(f => !f.exists).length === 0) return frames;
         frames.push(...await getFramesFromFfmpeg(input, all.filter(f => !f.exists)));
         return frames;
     } finally {
