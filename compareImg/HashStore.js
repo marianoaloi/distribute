@@ -1,6 +1,7 @@
 const fs = require("fs");
 const Database = require("better-sqlite3");
 const { getDbDir, getDbPath } = require("./cache");
+const { createMediaSchema } = require("../mediaDb/mediaSchema");
 
 // baseGrey (the raw cropped/greyscale pixel buffer) has no index:
 // duplicateFinder.js compares it by pixel distance, not SQL equality, so
@@ -14,7 +15,7 @@ const { getDbDir, getDbPath } = require("./cache");
 // whatever columns actually exist on disk from a previous run's config -
 // exactly the "no such column: blur_2" crash this replaced. A fixed schema
 // can't drift.
-const METADATA_COLUMNS = ["localPath", "kind", "framePosition", "actualPosition", "futurePosition", "baseMd5", "baseGrey"];
+const METADATA_COLUMNS = ["framePosition", "futurePosition", "baseMd5", "baseGrey"];
 
 let db = null;
 
@@ -30,16 +31,20 @@ const ensureColumn = (database, table, name, type) => {
 };
 
 const createSchema = (database) => {
-    // actualPosition is left untyped (BLOB affinity) so whatever type the
-    // caller's media id is (string or number) round-trips unchanged instead
-    // of SQLite coercing it to TEXT.
+    // items is keyed by content (contentMd5, or contentMd5_framePosition for
+    // video/gif frames - see mediaIndexer.js), NOT by media: two different
+    // media rows whose files are byte-identical duplicates hash to the SAME
+    // item id. So one item can belong to many media, and one media has many
+    // items (its frames) - a real many-to-many, resolved through the
+    // media_item join table below rather than a mediaId column on items
+    // (a single column can only ever point at the last media that indexed
+    // that content, silently dropping every earlier duplicate's membership).
+    // localPath and kind live on the related media row - join through
+    // media_item instead of duplicating them here.
     database.exec(`
         CREATE TABLE IF NOT EXISTS items (
             id TEXT PRIMARY KEY,
-            localPath TEXT NOT NULL,
-            kind TEXT NOT NULL,
             framePosition TEXT NOT NULL DEFAULT '',
-            actualPosition,
             futurePosition INTEGER NOT NULL DEFAULT -1,
             baseMd5 TEXT,
             baseGrey BLOB
@@ -47,6 +52,19 @@ const createSchema = (database) => {
     `);
     ensureColumn(database, "items", "baseGrey", "BLOB");
     database.exec("CREATE INDEX IF NOT EXISTS idx_items_baseMd5 ON items(baseMd5);");
+
+    // Logical FKs (no declared REFERENCES), same pattern as
+    // media_detection.mediaId in mediaSchema.js.
+    database.exec(`
+        CREATE TABLE IF NOT EXISTS media_item (
+            mediaId TEXT NOT NULL,
+            itemId  TEXT NOT NULL,
+            PRIMARY KEY (mediaId, itemId)
+        );
+    `);
+    database.exec("CREATE INDEX IF NOT EXISTS idx_media_item_itemId ON media_item(itemId);");
+
+    createMediaSchema(database);
 };
 
 const openDb = () => {
@@ -56,11 +74,28 @@ const openDb = () => {
 
 // Wipes and recreates an empty database. Used both to self-heal a corrupted
 // db (rare with SQLite) and for the user-triggered "rebuild index" action.
+// detection_class rows are user-typed configuration, not derived data, so
+// they're read out before the wipe and re-inserted after - losing them on a
+// rebuild would be silent data loss. The read is best-effort: a corrupted db
+// must still be rebuildable even if this query itself fails.
 const rebuildIndex = () => {
-    if (db) db.close();
-    fs.rmSync(getDbPath(), { force: true });
+    let savedClasses = [];
+    if (db) {
+        try {
+            savedClasses = db.prepare("SELECT classId, name, updatedAt FROM detection_class ORDER BY classId ASC").all();
+        } catch {
+            savedClasses = [];
+        }
+        db.close();
+    }
+    // fs.rmSync(getDbPath(), { force: true });
     db = openDb();
     createSchema(db);
+    if (savedClasses.length > 0) {
+        const insert = db.prepare("INSERT INTO detection_class (classId, name, updatedAt) VALUES (@classId, @name, @updatedAt)");
+        const insertAll = db.transaction((rows) => rows.forEach((row) => insert.run(row)));
+        insertAll(savedClasses);
+    }
 };
 
 // Closes the current connection without deleting anything, so the next
@@ -105,11 +140,29 @@ const upsertItem = ({ id, metadata }) => {
     stmt.run({ id, ...metadata });
 };
 
-// Every row with a stored pixel buffer, for duplicateFinder.js's pairwise
-// mean-pixel-difference comparison (baseGrey has no index - distance can't
-// be expressed as a SQL equality/range lookup on a blob).
+// Records that mediaId's file produced/shares itemId's content. Idempotent -
+// mediaIndexer.js calls this every time it touches an item, including when
+// the item's baseMd5/baseGrey were already computed by an earlier (possibly
+// different) media with byte-identical content, so that duplicate keeps its
+// own membership instead of being silently dropped.
+const linkItemMedia = (itemId, mediaId) => {
+    db.prepare("INSERT OR IGNORE INTO media_item (mediaId, itemId) VALUES (?, ?)").run(mediaId, itemId);
+};
+
+// Every (item, media) link with a stored pixel buffer, for duplicateFinder.js's
+// pairwise mean-pixel-difference comparison (baseGrey has no index - distance
+// can't be expressed as a SQL equality/range lookup on a blob). One row per
+// media sharing that content, not per item - so byte-identical duplicate
+// media (same baseGrey, diff = 0) fall out of the same comparison the
+// near-duplicate case already does, with no special-casing needed.
 const allBaseGreyRows = () => db
-    .prepare("SELECT actualPosition, baseGrey, localPath FROM items WHERE baseGrey IS NOT NULL")
+    .prepare(`
+        SELECT media_item.mediaId AS mediaId, items.baseGrey AS baseGrey, media.localPath AS localPath
+        FROM media_item
+        JOIN items ON items.id = media_item.itemId
+        JOIN media ON media.id = media_item.mediaId
+        WHERE items.baseGrey IS NOT NULL
+    `)
     .all();
 
 // Column names of the live items table, for validating that an imported
@@ -126,14 +179,23 @@ const exportDatabase = (destPath) => {
     return db.backup(destPath);
 };
 
+// Single shared connection for mediaDb/MediaStore.js - callers must not open
+// a second `new Database(...)` on the same file.
+const getDb = () => {
+    ensureReady();
+    return db;
+};
+
 module.exports = {
     ensureReady,
     rebuildIndex,
     closeConnection,
     getItem,
     upsertItem,
+    linkItemMedia,
     allBaseGreyRows,
     columnNames,
     countItems,
     exportDatabase,
+    getDb,
 };

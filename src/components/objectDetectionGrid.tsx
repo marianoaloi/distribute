@@ -1,7 +1,8 @@
-import { IconButton, CircularProgress, LinearProgress } from "@mui/material"
-import { PlayArrow, Stop, FolderOpen } from "@mui/icons-material"
+import { IconButton, CircularProgress, LinearProgress, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, Button, TextField } from "@mui/material"
+import { PlayArrow, Stop, FolderOpen, Label } from "@mui/icons-material"
+import React from "react"
 import { Media } from "../entity/Media"
-import { ChooseOnnxModel, RunDetection, StopDetection, selectDetecting, selectDetectionError, selectDetectionProgress, selectDetections, selectMedias, selectModelPath, useSelector } from "../lib/redux"
+import { ChooseOnnxModel, LoadDetectionClasses, RunDetection, SaveDetectionClasses, StopDetection, selectDetecting, selectDetectionClassNames, selectDetectionError, selectDetectionProgress, selectDetections, selectLastProcessedId, selectMedias, selectModelPath, useSelector } from "../lib/redux"
 import { useDispatch } from "react-redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { toMediaUrl } from "../lib/mediaUrl"
@@ -19,10 +20,46 @@ export const GridDetections = (() => {
     const config = useSelector(configurationsSelector)
     const modelPath = useSelector(selectModelPath)
     const modelName = modelPath ? modelPath.split(/[\\/]/).pop() : null
+    const classNames = useSelector(selectDetectionClassNames)
+    const lastProcessedId = useSelector(selectLastProcessedId)
+
+    const [openClassNames, setOpenClassNames] = React.useState(false)
 
     const chooseModel = () => dispatch(ChooseOnnxModel())
     const runDetection = () => dispatch(RunDetection(medias))
     const stopDetection = () => dispatch(StopDetection())
+    const openClassNamesDialog = () => setOpenClassNames(true)
+    const closeClassNamesDialog = () => setOpenClassNames(false)
+
+    React.useEffect(() => {
+        dispatch(LoadDetectionClasses())
+    }, [dispatch])
+
+    // index.db is per-folder, so the class list must be re-fetched every time
+    // a folder finishes loading, not only on mount.
+    React.useEffect(() => {
+        if (!config.mediaLoading) {
+            dispatch(LoadDetectionClasses())
+        }
+    }, [config.mediaLoading, dispatch])
+
+    // Follow the run: keep the image that was just processed on screen. Parallel
+    // batches finish several items a second, so this must be an instant scroll -
+    // queued smooth-scroll animations would lag behind the run and look janky.
+    const scrolledToRef = React.useRef<string | null>(null)
+    React.useEffect(() => {
+        if (scrolledToRef.current === null && lastProcessedId !== null) {
+            // First render after a (re)mount: adopt whatever the store already holds
+            // without scrolling, so switching back to this tab does not yank the
+            // view to an image from a run that already finished.
+            scrolledToRef.current = lastProcessedId
+            return
+        }
+        if (!lastProcessedId || lastProcessedId === scrolledToRef.current) return
+        scrolledToRef.current = lastProcessedId
+        document.getElementById(`detection-media-${lastProcessedId}`)
+            ?.scrollIntoView({ block: "center", behavior: "auto" })
+    }, [lastProcessedId])
 
     return (
         <div>
@@ -35,15 +72,57 @@ export const GridDetections = (() => {
                     title={modelPath ? `Run ONNX object detection (${modelName}) over every loaded media` : "Choose an ONNX model file first"}>
                     {detecting ? <CircularProgress size={20} /> : <PlayArrow />}
                 </IconButton>
-                <IconButton onClick={stopDetection} disabled={!detecting}
-                    title="Stop after the current item — results found so far stay on screen">
+                <IconButton onClick={stopDetection} disabled={!detecting || !modelPath}
+                    title="Stop after the current batch — results found so far stay on screen">
                     <Stop />
                 </IconButton>
-                {modelName && <span>Model: {modelName}</span>}
+                <IconButton onClick={openClassNamesDialog}
+                    title="Edit the detection class names (comma-separated, position = class id)">
+                    <Label />
+                </IconButton>
+                {modelName && <span title={modelPath ?? undefined}>Model: {modelName}</span>}
                 <span>{Object.keys(detections).length} media scanned</span>
                 {detectionError && <span>Detection failed: {detectionError}</span>}
                 <div className="spacer" />
             </DetectionResume>
+
+            <Dialog
+                open={openClassNames}
+                onClose={closeClassNamesDialog}
+                PaperProps={{
+                    component: 'form',
+                    onSubmit: (event: React.FormEvent<HTMLFormElement>) => {
+                        event.preventDefault();
+                        const formData = new FormData(event.currentTarget);
+                        const formJson = Object.fromEntries((formData as any).entries());
+                        dispatch(SaveDetectionClasses(formJson.classes))
+                        closeClassNamesDialog();
+                    },
+                }}
+            >
+                <DialogTitle>Detection class names</DialogTitle>
+                <DialogContent>
+                    <DialogContentText>
+                        Comma-separated class names — position 0 is class 0, position 1 is class 1, and so on.
+                    </DialogContentText>
+                    <TextField
+                        autoFocus
+                        margin="dense"
+                        id="classes"
+                        name="classes"
+                        label="Class names"
+                        type="text"
+                        fullWidth
+                        multiline
+                        variant="standard"
+                        defaultValue={classNames.join(', ')}
+                    />
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={closeClassNamesDialog}>Cancel</Button>
+                    <Button type="submit">Save</Button>
+                </DialogActions>
+            </Dialog>
 
             {detecting &&
                 <LinearProgress
@@ -55,7 +134,7 @@ export const GridDetections = (() => {
             {medias.length > 0
                 ? <DetectionGridWrap>
                     {medias.map(media => (
-                        <DetectionTile key={media.id} size={config.pxzoom}>
+                        <DetectionTile id={`detection-media-${media.id}`} key={media.id} size={config.pxzoom}>
                             <img src={toMediaUrl(media.media)} alt={media.filename} draggable={false} />
                             {(detections[media.id] || []).map((box, idx) => (
                                 <DetectionBoxOutline key={idx} x={box.x} y={box.y} w={box.w} h={box.h}>

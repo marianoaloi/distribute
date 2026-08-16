@@ -1,7 +1,8 @@
 import { createReducer } from "@reduxjs/toolkit"
-import { mediaLoadComplete, mediaLoadStart, setMediaType, setPage, setPostsPerPage, setScrollPosition, setVideoVolume, zoomIn, zoomOut } from "./thunks"
+import { mediaLoadComplete, mediaLoadStart, setClassFilter, setMediaType, setPage, setPostsPerPage, setScrollPosition, setVideoVolume, zoomIn, zoomOut } from "./thunks"
 import { populateArray } from "../media/media.reduce"
 import { loadPersistedConfig } from "./persistConfig"
+import { ClassFilter } from "../../../../entity/FilterMedia"
 
 
 interface Config {
@@ -12,6 +13,7 @@ interface Config {
     postsPerPage: number
     scrollPosition: number
     videoVolume: number
+    classFilter: ClassFilter
 }
 
 const initialState: Config = {
@@ -21,6 +23,7 @@ const initialState: Config = {
     postsPerPage: 50,
     scrollPosition: 0,
     videoVolume: 0.05,
+    classFilter: [],
     ...loadPersistedConfig(),
 }
 
@@ -36,6 +39,13 @@ export const ConfigReduce = createReducer(initialState, (build) => {
     build.addCase(setMediaType, (state, action) => ({
         ...state,
         mediaType: action.payload
+    }))
+    // Filtering changes how many pages exist, so page 7 of the old list is
+    // meaningless against the new one - same reason populateArray resets it.
+    build.addCase(setClassFilter, (state, action) => ({
+        ...state,
+        classFilter: action.payload,
+        page: 0
     }))
     build.addCase(setVideoVolume, (state, action) => ({
         ...state,

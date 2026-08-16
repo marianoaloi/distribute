@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { OpenDirectory, OpenDirectoryRecursive, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
+import { OpenDirectory, OpenDirectoryRecursive, selectDetections, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
 import { ImgGrid, NoMediaFound, Qtd, Resume } from "./gridImg.styled"
 import { MediaIMG } from "./media"
 import { Media } from "../entity/Media"
@@ -10,6 +10,7 @@ import { KeyboardArrowLeft, KeyboardArrowRight, KeyboardDoubleArrowLeft, Keyboar
 import ModalZoom from "./modalZoom"
 import { configurationsSelector, setPage, setPostsPerPage, setScrollPosition } from "../lib/redux/slices/configurations"
 import { MediaTypeFilter, matchesMediaType } from "./mediaTypeFilter"
+import { ClassFilter, matchesClassFilter, normalizeClassFilter } from "./classFilter"
 
 
 import { FolderCopyTwoTone, FolderOpen, Pause, PlayArrow } from '@mui/icons-material';
@@ -22,10 +23,13 @@ export const GridIMGs = (() => {
     const dispatch = useDispatch<any>();
 
     const config = useSelector(configurationsSelector)
+    const detections = useSelector(selectDetections)
+    const classFilterGroups = normalizeClassFilter(config.classFilter)
     // Imported fake items (database import feature) only make sense inside
     // duplicate groups — the main grid stays a true view of the actual folder.
     const medias = useSelector(selectMedias).filter(m => !m.deleted && !m.imported)
         .filter(m => matchesMediaType(m.mime, config.mediaType))
+        .filter(m => matchesClassFilter(detections[m.id], classFilterGroups))
     const currentPage = config.page;
     const setCurrentPage = (page: number) => dispatch(setPage(page));
     const postsPerPage = config.postsPerPage;
@@ -329,6 +333,7 @@ export const GridIMGs = (() => {
 
             </ImgGrid>
             <MediaTypeFilter />
+            <ClassFilter />
 
                     {lastZoom && <ModalZoom mediaWithPreview={lastZoom} handleExternalClose={handleClose} openModal={open} ref={modalZoomRefMethods}
                         onPrev={() => {

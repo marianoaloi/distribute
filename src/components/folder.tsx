@@ -1,5 +1,5 @@
 import { Add, CallSplit, Delete } from "@mui/icons-material"
-import { selectMedias, SendSelectedFiles, updateArrayItem, updateManyArrayItem, useDispatch, useSelector } from "../lib/redux"
+import { selectMedias, SendSelectedFiles, useDispatch, useSelector } from "../lib/redux"
 import { addFolder, removeFolder, setSplitMoveCheckedFolder, setSplitMoveUncheckedFolder, splitMoveCheckedFolder, splitMoveUncheckedFolder, workFolder } from "../lib/redux/slices/folders"
 import { AddFolder, ButtonDelete, ButtonFolder, FolderGrid } from "./folder.styled"
 import React from "react"
@@ -79,27 +79,23 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
     // Moves the unchecked media to one folder and the checked media to
     // another in a single action, so both halves of a duplicates pass can be
     // filed away without the unchecked side (which never gets a "process"
-    // button of its own) being left behind.
+    // button of its own) being left behind. Redux is NOT updated here - each
+    // item is only marked deleted once app.js's "fileProcessed" event (see
+    // electron.action.ts) confirms the physical move actually succeeded.
     const handleSplitMove = () => {
         // moveFile (app.js) only acts on items whose payload `checked` is
-        // true, so the unchecked group is sent with checked forced true -
-        // same trick the single-media onlyCopy-false path below already
-        // uses - then restored to its real value for the redux update
-        // (harmless either way since `deleted: true` hides it regardless).
+        // true, so the unchecked group is sent with checked forced true.
         const uncheckedWire = splitScreenMedias
             .filter(m => !m.checked && !m.deleted && !m.imported)
             .map(m => ({ ...m, checked: true }))
         if (uncheckedWire.length > 0) {
             SendSelectedFiles(uncheckedDestFolder, false, uncheckedWire)
-            dispatch(updateManyArrayItem(uncheckedWire.map(m => ({ ...m, checked: false, deleted: true }))))
         }
 
         const checkedMedias = splitScreenMedias
             .filter(m => m.checked && !m.deleted && !m.imported)
-            .map(m => ({ ...m, deleted: true }))
         if (checkedMedias.length > 0) {
             SendSelectedFiles(checkedDestFolder, false, checkedMedias)
-            dispatch(updateManyArrayItem(checkedMedias))
         }
 
         handleCloseSplitMove();
@@ -118,34 +114,26 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
     const ButtonProcess: React.FC<{ fol: string }> = ({ fol }) => {
         const medias = useSelector(selectMedias)
 
-        const dispatch = useDispatch();
+        // Redux is NOT updated here for a move - each item is only marked
+        // deleted once app.js's "fileProcessed" event (see
+        // electron.action.ts's confirmFileMoved listener) confirms the
+        // physical move actually succeeded, so a failed move leaves the item
+        // visible instead of vanishing from the grid while still sitting in
+        // the source folder. A copy never marks anything deleted at all,
+        // since the source file is deliberately left in place.
         function sendSelected(folder: string): void {
             if (!mediaOnlyCopy) {
 
                 // Imported fake items represent files in OTHER folders — even
                 // when checked they must never be moved (app.js re-filters too).
-                const mediasFilter = medias.filter(m => m.checked && !m.deleted && !m.imported).map(m => {
-                    const aux = { ...m }
-                    aux.deleted = true
-                    return aux
-                })
+                const mediasFilter = medias.filter(m => m.checked && !m.deleted && !m.imported)
                 SendSelectedFiles(folder, false, mediasFilter)
-
-                dispatch(updateManyArrayItem(mediasFilter))
 
             } else {
 
                 const aux = { ...mediaOnlyCopy }
                 aux.checked = true
-                if (onlyCopy) {
-                    SendSelectedFiles(folder, true, [aux])
-                } else {
-                    SendSelectedFiles(folder, false, [aux])
-
-                    aux.deleted = true
-                    aux.checked = mediaOnlyCopy.checked
-                    dispatch(updateArrayItem(aux))
-                }
+                SendSelectedFiles(folder, onlyCopy, [aux])
                 handleExternalClose();
             }
         }

@@ -15,7 +15,6 @@ const ipc = {
             'openRecursive',
             'sort',
             'open',
-            'findDuplicates',
             'findIndexDuplicates',
             'rebuildIndex',
             'detectObjects',
@@ -23,6 +22,9 @@ const ipc = {
             'chooseOnnxModel',
             'exportDatabase',
             'importDatabase',
+            'saveDetectionClasses',
+            'loadDetectionClasses',
+            'loadDetections',
         ],
         // From main to render.
         'receive': ['directoryOpen',
@@ -63,6 +65,9 @@ const ipc = {
             'onnxModelChosen',
             'databaseExported',
             'databaseImported',
+            'detectionClassesLoaded',
+            'detectionsLoaded',
+            'fileProcessed',
         ]
     }
 };

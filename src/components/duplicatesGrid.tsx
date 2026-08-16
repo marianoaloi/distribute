@@ -1,9 +1,9 @@
 import { KeyboardEvent, useRef, useState } from "react"
 import { useDispatch } from "react-redux"
 import { IconButton, CircularProgress, LinearProgress } from "@mui/material"
-import { Refresh, ImageSearch, RestartAlt, FolderOpen, FolderCopyTwoTone, VolumeOff, FileDownload, FileUpload, RadioButtonChecked, RadioButtonUnchecked } from "@mui/icons-material"
+import { ImageSearch, RestartAlt, FolderOpen, FolderCopyTwoTone, VolumeOff, FileDownload, FileUpload, RadioButtonChecked, RadioButtonUnchecked } from "@mui/icons-material"
 import { Media } from "../entity/Media"
-import { ExportDatabase, FindDuplicates, FindIndexDuplicates, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
+import { ExportDatabase, FindIndexDuplicates, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { MediaIMG } from "./media"
 import ModalZoom from "./modalZoom"
@@ -82,9 +82,11 @@ export const GridDuplicates = (() => {
     const unselectAll = () => processChoice(flatList, false)
 
     // Within each group: checks every item for removal except one survivor,
-    // chosen in priority order — the biggest item with sound, or if none of
-    // the group's items has sound, the biggest muted item (images count as
-    // muted, since they carry no audio).
+    // chosen by type/audio priority — a video is always preferred over a gif
+    // (and either over a plain image) regardless of file size, since a video
+    // carries strictly more information. Within videos, one with sound beats
+    // a muted one. The biggest item by size breaks ties within whichever
+    // tier is non-empty.
     const selectDuplicatesToRemove = () => {
         const decided: Media[] = []
         for (const group of groups) {
@@ -93,8 +95,13 @@ export const GridDuplicates = (() => {
             // they must not count as a group's surviving copy either.
             const own = group.filter(m => !m.imported)
             if (own.length === 0) continue
-            const sounded = own.filter(m => m.hasAudio)
-            const candidates = sounded.length > 0 ? sounded : own
+            const videos = own.filter(m => m.mime.includes('video'))
+            const soundedVideos = videos.filter(m => m.hasAudio)
+            const gifs = own.filter(m => m.mime.includes('gif'))
+            const candidates = soundedVideos.length > 0 ? soundedVideos
+                : videos.length > 0 ? videos
+                : gifs.length > 0 ? gifs
+                : own
             const spared = candidates.reduce((a, b) => b.size > a.size ? b : a)
             for (const media of own) {
                 decided.push({ ...media, checked: media !== spared })
@@ -107,7 +114,6 @@ export const GridDuplicates = (() => {
     // they live in other folders and must never enter this folder's index.
     const actualMedias = medias.filter(m => !m.imported)
 
-    const scan = () => dispatch(FindDuplicates(actualMedias))
     const scanByHash = () => dispatch(FindIndexDuplicates())
     const openDiretory = () => dispatch(OpenDirectory())
     const openDiretoryRecursive = () => dispatch(OpenDirectoryRecursive())
@@ -181,7 +187,6 @@ export const GridDuplicates = (() => {
     return (
         <div onKeyUp={(ev) => pressedKeyUp(ev)}>
             <DuplicatesResume>
-                <IconButton onClick={scan} title="Scan loaded media for identical content (MD5)"><Refresh /></IconButton>
                 <IconButton onClick={scanByHash} title="Scan indexed media for visual duplicates (perceptual hash)"><ImageSearch /></IconButton>
                 <IconButton onClick={rebuildIndex} disabled={indexRebuilding || config.mediaLoading}
                     title={config.mediaLoading
@@ -190,7 +195,7 @@ export const GridDuplicates = (() => {
                     {indexRebuilding ? <CircularProgress size={20} /> : <RestartAlt />}
                 </IconButton>
                 <IconButton onClick={selectDuplicatesToRemove} disabled={groups.length === 0}
-                    title="Check duplicates for removal in every group, keeping one survivor: the biggest item with sound, or if none has sound, the biggest muted item">
+                    title="Check duplicates for removal in every group, keeping one survivor: a video is preferred over a gif or image (biggest with sound, else biggest muted), otherwise the biggest gif, otherwise the biggest item">
                     <VolumeOff />
                 </IconButton>
                 <IconButton onClick={exportDatabase} disabled={dbExporting}

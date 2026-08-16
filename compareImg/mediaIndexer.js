@@ -1,12 +1,16 @@
 const compareImgStore = require("./HashStore");
 const computePool = require("./computePool");
 const videoFrames = require("./videoFrames");
-const { hashFor } = require("../thumbnails/cache");
 
 // pixelSourcePath: what to read pixel data from (the frame file for videos, the
-// media file itself for images). metadataLocalPath: what to record as the
-// media's own location, always the source file the user actually has on disk.
-const indexUnit = async (id, pixelSourcePath, metadataLocalPath, kind, framePosition, actualPosition) => {
+// media file itself for images). mediaId: the media row this content came
+// from THIS time - always linked, even if id's content was already indexed
+// by an earlier (possibly different, byte-identical-duplicate) media, so
+// that duplicate keeps its own membership in the media x item relation
+// instead of being silently dropped (see HashStore.js's media_item table).
+const indexUnit = async (id, pixelSourcePath, mediaId, framePosition) => {
+    compareImgStore.linkItemMedia(id, mediaId);
+
     const existing = compareImgStore.getItem(id);
     if (existing) return;
 
@@ -16,10 +20,7 @@ const indexUnit = async (id, pixelSourcePath, metadataLocalPath, kind, framePosi
     const { baseMd5, grey } = await computePool.compute(pixelSourcePath);
 
     const metadata = {
-        localPath: metadataLocalPath,
-        kind,
         framePosition: framePosition || "",
-        actualPosition,
         futurePosition: -1,
         baseMd5,
         // Raw cropped/greyscale pixel buffer, stored so duplicateFinder.js
@@ -33,9 +34,9 @@ const indexUnit = async (id, pixelSourcePath, metadataLocalPath, kind, framePosi
 
 const indexImage = async (mediaItem) => {
     const localPath = mediaItem.item;
-    const id = hashFor(localPath);
+    if (!mediaItem.contentMd5) return;
     try {
-        await indexUnit(id, localPath, localPath, "image", "", mediaItem.id);
+        await indexUnit(mediaItem.contentMd5, localPath, mediaItem.id, "");
     } catch (error) {
         console.error(`compareImg: failed to index image ${localPath}:`, error.message);
     }
@@ -43,22 +44,32 @@ const indexImage = async (mediaItem) => {
 
 // Frame positions are fixed labels (not duration-derived), so we can check
 // whether a video's frames are already indexed without probing it via ffmpeg.
-const videoAlreadyIndexed = async (localPath) => {
-    const baseId = hashFor(localPath);
+const videoAlreadyIndexed = async (mediaItem) => {
+    const baseId = mediaItem.contentMd5;
     try {
         for (const position of videoFrames.FRAME_POSITIONS) {
             if (!compareImgStore.getItem(`${baseId}_${position}`)) return false;
         }
         return true;
     } catch (error) {
-        console.error(`compareImg: failed to check index for ${localPath}:`, error.message);
+        console.error(`compareImg: failed to check index for ${mediaItem.item}:`, error.message);
         return false;
     }
 };
 
 const indexVideo = async (mediaItem) => {
     const localPath = mediaItem.item;
-    if (await videoAlreadyIndexed(localPath)) return;
+    if (!mediaItem.contentMd5) return;
+    if (await videoAlreadyIndexed(mediaItem)) {
+        // Content's items already exist from an earlier (possibly different,
+        // byte-identical-duplicate) media - no ffmpeg/hashing needed, but
+        // THIS media still needs its own link into media_item or it never
+        // shows up as a member of the duplicate group.
+        for (const position of videoFrames.FRAME_POSITIONS) {
+            compareImgStore.linkItemMedia(`${mediaItem.contentMd5}_${position}`, mediaItem.id);
+        }
+        return;
+    }
 
     const frames = await videoFrames.extractFrames(localPath).catch(error => {
         console.error(`compareImg: frame extraction failed for ${localPath}:`, error.message);
@@ -66,9 +77,9 @@ const indexVideo = async (mediaItem) => {
     });
 
     for (const frame of frames) {
-        const id = `${hashFor(localPath)}_${frame.position}`;
+        const id = `${mediaItem.contentMd5}_${frame.position}`;
         try {
-            await indexUnit(id, frame.path, localPath, "video", frame.position, mediaItem.id);
+            await indexUnit(id, frame.path, mediaItem.id, frame.position);
         } catch (error) {
             console.error(`compareImg: failed to index video frame ${frame.path}:`, error.message);
         }
@@ -94,7 +105,12 @@ const indexMediaBackground = async (mediaItems, onProgress) => {
     const runWorker = async () => {
         while (cursor < mediaItems.length) {
             const mediaItem = mediaItems[cursor++];
-            if (mediaItem.mime && mediaItem.mime.includes("video")) {
+            if (mediaItem.mime && mediaItem.mime.includes("gif")) {
+                // A gif is many frames like a video, not a single still like
+                // an image - route it through indexVideo before the generic
+                // image/video mime checks below.
+                await indexVideo(mediaItem);
+            } else if (mediaItem.mime && mediaItem.mime.includes("video")) {
                 await indexVideo(mediaItem);
             } else if (mediaItem.mime && mediaItem.mime.includes("image")) {
                 await indexImage(mediaItem);

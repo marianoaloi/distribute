@@ -20,7 +20,7 @@ const mediaIndexer = require("./compareImg/mediaIndexer");
 const dbImport = require("./compareImg/dbImport");
 const { hashFor } = require("./thumbnails/cache");
 const onnxDetector = require("./objectDetection/onnxDetector");
-const transformData = util.transformData;
+const MediaStore = require("./mediaDb/MediaStore");
 const transformDataStreaming = util.transformDataStreaming;
 
 var menuTemplate = () => [
@@ -197,15 +197,6 @@ ipcMain.on("process", async (event, data) => {
     }
 })
 
-ipcMain.on("findDuplicates", async (event, data) => {
-    try {
-        const groups = await duplicateFinder.findDuplicates(data.medias);
-        mainWindow.webContents.send("duplicatesFound", groups);
-    } catch (error) {
-        console.error("findDuplicates failed", error);
-        mainWindow.webContents.send("duplicatesFound", []);
-    }
-})
 const findIndexDuplicates = async () => {
     try {
         const groups = await duplicateFinder.findIndexDuplicates();
@@ -255,20 +246,108 @@ ipcMain.on("detectObjects", async (event, data) => {
     }
     detectionStopRequested = false;
     let processed = 0;
-    for (const media of medias) {
-        if (detectionStopRequested) break;
-        try {
-            const boxes = await onnxDetector.detect(media.media);
+    const total = medias.length;
+    // A media already has a stored result for the *current* class list when
+    // its snapshot matches classesSnapshot below - skip re-running the model
+    // on it and just replay what's already in media_detection. Any class
+    // list edit changes the snapshot, so a redo is forced for everyone again.
+    const classesSnapshot = onnxDetector.getClassNames().join(",");
+    const mediaState = MediaStore.findMediaByIds(medias.map((media) => media.id));
+
+    // Detection runs 20 medias at a time: the awaited parts (file read, JPEG
+    // decode, letterbox, session.run scheduling) overlap instead of queueing
+    // behind each other. The native inference itself still runs one at a time
+    // on the main process thread - the win is in everything around it.
+    const DETECTION_BATCH_SIZE = 20;
+
+    const processOne = async (media) => {
+        const state = mediaState.get(media.id);
+        const alreadyRecognized = Boolean(state && state.detectionAt && state.detectionClasses === classesSnapshot);
+        if (alreadyRecognized) {
+            const boxes = MediaStore.getDetections(media.id);
             mainWindow.webContents.send("detectionFound", { id: media.id, boxes });
-        } catch (error) {
-            console.error("detectObjects failed for", media.media, error);
-            mainWindow.webContents.send("detectionFound", { id: media.id, boxes: [], error: error.message });
+        } else {
+            try {
+                const boxes = await onnxDetector.detect(media.media);
+                mainWindow.webContents.send("detectionFound", { id: media.id, boxes });
+                try {
+                    MediaStore.replaceDetections(media.id, boxes, onnxDetector.getModelPath());
+                    MediaStore.setDetectionState(media.id, classesSnapshot);
+                } catch (error) {
+                    console.error("Persisting detections failed for", media.media, error);
+                }
+            } catch (error) {
+                console.error("detectObjects failed for", media.media, error);
+                mainWindow.webContents.send("detectionFound", { id: media.id, boxes: [], error: error.message });
+            }
         }
         processed++;
-        mainWindow.webContents.send("detectionProgress", { processed, total: medias.length });
+        mainWindow.webContents.send("detectionProgress", { processed, total });
+    };
+
+    for (let i = 0; i < medias.length; i += DETECTION_BATCH_SIZE) {
+        // Stop is honoured between batches - an in-flight batch is allowed to
+        // finish so its already-computed boxes still get persisted and shown.
+        if (detectionStopRequested) break;
+        await Promise.allSettled(medias.slice(i, i + DETECTION_BATCH_SIZE).map(processOne));
     }
+
     mainWindow.webContents.send("detectionsComplete", detectionStopRequested ? { stopped: true } : {});
 })
+
+// Persists the user-typed comma-separated class list (mediaDb's
+// detection_class table, per-folder like the rest of index.db) and pushes it
+// into onnxDetector so subsequent detections use the real names instead of
+// "class N". The main process owns the split - the renderer always sends the
+// raw string. detectionClassesLoaded is the reply to both this and
+// loadDetectionClasses, so the UI can never drift from what got persisted.
+ipcMain.on("saveDetectionClasses", (event, data) => {
+    try {
+        const raw = (data && data.classes) || "";
+        const names = String(raw).split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+        MediaStore.ensureReady();
+        MediaStore.saveDetectionClasses(names);
+        onnxDetector.setClassNames(names);
+        mainWindow.webContents.send("detectionClassesLoaded", { names });
+    } catch (error) {
+        console.error("saveDetectionClasses failed", error);
+        mainWindow.webContents.send("detectionClassesLoaded", { names: [], error: error.message });
+    }
+});
+
+ipcMain.on("loadDetectionClasses", () => {
+    try {
+        MediaStore.ensureReady();
+        const names = MediaStore.getDetectionClasses();
+        onnxDetector.setClassNames(names);
+        mainWindow.webContents.send("detectionClassesLoaded", { names });
+    } catch (error) {
+        console.error("loadDetectionClasses failed", error);
+        mainWindow.webContents.send("detectionClassesLoaded", { names: [], error: error.message });
+    }
+});
+
+// Hydrates every persisted detection for the current folder into the renderer
+// in one message, so the grid's class filter works on a freshly opened folder
+// without the user having to press Play again. index.db is per-folder, so no
+// id list is needed - the whole media_detection table is the current media.
+ipcMain.on("loadDetections", () => {
+    try {
+        MediaStore.ensureReady();
+        const rows = MediaStore.getAllDetections();
+        const byId = new Map();
+        for (const row of rows) {
+            const { mediaId, ...box } = row;
+            if (!byId.has(mediaId)) byId.set(mediaId, []);
+            byId.get(mediaId).push(box);
+        }
+        const items = [...byId].map(([id, boxes]) => ({ id, boxes }));
+        mainWindow.webContents.send("detectionsLoaded", { items });
+    } catch (error) {
+        console.error("loadDetections failed", error);
+        mainWindow.webContents.send("detectionsLoaded", { items: [], error: error.message });
+    }
+});
 
 // Wipes the (possibly corrupted) compareImg sqlite index and re-indexes the
 // media the renderer already has loaded in redux, so the user doesn't need
@@ -276,21 +355,23 @@ ipcMain.on("detectObjects", async (event, data) => {
 ipcMain.on("rebuildIndex", async (event, data) => {
     try {
         await compareImgStore.rebuildIndex();
-        const medias = (data && data.medias) || [];
+        const medias = MediaStore.findAllMediaThatExists() || [];
         mainWindow.webContents.send("indexRebuildProgress", { processed: 0, total: medias.length });
         await mediaIndexer.indexMediaBackground(medias.map(m => ({
-            item: m.path,
+            item: m.localPath ,
             mime: m.mime,
+            kind: m.kind,
+            contentMd5 : m.contentMd5,
             id: m.id,
         })), (processed, total) => {
             mainWindow.webContents.send("indexRebuildProgress", { processed, total });
         });
         mainWindow.webContents.send("indexRebuilt", { success: true, count: medias.length });
+        findIndexDuplicates();
     } catch (error) {
         console.error("rebuildIndex failed", error);
         mainWindow.webContents.send("indexRebuilt", { success: false, error: error.message });
     }
-    findIndexDuplicates();
 })
 
 // Exports a consistent snapshot of the compareImg sqlite index so it can be
@@ -338,6 +419,21 @@ ipcMain.on("verifyOpen", async () => {
         }
 })
 
+// Reports whether a single media's file operation actually finished on
+// disk, so the renderer can mark it moved/deleted only once that's true
+// instead of assuming success the moment the button was clicked (a failed
+// move used to silently vanish the item from the grid while the file stayed
+// put in the source folder).
+const reportFileProcessed = (media, onlyCopy, error) => {
+    if (error) console.error(onlyCopy ? "Copy failed for" : "Move failed for", media.path, "-", error);
+    mainWindow.webContents.send("fileProcessed", {
+        id: media.id,
+        onlyCopy,
+        success: !error,
+        error: error ? error.message : undefined,
+    });
+};
+
 const moveFile = (bol, dest, onlyCopy, data) => {
     if (process.env.FixFiles) {
         console.log("##MOVEFILE", dest, data.filter(f => f.checked === bol).map(f => f.path).join(","));
@@ -353,33 +449,34 @@ const moveFile = (bol, dest, onlyCopy, data) => {
         if (!fs.existsSync(completeDestine)) {
             fs.mkdirSync(completeDestine)
         }
-        if (fs.existsSync(media.path)) {
-            const destination = path.join(completeDestine, path.basename(media.path));
-            if (onlyCopy) {
-                fs.copyFile(media.path, destination, (err) => {
-                    if (err) console.error("Copy failed for", media.path, "-", err);
-                })
-            } else {
-                fs.rename(media.path, destination, (err) => {
-                    if (!err) return;
-                    if (err.code !== "EXDEV") {
-                        console.error("Move failed for", media.path, "-", err);
+        if (!fs.existsSync(media.path)) {
+            reportFileProcessed(media, onlyCopy, new Error("Source file no longer exists"));
+            return;
+        }
+        const destination = path.join(completeDestine, path.basename(media.path));
+        if (onlyCopy) {
+            fs.copyFile(media.path, destination, (err) => {
+                reportFileProcessed(media, onlyCopy, err);
+            })
+        } else {
+            fs.rename(media.path, destination, (err) => {
+                if (!err) { reportFileProcessed(media, onlyCopy); return; }
+                if (err.code !== "EXDEV") {
+                    reportFileProcessed(media, onlyCopy, err);
+                    return;
+                }
+                // rename cannot cross volumes: fall back to copy + delete
+                fs.copyFile(media.path, destination, (copyErr) => {
+                    if (copyErr) {
+                        reportFileProcessed(media, onlyCopy, copyErr);
                         return;
                     }
-                    // rename cannot cross volumes: fall back to copy + delete
-                    fs.copyFile(media.path, destination, (copyErr) => {
-                        if (copyErr) {
-                            console.error("Move (copy fallback) failed for", media.path, "-", copyErr);
-                            return;
-                        }
-                        fs.unlink(media.path, (unlinkErr) => {
-                            if (unlinkErr) console.error("Move (source cleanup) failed for", media.path, "-", unlinkErr);
-                        });
+                    fs.unlink(media.path, (unlinkErr) => {
+                        reportFileProcessed(media, onlyCopy, unlinkErr);
                     });
-                })
-            }
+                });
+            })
         }
-        // mainWindow.ipcMain.send("delete", media)
     });
 }
 const openfile = () => {
@@ -388,28 +485,33 @@ const openfile = () => {
     fs.readdir(fileGlobal, "utf8", (err, data) => {
         if (err) { console.error(err); return; }
 
+        mainWindow.webContents.send("cleanGrid");
+
         console.log(`Get Images in ${fileGlobal}`, "files", data.length);
 
         mainWindow.webContents.send("mediaLoadStart");
-        transformDataStreaming(
-            data,
-            fileGlobal,
-            (images) => {
-                mainWindow.webContents.send("directoryOpen", images);
-            },
-            (video) => {
-                // console.log("Video found", video.id);
-                mainWindow.webContents.send("addOneMedia", video);
-            },
-            () => {
-                mainWindow.webContents.send("mediaLoadComplete");
-            }
-        );
+
+        streamingMedia(data, fileGlobal, () => {
+            mainWindow.webContents.send("mediaLoadComplete");
+        });
     });
 };
 
 
-
+const streamingMedia = (data, root, complete) => {
+    transformDataStreaming(
+        data,
+        root,
+        (mediaReady) => {
+            mainWindow.webContents.send("loadMedias", mediaReady);
+        },
+        (mediaLazy) => {
+            // console.log("Video found", video.id);
+            mainWindow.webContents.send("addOneMedia", mediaLazy);
+        },
+        complete
+    );
+}
 
 
 /************************************ MENU */
@@ -461,28 +563,48 @@ const loadRecursive = async () => {
     dialog.showOpenDialog(options).then(file => {
         if (!file.canceled) {
             setActiveFolder(file.filePaths[0]);
+            fileGlobal = file.filePaths[0]; // path.join(file.filePaths[0], "tmp");
             compareImgStore.closeConnection();
+
+
+            mainWindow.webContents.send("cleanGrid");
+            mainWindow.webContents.send("mediaLoadStart");
             openfileRecursive(file.filePaths[0]);
 
-            mainWindow.title = `Get Images in ${fileGlobal} recursive in ${file.filePaths[0]}`
         }
     }).catch(err => {
         console.error(err);
     });
 }
 
+var processedFolders = {};
 const openfileRecursive = (folderPath) => {
 
+
+    mainWindow.title = `Get Images in ${fileGlobal} recursive in ${folderPath}`
 
     fs.readdir(folderPath, "utf8", (err, data) => {
         if (err) { console.error(err); return; }
         let qtdFiles = data.map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isFile()).length
-        data.map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isDirectory()).forEach(item => openfileRecursive(item))
+        data.filter(item => item !== "tmp").map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isDirectory()).forEach(item => {
+            processedFolders[item] = false;
+            openfileRecursive(item)
+        });
 
-        if (qtdFiles > 0)
-            mainWindow.webContents.send("loadMedias",
-                transformData(data, folderPath)
-            );
+        if (qtdFiles > 0) {
+            streamingMedia(data, folderPath, () => {
+                // nothing to do here, the onDone callback is just to signal the end of the stream
+                processedFolders[folderPath] = true;
+                if (Object.values(processedFolders).every(v => v === true)) {
+                    console.log("All folders processed");
+                    mainWindow.webContents.send("mediaLoadComplete");
+                }
+            });
+        } else {
+            processedFolders[folderPath] = true;
+        }
+
+
     })
 }
 

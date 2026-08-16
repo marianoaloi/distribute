@@ -1,6 +1,6 @@
 {
   "name": "distribute",
-  "version": "1.0.16",
+  "version": "2.0.66",
   "private": true,
   "main": "app.js",
   "homepage": "./",
@@ -58,7 +58,8 @@
       "thumbnails/**/*",
       "compareImg/**/*",
       "objectDetection/**/*",
-      "xcxv/**/*",
+      "mediaDb/**/*",
+      "hashing/**/*",
       "package.json"
     ],
     "asarUnpack": [
@@ -69,6 +70,7 @@
     "extraMetadata": {
       "main": "app.js"
     },
+    "icon": "public/logo512.png",
     "win": {
       "target": "portable"
     }
