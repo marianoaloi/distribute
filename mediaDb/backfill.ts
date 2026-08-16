@@ -1,6 +1,5 @@
 import { fileMd5, FILE_HASH_CONCURRENCY } from "../hashing/fileHash";
 import * as MediaStore from "./MediaStore";
-import * as ThumbnailService from "../thumbnails/ThumbnailService";
 
 const BATCH_SIZE = 200;
 
@@ -29,16 +28,6 @@ export const backfillContentMd5 = async (): Promise<void> => {
                         const contentMd5 = await fileMd5(row.localPath);
                         if (!contentMd5) continue;
                         MediaStore.setContentMd5(row.id, contentMd5);
-                        // Re-home the thumbnail under the contentMd5 name right
-                        // now, not on the next getThumbnail call - otherwise
-                        // the fast path in util.js keeps missing (it looks for
-                        // the contentMd5 name) for one extra load after the
-                        // hash becomes known even though the pixels are
-                        // already cached under the legacy path-hash name.
-                        if (row.kind === "video" || row.kind === "gif") {
-                            const thumbPath = ThumbnailService.adoptThumbnail(row.localPath, contentMd5);
-                            if (thumbPath) MediaStore.setThumbPath(row.id, thumbPath);
-                        }
                     } catch (error) {
                         console.error("backfillContentMd5 failed for", row.localPath, "-", (error as Error).message);
                     }

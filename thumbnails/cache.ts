@@ -17,9 +17,6 @@ export const hashFor = (videoPath: string): string => crypto.createHash("md5").u
 export const thumbnailPathFor = (videoPath: string, contentMd5?: string | null): string =>
     path.join(getCacheDir(), `${contentMd5 || hashFor(videoPath)}.jpeg`);
 
-export const legacyThumbnailPathFor = (videoPath: string): string =>
-    path.join(getCacheDir(), `${hashFor(videoPath)}.jpeg`);
-
 // Directory for the hard-link retry: fs.linkSync requires the link to be on
 // the same volume as the source video, which the ffmpeg cache dir now is,
 // since both live under the folder the user opened.
