@@ -6,6 +6,7 @@ import { hashFor } from "../thumbnails/cache";
 import ffmpegStaticPath from "ffmpeg-static";
 
 import type { Semaphore, VideoFrame } from "../types/domain";
+import { get } from "http";
 
 type ExecError = ExecFileException & { stderr?: string };
 
@@ -77,8 +78,13 @@ export const FRAME_POSITIONS = ["start10s", "end10s", "pct50", "pct10"] as const
 
 const framePathFor = (input: string, position: string): string => path.join(getFramesDir(), `${hashFor(input)}_${position}.jpg`);
 
-const extractFrame = (input: string, output: string, seconds: number): Promise<void> => new Promise((resolve, reject) => {
-    const args = ["-y", "-loglevel", "error", "-ss", String(seconds), "-i", input, "-frames:v", "1", output];
+
+const extractFramesFFMPEG = (
+    input: string, 
+    frames: Array<{ seconds: number; exists: boolean; position: "start10s" | "end10s" | "pct50" | "pct10"; path: string; }>): Promise<void> => 
+        new Promise((resolve, reject) => {
+    const possitions = frames.map(f => `eq(n\\,${f.seconds})`).join('+');
+    const args = ["-y", "-loglevel", "error", "-i", input, '-vf' , `select='${possitions}'`, "-vsync", "0", path.join(getFramesDir(), `frame_%d.jpg`)];
     execFile(ffmpegPath as string, args, { encoding: "utf8" }, (error) => error ? reject(error) : resolve());
 });
 
@@ -127,20 +133,42 @@ export const extractFrames = async (input: string): Promise<VideoFrame[]> => {
         ensureFramesDir();
         const timestamps = timestampsFor(duration);
         const frames: VideoFrame[] = [];
-        for (const position of FRAME_POSITIONS) {
-            const output = framePathFor(input, position);
-            if (!fs.existsSync(output)) {
-                try {
-                    await extractFrame(input, output, timestamps[position]);
-                } catch (error) {
-                    console.error(`Frame extraction failed for ${input} @ ${position}:`, (error as Error).message);
-                    continue;
-                }
-            }
-            if (fs.existsSync(output)) frames.push({ position, path: output });
-        }
+        // for (const position of FRAME_POSITIONS) {
+        //     const output = framePathFor(input, position);
+        //     if (!fs.existsSync(output)) {
+        //         try {
+        //             await extractFrame(input, output, timestamps[position]);
+        //         } catch (error) {
+        //             console.error(`Frame extraction failed for ${input} @ ${position}:`, (error as Error).message);
+        //             continue;
+        //         }
+        //     }
+        //     if (fs.existsSync(output)) frames.push({ position, path: output });
+        // }
+        const all = FRAME_POSITIONS
+            .map(position => ({ position, path: framePathFor(input, position) }))
+            .map(position => ({ ...position, seconds: timestamps[position.position], exists: fs.existsSync(position.path) }));
+        frames.push(...all.filter(f => f.exists).map(f => ({ position: f.position, path: f.path })));
+        frames.push(...await getFramesFromFfmpeg(input, all.filter(f => !f.exists)));
         return frames;
     } finally {
         frameExtractionLimiter.release();
     }
 };
+
+async function getFramesFromFfmpeg(
+    input: string,
+    frames: Array<{ seconds: number; exists: boolean; position: "start10s" | "end10s" | "pct50" | "pct10"; path: string; }>
+): Promise<VideoFrame[]> {
+    const extracted: VideoFrame[] = [];
+
+    try {
+        await extractFramesFFMPEG(input, frames);
+        extracted.push(...frames.filter(f => fs.existsSync(f.path)).map(f => ({ position: f.position, path: f.path })));
+    } catch (error) {
+        console.error(`Frame extraction failed for ${input} @ ${frames.map(f => f.position).join(', ')}:`, (error as Error).message);
+    }
+
+    return extracted;
+}
+
