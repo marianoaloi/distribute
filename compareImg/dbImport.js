@@ -40,8 +40,9 @@ const compareImportedDatabase = (importedPath) => {
         const importedRows = imported
             .prepare(`
                 SELECT media.localPath AS localPath, items.baseGrey AS baseGrey
-                FROM items
-                JOIN media ON media.id = items.mediaId
+                FROM media_item
+                JOIN items ON items.id = media_item.itemId
+                JOIN media ON media.id = media_item.mediaId
                 WHERE items.baseGrey IS NOT NULL
             `)
             .all();

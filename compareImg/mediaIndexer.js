@@ -3,10 +3,14 @@ const computePool = require("./computePool");
 const videoFrames = require("./videoFrames");
 
 // pixelSourcePath: what to read pixel data from (the frame file for videos, the
-// media file itself for images). mediaId: the related media row's id - items
-// no longer store localPath/kind themselves, those are read through the
-// media x item relation instead (see HashStore.js's items.mediaId).
+// media file itself for images). mediaId: the media row this content came
+// from THIS time - always linked, even if id's content was already indexed
+// by an earlier (possibly different, byte-identical-duplicate) media, so
+// that duplicate keeps its own membership in the media x item relation
+// instead of being silently dropped (see HashStore.js's media_item table).
 const indexUnit = async (id, pixelSourcePath, mediaId, framePosition) => {
+    compareImgStore.linkItemMedia(id, mediaId);
+
     const existing = compareImgStore.getItem(id);
     if (existing) return;
 
@@ -16,7 +20,6 @@ const indexUnit = async (id, pixelSourcePath, mediaId, framePosition) => {
     const { baseMd5, grey } = await computePool.compute(pixelSourcePath);
 
     const metadata = {
-        mediaId,
         framePosition: framePosition || "",
         futurePosition: -1,
         baseMd5,
@@ -57,7 +60,16 @@ const videoAlreadyIndexed = async (mediaItem) => {
 const indexVideo = async (mediaItem) => {
     const localPath = mediaItem.item;
     if (!mediaItem.contentMd5) return;
-    if (await videoAlreadyIndexed(mediaItem)) return;
+    if (await videoAlreadyIndexed(mediaItem)) {
+        // Content's items already exist from an earlier (possibly different,
+        // byte-identical-duplicate) media - no ffmpeg/hashing needed, but
+        // THIS media still needs its own link into media_item or it never
+        // shows up as a member of the duplicate group.
+        for (const position of videoFrames.FRAME_POSITIONS) {
+            compareImgStore.linkItemMedia(`${mediaItem.contentMd5}_${position}`, mediaItem.id);
+        }
+        return;
+    }
 
     const frames = await videoFrames.extractFrames(localPath).catch(error => {
         console.error(`compareImg: frame extraction failed for ${localPath}:`, error.message);

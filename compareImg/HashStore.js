@@ -15,7 +15,7 @@ const { createMediaSchema } = require("../mediaDb/mediaSchema");
 // whatever columns actually exist on disk from a previous run's config -
 // exactly the "no such column: blur_2" crash this replaced. A fixed schema
 // can't drift.
-const METADATA_COLUMNS = ["mediaId", "framePosition", "futurePosition", "baseMd5", "baseGrey"];
+const METADATA_COLUMNS = ["framePosition", "futurePosition", "baseMd5", "baseGrey"];
 
 let db = null;
 
@@ -31,26 +31,39 @@ const ensureColumn = (database, table, name, type) => {
 };
 
 const createSchema = (database) => {
-    // mediaId is a logical FK to media.id (no declared REFERENCES), same
-    // pattern as media_detection.mediaId in mediaSchema.js: kept simple since
-    // better-sqlite3 would need PRAGMA foreign_keys=ON plus insert ordering
-    // guarantees a declared FK brings no real benefit for here. localPath and
-    // kind live on the related media row now - join through mediaId instead
-    // of duplicating them here.
+    // items is keyed by content (contentMd5, or contentMd5_framePosition for
+    // video/gif frames - see mediaIndexer.js), NOT by media: two different
+    // media rows whose files are byte-identical duplicates hash to the SAME
+    // item id. So one item can belong to many media, and one media has many
+    // items (its frames) - a real many-to-many, resolved through the
+    // media_item join table below rather than a mediaId column on items
+    // (a single column can only ever point at the last media that indexed
+    // that content, silently dropping every earlier duplicate's membership).
+    // localPath and kind live on the related media row - join through
+    // media_item instead of duplicating them here.
     database.exec(`
         CREATE TABLE IF NOT EXISTS items (
             id TEXT PRIMARY KEY,
-            mediaId TEXT NOT NULL,
             framePosition TEXT NOT NULL DEFAULT '',
             futurePosition INTEGER NOT NULL DEFAULT -1,
             baseMd5 TEXT,
             baseGrey BLOB
         );
     `);
-    ensureColumn(database, "items", "mediaId", "TEXT");
     ensureColumn(database, "items", "baseGrey", "BLOB");
     database.exec("CREATE INDEX IF NOT EXISTS idx_items_baseMd5 ON items(baseMd5);");
-    database.exec("CREATE INDEX IF NOT EXISTS idx_items_mediaId ON items(mediaId);");
+
+    // Logical FKs (no declared REFERENCES), same pattern as
+    // media_detection.mediaId in mediaSchema.js.
+    database.exec(`
+        CREATE TABLE IF NOT EXISTS media_item (
+            mediaId TEXT NOT NULL,
+            itemId  TEXT NOT NULL,
+            PRIMARY KEY (mediaId, itemId)
+        );
+    `);
+    database.exec("CREATE INDEX IF NOT EXISTS idx_media_item_itemId ON media_item(itemId);");
+
     createMediaSchema(database);
 };
 
@@ -127,15 +140,27 @@ const upsertItem = ({ id, metadata }) => {
     stmt.run({ id, ...metadata });
 };
 
-// Every row with a stored pixel buffer, for duplicateFinder.js's pairwise
-// mean-pixel-difference comparison (baseGrey has no index - distance can't
-// be expressed as a SQL equality/range lookup on a blob). localPath comes
-// from the related media row via mediaId, since items no longer duplicates it.
+// Records that mediaId's file produced/shares itemId's content. Idempotent -
+// mediaIndexer.js calls this every time it touches an item, including when
+// the item's baseMd5/baseGrey were already computed by an earlier (possibly
+// different) media with byte-identical content, so that duplicate keeps its
+// own membership instead of being silently dropped.
+const linkItemMedia = (itemId, mediaId) => {
+    db.prepare("INSERT OR IGNORE INTO media_item (mediaId, itemId) VALUES (?, ?)").run(mediaId, itemId);
+};
+
+// Every (item, media) link with a stored pixel buffer, for duplicateFinder.js's
+// pairwise mean-pixel-difference comparison (baseGrey has no index - distance
+// can't be expressed as a SQL equality/range lookup on a blob). One row per
+// media sharing that content, not per item - so byte-identical duplicate
+// media (same baseGrey, diff = 0) fall out of the same comparison the
+// near-duplicate case already does, with no special-casing needed.
 const allBaseGreyRows = () => db
     .prepare(`
-        SELECT items.mediaId AS mediaId, items.baseGrey AS baseGrey, media.localPath AS localPath
-        FROM items
-        JOIN media ON media.id = items.mediaId
+        SELECT media_item.mediaId AS mediaId, items.baseGrey AS baseGrey, media.localPath AS localPath
+        FROM media_item
+        JOIN items ON items.id = media_item.itemId
+        JOIN media ON media.id = media_item.mediaId
         WHERE items.baseGrey IS NOT NULL
     `)
     .all();
@@ -167,6 +192,7 @@ module.exports = {
     closeConnection,
     getItem,
     upsertItem,
+    linkItemMedia,
     allBaseGreyRows,
     columnNames,
     countItems,
