@@ -81,7 +81,7 @@ const framePathFor = (input: string, position: string): string => path.join(getF
 
 const extractFramesFFMPEG = (
     input: string,
-    frames: Array<{ seconds: number; exists: boolean; position: "start10s" | "end10s" | "pct50" | "pct10"; path: string; }>): Promise<void> =>
+    frames: Array<{ seconds: number; position: "start10s" | "end10s" | "pct50" | "pct10"; path: string; }>): Promise<void> =>
         new Promise((resolve, reject) => {
     if (frames.length === 0) return resolve();
 
@@ -140,24 +140,14 @@ export const extractFrames = async (input: string): Promise<VideoFrame[]> => {
         ensureFramesDir();
         const timestamps = timestampsFor(duration);
         const frames: VideoFrame[] = [];
-        // for (const position of FRAME_POSITIONS) {
-        //     const output = framePathFor(input, position);
-        //     if (!fs.existsSync(output)) {
-        //         try {
-        //             await extractFrame(input, output, timestamps[position]);
-        //         } catch (error) {
-        //             console.error(`Frame extraction failed for ${input} @ ${position}:`, (error as Error).message);
-        //             continue;
-        //         }
-        //     }
-        //     if (fs.existsSync(output)) frames.push({ position, path: output });
-        // }
+        frames.push(...cached);
+
         const all = FRAME_POSITIONS
+            .filter(position => !cached.some(f => f.position === position))
             .map(position => ({ position, path: framePathFor(input, position) }))
-            .map(position => ({ ...position, seconds: timestamps[position.position], exists: fs.existsSync(position.path) }));
-        frames.push(...all.filter(f => f.exists).map(f => ({ position: f.position, path: f.path })));
-        if (all.filter(f => !f.exists).length === 0) return frames;
-        frames.push(...await getFramesFromFfmpeg(input, all.filter(f => !f.exists)));
+            .map(position => ({ ...position, seconds: timestamps[position.position] }));
+
+        frames.push(...await getFramesFromFfmpeg(input, all));
         return frames;
     } finally {
         frameExtractionLimiter.release();
@@ -166,7 +156,7 @@ export const extractFrames = async (input: string): Promise<VideoFrame[]> => {
 
 async function getFramesFromFfmpeg(
     input: string,
-    frames: Array<{ seconds: number; exists: boolean; position: "start10s" | "end10s" | "pct50" | "pct10"; path: string; }>
+    frames: Array<{ seconds: number;  position: "start10s" | "end10s" | "pct50" | "pct10"; path: string; }>
 ): Promise<VideoFrame[]> {
     const extracted: VideoFrame[] = [];
 

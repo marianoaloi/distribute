@@ -227,9 +227,11 @@ ipcMain.on("open", () => {
             compareImgStore.closeConnection();
         }
         openfile();
+        buildIndex();
     }).catch(err => {
         console.error(err);
-    });
+    })
+    .finally();
 
 });
 
@@ -412,7 +414,7 @@ ipcMain.on("loadDetections", () => {
 // Wipes the (possibly corrupted) compareImg sqlite index and re-indexes the
 // media the renderer already has loaded in redux, so the user doesn't need
 // to re-open/re-scan the folder to recover from a corrupted index.db.
-ipcMain.on("rebuildIndex", async () => {
+const buildIndex = async (): Promise<void> => {
     try {
         await compareImgStore.rebuildIndex();
         const medias = MediaStore.findAllMediaThatExists() || [];
@@ -432,7 +434,8 @@ ipcMain.on("rebuildIndex", async () => {
         console.error("rebuildIndex failed", error);
         mainWindow!.webContents.send("indexRebuilt", { success: false, error: (error as Error).message });
     }
-});
+}
+ipcMain.on("rebuildIndex", buildIndex);
 
 // Exports a consistent snapshot of the compareImg sqlite index so it can be
 // carried to another machine/folder and later imported for cross-library
@@ -636,6 +639,7 @@ const loadRecursive = async (): Promise<void> => {
             mainWindow!.webContents.send("mediaLoadStart");
             openfileRecursive(file.filePaths[0]);
 
+            buildIndex();
         }
     }).catch(err => {
         console.error(err);

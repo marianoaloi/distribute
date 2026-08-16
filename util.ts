@@ -2,9 +2,9 @@ import path from "path";
 import fs from "fs";
 
 import * as mime from "mime-types";
-import * as thumbnails from "./thumbnails/ThumbnailService";
 import * as cache from "./thumbnails/cache";
-import { hasAudio as videoHasAudio } from "./compareImg/videoFrames";
+import { getPlaceholderPath } from "./thumbnails/providers/placeholder";
+import { hasAudio as videoHasAudio, extractFrames } from "./compareImg/videoFrames";
 import * as MediaStore from "./mediaDb/MediaStore";
 import { backfillContentMd5 } from "./mediaDb/backfill";
 
@@ -156,8 +156,8 @@ export const transformDataStreaming = async (
     for (let i = 0; i < pending.length; i += groupSize) {
         const group = pending.slice(i, i + groupSize);
         for (const item of group) {
-            const row = cached.get(item.id);
-            item.fileName = await thumbnails.getThumbnail(item.item, row && row.contentMd5);
+            const frames = await extractFrames(item.item);
+            item.fileName = frames.find((f) => f.position === "end10s")?.path || getPlaceholderPath();
             item.hasAudio = await videoHasAudio(item.item);
             upsertMediaSafe(item);
         }
