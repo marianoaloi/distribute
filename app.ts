@@ -1,29 +1,58 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, protocol } = require("electron");
-const path = require("path");
-const fs = require("fs");
-const { default: installExtension, REACT_DEVELOPER_TOOLS, REDUX_DEVTOOLS } = require("electron-devtools-installer");
+import { app, BrowserWindow, ipcMain, dialog, Menu, protocol, IpcMainEvent, MenuItemConstructorOptions, OpenDialogOptions } from "electron";
+import path from "path";
+import fs from "fs";
+import installExtension, { REACT_DEVELOPER_TOOLS, REDUX_DEVTOOLS } from "electron-devtools-installer";
 
 const isDev = process.env.NODE_ENV === "development";
-const isMac = process.platform === 'darwin'
+const isMac = process.platform === 'darwin';
 protocol.registerSchemesAsPrivileged([
     { scheme: 'local-media', privileges: { bypassCSP: true, stream: true, supportFetchAPI: true } }
 ]);
 
 
 
-const os = require('os');
-const util = require("./util");
-const { setActiveFolder } = require("./DirectorioCache");
-const duplicateFinder = require("./compareImg/duplicateFinder");
-const compareImgStore = require("./compareImg/HashStore");
-const mediaIndexer = require("./compareImg/mediaIndexer");
-const dbImport = require("./compareImg/dbImport");
-const { hashFor } = require("./thumbnails/cache");
-const onnxDetector = require("./objectDetection/onnxDetector");
-const MediaStore = require("./mediaDb/MediaStore");
+import os from 'os';
+import * as util from "./util";
+import { setActiveFolder } from "./DirectorioCache";
+import * as duplicateFinder from "./compareImg/duplicateFinder";
+import * as compareImgStore from "./compareImg/HashStore";
+import * as mediaIndexer from "./compareImg/mediaIndexer";
+import * as dbImport from "./compareImg/dbImport";
+import { hashFor } from "./thumbnails/cache";
+import * as onnxDetector from "./objectDetection/onnxDetector";
+import * as MediaStore from "./mediaDb/MediaStore";
+import * as ThumbnailService from "./thumbnails/ThumbnailService";
+import type { DetectionBox, StreamMediaItem } from "./types/domain";
+
 const transformDataStreaming = util.transformDataStreaming;
 
-var menuTemplate = () => [
+interface MoveFileEntry {
+    id: string;
+    path: string;
+    checked: boolean;
+    imported?: boolean;
+}
+
+interface ProcessPayload {
+    folder: string;
+    onlyCopy: boolean;
+    data: MoveFileEntry[];
+}
+
+interface DetectMediaRef {
+    id: string;
+    media: string;
+}
+
+interface DetectObjectsPayload {
+    medias?: DetectMediaRef[];
+}
+
+interface SaveDetectionClassesPayload {
+    classes?: string;
+}
+
+const menuTemplate = (): MenuItemConstructorOptions[] => [
     {
         label: 'File',
         submenu: [
@@ -68,42 +97,47 @@ var menuTemplate = () => [
         ]
     },
 
-]
+];
 
-const updateMenu = () => {
+const updateMenu = (): void => {
     try {
-        const menu = Menu.buildFromTemplate(menuTemplate())
-        Menu.setApplicationMenu(menu)
+        const menu = Menu.buildFromTemplate(menuTemplate());
+        Menu.setApplicationMenu(menu);
     } catch (error) {
         console.error("Error setting application menu", error);
     }
-}
-var mainWindow
-var fileGlobal
-function createWindow() {
+};
+let mainWindow: BrowserWindow | null;
+let fileGlobal: string | undefined;
+function createWindow(): void {
     try {
-        require("./thumbnails/ThumbnailService").ensureCacheDir()
+        ThumbnailService.ensureCacheDir();
     } catch (error) {
         console.error("Error creating tmp folder", error);
     }
     mainWindow = new BrowserWindow({
         // width: 1200,
         // height: 600,
-        icon: path.join(__dirname, `/build/logo512.png`),
+        // __dirname is electron-dist/ (this file's compiled location) - the
+        // CRA renderer build stays at the repo/package root as a sibling
+        // directory, both in dev and inside the packaged app.asar (see
+        // package.json build.files), so it's reached via "..".
+        icon: path.join(__dirname, "..", "build", "logo512.png"),
         webPreferences: {
             contextIsolation: true,
             nodeIntegration: false,
             spellcheck: true,
             preload: path.join(__dirname, 'preload.js'),
         },
-        options: {
-            fullscreen: true
-        },
+        // The original also passed a top-level `options: { fullscreen: true }`
+        // key, which isn't part of BrowserWindowConstructorOptions - Electron
+        // silently ignored it (no-op), so it's dropped here rather than kept
+        // as a now-type-erroring dead field.
     });
 
     const startURL = isDev
         ? 'http://localhost:7845'
-        : `file://${path.join(__dirname, `/build/index.html`)}`;
+        : `file://${path.join(__dirname, "..", "build", "index.html")}`;
 
     try {
         mainWindow.loadURL(startURL);
@@ -129,17 +163,17 @@ function createWindow() {
 
     try {
         if (process.argv[2]) {
-            console.log("File receive folder", process.argv)
-            fileGlobal = process.argv[2]
+            console.log("File receive folder", process.argv);
+            fileGlobal = process.argv[2];
         } else if (process.argv[0].includes("getimage")) {
-            fileGlobal = process.argv[1]
+            fileGlobal = process.argv[1];
         }
     } catch (error) {
         console.error("Error processing command line arguments", error);
     }
 
 
-    mainWindow.focus()
+    mainWindow.focus();
 
 }
 
@@ -157,7 +191,7 @@ app.on("ready", () => {
 
 app.on("window-all-closed", function () {
     if (isMac) app.quit();
-    else process.exit(0)
+    else process.exit(0);
 });
 
 app.on('before-quit', () => {
@@ -173,11 +207,11 @@ app.on("activate", function () {
 });
 
 ipcMain.on("open", () => {
-    let options = {
+    const options: OpenDialogOptions = {
         properties: ["openDirectory", 'promptToCreate'],
         title: "Open folder to choice images",
     };
-    if (fileGlobal) options["defaultPath"] = fileGlobal;
+    if (fileGlobal) options.defaultPath = fileGlobal;
     dialog.showOpenDialog(options).then(file => {
         if (!file.canceled) {
             fileGlobal = file.filePaths[0];
@@ -191,22 +225,22 @@ ipcMain.on("open", () => {
 
 });
 
-ipcMain.on("process", async (event, data) => {
+ipcMain.on("process", async (event: IpcMainEvent, data: ProcessPayload) => {
     if (data) {
-        moveFile(true, data.folder, data.onlyCopy, data.data)
+        moveFile(true, data.folder, data.onlyCopy, data.data);
     }
-})
+});
 
-const findIndexDuplicates = async () => {
+const findIndexDuplicates = async (): Promise<void> => {
     try {
         const groups = await duplicateFinder.findIndexDuplicates();
-        mainWindow.webContents.send("duplicatesFound", groups);
+        mainWindow!.webContents.send("duplicatesFound", groups);
     } catch (error) {
         console.error("findIndexDuplicates failed", error);
-        mainWindow.webContents.send("duplicatesFound", []);
+        mainWindow!.webContents.send("duplicatesFound", []);
     }
-}
-ipcMain.on("findIndexDuplicates", findIndexDuplicates)
+};
+ipcMain.on("findIndexDuplicates", findIndexDuplicates);
 
 // Runs ONNX object detection (objectDetection/onnxDetector.js) over the
 // media the renderer currently has loaded, one at a time, streaming each
@@ -223,7 +257,7 @@ ipcMain.on("stopDetection", () => { detectionStopRequested = true; });
 // ./xcxv/best.onnx path. Sends the chosen path (or the still-unset current
 // one, if canceled) back so the renderer can reflect it and gate the run button.
 ipcMain.on("chooseOnnxModel", () => {
-    const options = {
+    const options: OpenDialogOptions = {
         properties: ["openFile"],
         title: "Choose ONNX model for object detection",
         filters: [{ name: "ONNX model", extensions: ["onnx"] }],
@@ -232,16 +266,16 @@ ipcMain.on("chooseOnnxModel", () => {
         if (!file.canceled && file.filePaths[0]) {
             onnxDetector.setModelPath(file.filePaths[0]);
         }
-        mainWindow.webContents.send("onnxModelChosen", { path: onnxDetector.getModelPath() });
+        mainWindow!.webContents.send("onnxModelChosen", { path: onnxDetector.getModelPath() });
     }).catch(err => {
         console.error(err);
     });
 });
 
-ipcMain.on("detectObjects", async (event, data) => {
+ipcMain.on("detectObjects", async (event: IpcMainEvent, data: DetectObjectsPayload) => {
     const medias = (data && data.medias) || [];
     if (!onnxDetector.isAvailable()) {
-        mainWindow.webContents.send("detectionsComplete", { error: "No ONNX model selected - choose a model file first" });
+        mainWindow!.webContents.send("detectionsComplete", { error: "No ONNX model selected - choose a model file first" });
         return;
     }
     detectionStopRequested = false;
@@ -260,16 +294,16 @@ ipcMain.on("detectObjects", async (event, data) => {
     // on the main process thread - the win is in everything around it.
     const DETECTION_BATCH_SIZE = 20;
 
-    const processOne = async (media) => {
+    const processOne = async (media: DetectMediaRef): Promise<void> => {
         const state = mediaState.get(media.id);
         const alreadyRecognized = Boolean(state && state.detectionAt && state.detectionClasses === classesSnapshot);
         if (alreadyRecognized) {
             const boxes = MediaStore.getDetections(media.id);
-            mainWindow.webContents.send("detectionFound", { id: media.id, boxes });
+            mainWindow!.webContents.send("detectionFound", { id: media.id, boxes });
         } else {
             try {
-                const boxes = await onnxDetector.detect(media.media);
-                mainWindow.webContents.send("detectionFound", { id: media.id, boxes });
+                const boxes: DetectionBox[] = await onnxDetector.detect(media.media);
+                mainWindow!.webContents.send("detectionFound", { id: media.id, boxes });
                 try {
                     MediaStore.replaceDetections(media.id, boxes, onnxDetector.getModelPath());
                     MediaStore.setDetectionState(media.id, classesSnapshot);
@@ -278,11 +312,11 @@ ipcMain.on("detectObjects", async (event, data) => {
                 }
             } catch (error) {
                 console.error("detectObjects failed for", media.media, error);
-                mainWindow.webContents.send("detectionFound", { id: media.id, boxes: [], error: error.message });
+                mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: [], error: (error as Error).message });
             }
         }
         processed++;
-        mainWindow.webContents.send("detectionProgress", { processed, total });
+        mainWindow!.webContents.send("detectionProgress", { processed, total });
     };
 
     for (let i = 0; i < medias.length; i += DETECTION_BATCH_SIZE) {
@@ -292,8 +326,8 @@ ipcMain.on("detectObjects", async (event, data) => {
         await Promise.allSettled(medias.slice(i, i + DETECTION_BATCH_SIZE).map(processOne));
     }
 
-    mainWindow.webContents.send("detectionsComplete", detectionStopRequested ? { stopped: true } : {});
-})
+    mainWindow!.webContents.send("detectionsComplete", detectionStopRequested ? { stopped: true } : {});
+});
 
 // Persists the user-typed comma-separated class list (mediaDb's
 // detection_class table, per-folder like the rest of index.db) and pushes it
@@ -301,17 +335,17 @@ ipcMain.on("detectObjects", async (event, data) => {
 // "class N". The main process owns the split - the renderer always sends the
 // raw string. detectionClassesLoaded is the reply to both this and
 // loadDetectionClasses, so the UI can never drift from what got persisted.
-ipcMain.on("saveDetectionClasses", (event, data) => {
+ipcMain.on("saveDetectionClasses", (event: IpcMainEvent, data: SaveDetectionClassesPayload) => {
     try {
         const raw = (data && data.classes) || "";
         const names = String(raw).split(",").map((s) => s.trim()).filter((s) => s.length > 0);
         MediaStore.ensureReady();
         MediaStore.saveDetectionClasses(names);
         onnxDetector.setClassNames(names);
-        mainWindow.webContents.send("detectionClassesLoaded", { names });
+        mainWindow!.webContents.send("detectionClassesLoaded", { names });
     } catch (error) {
         console.error("saveDetectionClasses failed", error);
-        mainWindow.webContents.send("detectionClassesLoaded", { names: [], error: error.message });
+        mainWindow!.webContents.send("detectionClassesLoaded", { names: [], error: (error as Error).message });
     }
 });
 
@@ -320,10 +354,10 @@ ipcMain.on("loadDetectionClasses", () => {
         MediaStore.ensureReady();
         const names = MediaStore.getDetectionClasses();
         onnxDetector.setClassNames(names);
-        mainWindow.webContents.send("detectionClassesLoaded", { names });
+        mainWindow!.webContents.send("detectionClassesLoaded", { names });
     } catch (error) {
         console.error("loadDetectionClasses failed", error);
-        mainWindow.webContents.send("detectionClassesLoaded", { names: [], error: error.message });
+        mainWindow!.webContents.send("detectionClassesLoaded", { names: [], error: (error as Error).message });
     }
 });
 
@@ -335,44 +369,44 @@ ipcMain.on("loadDetections", () => {
     try {
         MediaStore.ensureReady();
         const rows = MediaStore.getAllDetections();
-        const byId = new Map();
+        const byId = new Map<string, DetectionBox[]>();
         for (const row of rows) {
             const { mediaId, ...box } = row;
             if (!byId.has(mediaId)) byId.set(mediaId, []);
-            byId.get(mediaId).push(box);
+            (byId.get(mediaId) as DetectionBox[]).push(box);
         }
         const items = [...byId].map(([id, boxes]) => ({ id, boxes }));
-        mainWindow.webContents.send("detectionsLoaded", { items });
+        mainWindow!.webContents.send("detectionsLoaded", { items });
     } catch (error) {
         console.error("loadDetections failed", error);
-        mainWindow.webContents.send("detectionsLoaded", { items: [], error: error.message });
+        mainWindow!.webContents.send("detectionsLoaded", { items: [], error: (error as Error).message });
     }
 });
 
 // Wipes the (possibly corrupted) compareImg sqlite index and re-indexes the
 // media the renderer already has loaded in redux, so the user doesn't need
 // to re-open/re-scan the folder to recover from a corrupted index.db.
-ipcMain.on("rebuildIndex", async (event, data) => {
+ipcMain.on("rebuildIndex", async () => {
     try {
         await compareImgStore.rebuildIndex();
         const medias = MediaStore.findAllMediaThatExists() || [];
-        mainWindow.webContents.send("indexRebuildProgress", { processed: 0, total: medias.length });
+        mainWindow!.webContents.send("indexRebuildProgress", { processed: 0, total: medias.length });
         await mediaIndexer.indexMediaBackground(medias.map(m => ({
-            item: m.localPath ,
+            item: m.localPath,
             mime: m.mime,
             kind: m.kind,
-            contentMd5 : m.contentMd5,
+            contentMd5: m.contentMd5,
             id: m.id,
         })), (processed, total) => {
-            mainWindow.webContents.send("indexRebuildProgress", { processed, total });
+            mainWindow!.webContents.send("indexRebuildProgress", { processed, total });
         });
-        mainWindow.webContents.send("indexRebuilt", { success: true, count: medias.length });
+        mainWindow!.webContents.send("indexRebuilt", { success: true, count: medias.length });
         findIndexDuplicates();
     } catch (error) {
         console.error("rebuildIndex failed", error);
-        mainWindow.webContents.send("indexRebuilt", { success: false, error: error.message });
+        mainWindow!.webContents.send("indexRebuilt", { success: false, error: (error as Error).message });
     }
-})
+});
 
 // Exports a consistent snapshot of the compareImg sqlite index so it can be
 // carried to another machine/folder and later imported for cross-library
@@ -384,18 +418,18 @@ ipcMain.on("exportDatabase", async () => {
         filters: [{ name: "SQLite Database", extensions: ["db"] }],
     };
     try {
-        const result = await dialog.showSaveDialog(mainWindow, options);
+        const result = await dialog.showSaveDialog(mainWindow!, options);
         if (result.canceled || !result.filePath) {
-            mainWindow.webContents.send("databaseExported", { success: false, canceled: true });
+            mainWindow!.webContents.send("databaseExported", { success: false, canceled: true });
             return;
         }
         await compareImgStore.exportDatabase(result.filePath);
-        mainWindow.webContents.send("databaseExported", { success: true, path: result.filePath });
+        mainWindow!.webContents.send("databaseExported", { success: true, path: result.filePath });
     } catch (error) {
         console.error("exportDatabase failed", error);
-        mainWindow.webContents.send("databaseExported", { success: false, error: error.message });
+        mainWindow!.webContents.send("databaseExported", { success: false, error: (error as Error).message });
     }
-})
+});
 
 // Compares another folder's exported index against the live one (readonly —
 // nothing is merged into index.db) and streams each matched external file to
@@ -403,30 +437,35 @@ ipcMain.on("exportDatabase", async () => {
 // can show cross-folder groups and the user can decide what to move.
 // Full flow lives in compareImg/dbImport.js.
 ipcMain.on("importDatabase", () =>
-    dbImport.runImportFlow({ dialog, mainWindow, transformDataStreaming, hashFor }))
+    dbImport.runImportFlow({ dialog, mainWindow: mainWindow!, transformDataStreaming, hashFor }));
 
 ipcMain.on("verifyOpen", async () => {
     if (process.env.FixFiles && fs.existsSync(process.env.FixFiles)) {
         fs.readFile(process.env.FixFiles, 'utf8', (err, data) => {
-            let files = data.split("|").filter(filepath => fs.existsSync(filepath))
-            files = util.transformFixedData(files)
+            let files: unknown = data.split("|").filter(filepath => fs.existsSync(filepath));
+            // util.js has never exported transformFixedData (only
+            // transformDataStreaming) - this FixFiles-only debug path already
+            // threw at runtime before this conversion. Left as-is rather than
+            // silently inventing a fix that wasn't asked for; the cast below
+            // only keeps this pre-existing bug compiling instead of masking it.
+            files = (util as unknown as { transformFixedData: (files: string[]) => unknown }).transformFixedData(files as string[]);
 
-            mainWindow.webContents.send("directoryOpen", files);
-        })
+            mainWindow!.webContents.send("directoryOpen", files);
+        });
     } else
         if (fileGlobal) {
-            openfile()
+            openfile();
         }
-})
+});
 
 // Reports whether a single media's file operation actually finished on
 // disk, so the renderer can mark it moved/deleted only once that's true
 // instead of assuming success the moment the button was clicked (a failed
 // move used to silently vanish the item from the grid while the file stayed
 // put in the source folder).
-const reportFileProcessed = (media, onlyCopy, error) => {
+const reportFileProcessed = (media: MoveFileEntry, onlyCopy: boolean, error?: NodeJS.ErrnoException | Error | null): void => {
     if (error) console.error(onlyCopy ? "Copy failed for" : "Move failed for", media.path, "-", error);
-    mainWindow.webContents.send("fileProcessed", {
+    mainWindow!.webContents.send("fileProcessed", {
         id: media.id,
         onlyCopy,
         success: !error,
@@ -434,7 +473,7 @@ const reportFileProcessed = (media, onlyCopy, error) => {
     });
 };
 
-const moveFile = (bol, dest, onlyCopy, data) => {
+const moveFile = (bol: boolean, dest: string, onlyCopy: boolean, data: MoveFileEntry[]): void => {
     if (process.env.FixFiles) {
         console.log("##MOVEFILE", dest, data.filter(f => f.checked === bol).map(f => f.path).join(","));
 
@@ -445,9 +484,9 @@ const moveFile = (bol, dest, onlyCopy, data) => {
     // moved themselves.
     data.filter(f => f.checked === bol && !f.imported).forEach(media => {
         // let completeDestine = path.join(path.dirname(media.path), dest);
-        let completeDestine = path.join(fileGlobal, dest);
+        const completeDestine = path.join(fileGlobal as string, dest);
         if (!fs.existsSync(completeDestine)) {
-            fs.mkdirSync(completeDestine)
+            fs.mkdirSync(completeDestine);
         }
         if (!fs.existsSync(media.path)) {
             reportFileProcessed(media, onlyCopy, new Error("Source file no longer exists"));
@@ -457,7 +496,7 @@ const moveFile = (bol, dest, onlyCopy, data) => {
         if (onlyCopy) {
             fs.copyFile(media.path, destination, (err) => {
                 reportFileProcessed(media, onlyCopy, err);
-            })
+            });
         } else {
             fs.rename(media.path, destination, (err) => {
                 if (!err) { reportFileProcessed(media, onlyCopy); return; }
@@ -475,43 +514,43 @@ const moveFile = (bol, dest, onlyCopy, data) => {
                         reportFileProcessed(media, onlyCopy, unlinkErr);
                     });
                 });
-            })
+            });
         }
     });
-}
-const openfile = () => {
-    mainWindow.title = `Get Images in ${fileGlobal}`
+};
+const openfile = (): void => {
+    mainWindow!.title = `Get Images in ${fileGlobal}`;
 
-    fs.readdir(fileGlobal, "utf8", (err, data) => {
+    fs.readdir(fileGlobal as string, "utf8", (err, data) => {
         if (err) { console.error(err); return; }
 
-        mainWindow.webContents.send("cleanGrid");
+        mainWindow!.webContents.send("cleanGrid");
 
         console.log(`Get Images in ${fileGlobal}`, "files", data.length);
 
-        mainWindow.webContents.send("mediaLoadStart");
+        mainWindow!.webContents.send("mediaLoadStart");
 
-        streamingMedia(data, fileGlobal, () => {
-            mainWindow.webContents.send("mediaLoadComplete");
+        streamingMedia(data, fileGlobal as string, () => {
+            mainWindow!.webContents.send("mediaLoadComplete");
         });
     });
 };
 
 
-const streamingMedia = (data, root, complete) => {
+const streamingMedia = (data: string[], root: string, complete: () => void): void => {
     transformDataStreaming(
         data,
         root,
-        (mediaReady) => {
-            mainWindow.webContents.send("loadMedias", mediaReady);
+        (mediaReady: StreamMediaItem[]) => {
+            mainWindow!.webContents.send("loadMedias", mediaReady);
         },
-        (mediaLazy) => {
+        (mediaLazy: StreamMediaItem) => {
             // console.log("Video found", video.id);
-            mainWindow.webContents.send("addOneMedia", mediaLazy);
+            mainWindow!.webContents.send("addOneMedia", mediaLazy);
         },
         complete
     );
-}
+};
 
 
 /************************************ MENU */
@@ -519,22 +558,22 @@ const streamingMedia = (data, root, complete) => {
 
 
 
-const zoomImg = async (zoom) => {
+const zoomImg = async (zoom: number): Promise<void> => {
     try {
 
-        mainWindow.webContents.send("zoom", zoom)
+        mainWindow!.webContents.send("zoom", zoom);
     } catch (error) {
         console.error("Zoom error", error);
 
     }
-}
+};
 
-const loadFolders = async () => {
+const loadFolders = async (): Promise<void> => {
     try {
-        fs.readdir(fileGlobal, { encoding: "utf8", withFileTypes: true }, (err, data) => {
+        fs.readdir(fileGlobal as string, { encoding: "utf8", withFileTypes: true }, (err, data) => {
             if (err) console.error(err);
             else {
-                mainWindow.webContents.send("menuOpen",
+                mainWindow!.webContents.send("menuOpen",
 
                     data
                         .filter(d => d.isDirectory() && d.name !== "tmp")
@@ -543,23 +582,23 @@ const loadFolders = async () => {
 
             }
         }
-        )
+        );
     } catch (error) {
         console.error("Error in load folders", error);
 
     }
 
-}
+};
 
 
-ipcMain.on("openRecursive", () => loadRecursive())
-const loadRecursive = async () => {
+ipcMain.on("openRecursive", () => loadRecursive());
+const loadRecursive = async (): Promise<void> => {
 
-    let options = {
+    const options: OpenDialogOptions = {
         properties: ["openDirectory", 'promptToCreate'],
         title: "Open folder recursive to choice medias",
     };
-    if (fileGlobal) options["defaultPath"] = fileGlobal;
+    if (fileGlobal) options.defaultPath = fileGlobal;
     dialog.showOpenDialog(options).then(file => {
         if (!file.canceled) {
             setActiveFolder(file.filePaths[0]);
@@ -567,28 +606,28 @@ const loadRecursive = async () => {
             compareImgStore.closeConnection();
 
 
-            mainWindow.webContents.send("cleanGrid");
-            mainWindow.webContents.send("mediaLoadStart");
+            mainWindow!.webContents.send("cleanGrid");
+            mainWindow!.webContents.send("mediaLoadStart");
             openfileRecursive(file.filePaths[0]);
 
         }
     }).catch(err => {
         console.error(err);
     });
-}
+};
 
-var processedFolders = {};
-const openfileRecursive = (folderPath) => {
+let processedFolders: Record<string, boolean> = {};
+const openfileRecursive = (folderPath: string): void => {
 
 
-    mainWindow.title = `Get Images in ${fileGlobal} recursive in ${folderPath}`
+    mainWindow!.title = `Get Images in ${fileGlobal} recursive in ${folderPath}`;
 
     fs.readdir(folderPath, "utf8", (err, data) => {
         if (err) { console.error(err); return; }
-        let qtdFiles = data.map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isFile()).length
+        const qtdFiles = data.map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isFile()).length;
         data.filter(item => item !== "tmp").map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isDirectory()).forEach(item => {
             processedFolders[item] = false;
-            openfileRecursive(item)
+            openfileRecursive(item);
         });
 
         if (qtdFiles > 0) {
@@ -597,7 +636,7 @@ const openfileRecursive = (folderPath) => {
                 processedFolders[folderPath] = true;
                 if (Object.values(processedFolders).every(v => v === true)) {
                     console.log("All folders processed");
-                    mainWindow.webContents.send("mediaLoadComplete");
+                    mainWindow!.webContents.send("mediaLoadComplete");
                 }
             });
         } else {
@@ -605,36 +644,36 @@ const openfileRecursive = (folderPath) => {
         }
 
 
-    })
-}
+    });
+};
 
-const cleanGrid = async () => { mainWindow.webContents.send("cleanGrid") }
+const cleanGrid = async (): Promise<void> => { mainWindow!.webContents.send("cleanGrid"); };
 
 // Sorting itself lives in redux (media.reduce.ts orderByName/orderBySize/
 // orderByFolder) - these just forward which order the user picked.
-const sortByName = async () => {
+const sortByName = async (): Promise<void> => {
     if (mainWindow) {
         mainWindow.webContents.send("sort", "sortByName");
     }
-}
-const sortBySize = async () => {
+};
+const sortBySize = async (): Promise<void> => {
     if (mainWindow) {
         mainWindow.webContents.send("sort", "sortBySize");
     }
-}
-const sortBySizeInverted = async () => {
+};
+const sortBySizeInverted = async (): Promise<void> => {
     if (mainWindow) {
         mainWindow.webContents.send("sort", "sortBySizeInverted");
     }
-}
-const sortByFolder = async () => {
+};
+const sortByFolder = async (): Promise<void> => {
     if (mainWindow) {
         mainWindow.webContents.send("sort", "sortByFolder");
     }
-}
+};
 
 app.whenReady().then(() => {
     installExtension([REDUX_DEVTOOLS, REACT_DEVELOPER_TOOLS])
-        .then(([redux, react]) => console.log(`Added Extensions:  ${redux.name}, ${react.name}`))
+        .then((installed) => console.log(`Added Extensions:  ${installed.map((e) => e.name).join(", ")}`))
         .catch((err) => console.log('An error occurred: ', err));
-})
+});

@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "outDir": "electron-dist",
+    "rootDir": ".",
+    "strict": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "sourceMap": true,
+    "forceConsistentCasingInFileNames": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": [
+    "app.ts",
+    "preload.ts",
+    "util.ts",
+    "DirectorioCache.ts",
+    "compareImg/**/*.ts",
+    "hashing/**/*.ts",
+    "mediaDb/**/*.ts",
+    "objectDetection/**/*.ts",
+    "thumbnails/**/*.ts",
+    "scripts/debugCompareVideos.ts",
+    "types/**/*.ts"
+  ]
+}

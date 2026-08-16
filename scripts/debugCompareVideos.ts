@@ -11,25 +11,25 @@
 //
 // outDir defaults to debug/<timestamp>/ under the project root.
 
-const fs = require("fs");
-const path = require("path");
-const crypto = require("crypto");
-const { Jimp } = require("jimp");
+import fs from "fs";
+import path from "path";
+import crypto from "crypto";
+import { Jimp } from "jimp";
 
-const { extractFrames, FRAME_POSITIONS } = require("../compareImg/videoFrames");
-const {
+import { extractFrames, FRAME_POSITIONS } from "../compareImg/videoFrames";
+import {
     toBaseImage,
     greyscaleChannel,
     boxBlur,
     hashBuffer,
     BLUR_LEVELS,
-} = require("../compareImg/imageTransform");
+} from "../compareImg/imageTransform";
 
 // Mirrors compareImg/duplicateFinder.js's contentHashFor exactly. Not
 // imported from there directly because duplicateFinder.js pulls in
 // HashStore.js -> better-sqlite3, which is rebuilt against Electron's ABI
 // (see package.json "postinstall") and will fail to load under plain `node`.
-const contentHashFor = (filepath) => new Promise((resolve, reject) => {
+const contentHashFor = (filepath: string): Promise<string> => new Promise((resolve, reject) => {
     const hash = crypto.createHash("md5");
     const stream = fs.createReadStream(filepath);
     stream.on("data", (chunk) => hash.update(chunk));
@@ -39,12 +39,19 @@ const contentHashFor = (filepath) => new Promise((resolve, reject) => {
 
 const HASH_COLUMNS = ["baseMd5", ...BLUR_LEVELS.map((level) => `blur_${level}`)];
 
+interface PixelDiffStats {
+    meanAbsDiff: number;
+    maxAbsDiff: number;
+    pctIdentical: number;
+    pctWithin2: number;
+}
+
 // Numeric similarity between two equal-length grey-pixel buffers, as an
 // alternative to MD5 equality: MD5 has the avalanche property (any single
 // pixel off by 1 produces a totally unrelated hash), so it can never express
 // "these are 99% the same image" - only "identical" or "unrelated". This is
 // what the app's matching logic is missing entirely.
-const pixelDiffStats = (a, b) => {
+const pixelDiffStats = (a: Uint8Array, b: Uint8Array): PixelDiffStats => {
     let sumAbs = 0;
     let maxAbs = 0;
     let identical = 0;
@@ -65,11 +72,11 @@ const pixelDiffStats = (a, b) => {
     };
 };
 
-const safeStem = (filePath) => path.basename(filePath, path.extname(filePath))
+const safeStem = (filePath: string): string => path.basename(filePath, path.extname(filePath))
     .replace(/[^a-z0-9_-]+/gi, "_")
     .slice(0, 60);
 
-const saveGreyBuffer = async (buffer, width, height, outPath) => {
+const saveGreyBuffer = async (buffer: Uint8Array, width: number, height: number, outPath: string): Promise<void> => {
     const img = new Jimp({ width, height, color: 0x000000ff });
     const data = img.bitmap.data;
     for (let i = 0; i < buffer.length; i++) {
@@ -78,20 +85,44 @@ const saveGreyBuffer = async (buffer, width, height, outPath) => {
         data[i * 4 + 2] = buffer[i];
         data[i * 4 + 3] = 255;
     }
-    await img.write(outPath);
+    await img.write(outPath as `${string}.${string}`);
 };
+
+interface BlurResult {
+    md5: string;
+    image: string;
+}
+
+interface FrameResult {
+    position: string;
+    rawFrame: string;
+    baseImage: string;
+    baseMd5: string;
+    blurs: Record<string, BlurResult>;
+    // Underscore-prefixed: raw pixel buffers kept only for pixelDiffStats
+    // in main(), stripped before the JSON report is written.
+    _baseBuffer: Uint8Array;
+    _blurBuffers: Record<string, Uint8Array>;
+}
+
+interface VideoResult {
+    videoPath: string;
+    label: string;
+    stem: string;
+    frames: FrameResult[];
+}
 
 // Runs both hash pipelines for one video: extracts its 4 frames, saves the
 // raw frame + the transformed images for each, and returns the per-frame
 // hash values keyed the same way HashStore/duplicateFinder key them.
-const processVideo = async (videoPath, label, outDir) => {
+const processVideo = async (videoPath: string, label: string, outDir: string): Promise<VideoResult> => {
     const stem = safeStem(videoPath);
     const frames = await extractFrames(videoPath);
     if (frames.length === 0) {
         console.warn(`[${label}] no frames could be extracted from ${videoPath} (corrupt file? ffmpeg missing?)`);
     }
 
-    const frameResults = [];
+    const frameResults: FrameResult[] = [];
     for (const { position, path: framePath } of frames) {
         const rawOut = path.join(outDir, `${label}_${stem}_${position}_raw.jpg`);
         fs.copyFileSync(framePath, rawOut);
@@ -99,13 +130,13 @@ const processVideo = async (videoPath, label, outDir) => {
         const base = await toBaseImage(framePath);
         const baseMd5 = hashBuffer(Buffer.from(base.bitmap.data));
         const baseOut = path.join(outDir, `${label}_${stem}_${position}_base60.png`);
-        await base.write(baseOut);
+        await base.write(baseOut as `${string}.${string}`);
 
         const { width, height } = base.bitmap;
         const grey = greyscaleChannel(base);
 
-        const blurs = {};
-        const blurBuffers = {};
+        const blurs: Record<string, BlurResult> = {};
+        const blurBuffers: Record<string, Uint8Array> = {};
         for (const level of BLUR_LEVELS) {
             const blurred = boxBlur(grey, width, height, level);
             const blurMd5 = hashBuffer(Buffer.from(blurred));
@@ -121,8 +152,6 @@ const processVideo = async (videoPath, label, outDir) => {
             baseImage: path.basename(baseOut),
             baseMd5,
             blurs,
-            // Underscore-prefixed: raw pixel buffers kept only for pixelDiffStats
-            // in main(), stripped before the JSON report is written.
             _baseBuffer: grey,
             _blurBuffers: blurBuffers,
         });
@@ -131,12 +160,19 @@ const processVideo = async (videoPath, label, outDir) => {
     return { videoPath, label, stem, frames: frameResults };
 };
 
+interface FrameMatch {
+    column: string;
+    positionA: string;
+    positionB: string;
+    value: string;
+}
+
 // Cross-product every frame of A against every frame of B, for every hash
 // column, exactly like duplicateFinder.findIndexDuplicates does (it does not
 // restrict matches to the same frame position - a match on ANY column
 // between ANY two frames is enough to flag the whole pair as duplicates).
-const compareFrames = (videoA, videoB) => {
-    const matches = [];
+const compareFrames = (videoA: VideoResult, videoB: VideoResult): FrameMatch[] => {
+    const matches: FrameMatch[] = [];
     for (const frameA of videoA.frames) {
         for (const frameB of videoB.frames) {
             for (const column of HASH_COLUMNS) {
@@ -151,21 +187,37 @@ const compareFrames = (videoA, videoB) => {
     return matches;
 };
 
+interface DiffStatsEntry {
+    position: string;
+    base: PixelDiffStats;
+    blurs: Record<string, PixelDiffStats>;
+}
+
+interface Report {
+    videoA: VideoResult;
+    videoB: VideoResult;
+    contentHashA: string;
+    contentHashB: string;
+    contentIdentical: boolean;
+    matches: FrameMatch[];
+    diffStats: DiffStatsEntry[];
+}
+
 // One block per timestamp (start10s first, matching FRAME_POSITIONS order):
 // a row for A's images at that timestamp, a row for B's (md5 under each
 // image), then a "diff" row with the pixelDiffStats between A and B for
 // that column - showing the numeric similarity that MD5 equality throws away.
-const buildHtmlReport = (report) => {
-    const frameFor = (video, position) => video.frames.find((f) => f.position === position);
-    const statsFor = (position) => report.diffStats.find((d) => d.position === position);
+const buildHtmlReport = (report: Report): string => {
+    const frameFor = (video: VideoResult, position: string) => video.frames.find((f) => f.position === position);
+    const statsFor = (position: string) => report.diffStats.find((d) => d.position === position);
 
-    const imgCell = (file, md5) => `
+    const imgCell = (file: string | null, md5: string | null) => `
         <td>
             ${file ? `<img src="${file}" loading="lazy">` : "<em>missing</em>"}
             ${md5 ? `<code>${md5}</code>` : ""}
         </td>`;
 
-    const rowFor = (video, frame) => {
+    const rowFor = (video: VideoResult, frame: FrameResult | undefined) => {
         if (!frame) {
             return `<tr><th class="rowlabel">${video.label}</th><td colspan="${BLUR_LEVELS.length + 2}"><em>frame not extracted</em></td></tr>`;
         }
@@ -177,11 +229,11 @@ const buildHtmlReport = (report) => {
         return `<tr><th class="rowlabel">${video.label}</th>${cells.join("")}</tr>`;
     };
 
-    const diffCell = (stats) => stats
+    const diffCell = (stats: PixelDiffStats | undefined) => stats
         ? `<td class="diffcell">mean|&Delta;|=${stats.meanAbsDiff.toFixed(2)}<br>max=${stats.maxAbsDiff}<br>ident=${stats.pctIdentical.toFixed(1)}%<br>&plusmn;2=${stats.pctWithin2.toFixed(1)}%</td>`
         : `<td class="diffcell">-</td>`;
 
-    const diffRow = (stats) => {
+    const diffRow = (stats: DiffStatsEntry | undefined) => {
         if (!stats) return "";
         const cells = [
             `<td class="diffcell">-</td>`,
@@ -191,7 +243,7 @@ const buildHtmlReport = (report) => {
         return `<tr><th class="rowlabel">A vs B</th>${cells.join("")}</tr>`;
     };
 
-    const positionBlock = (position) => `
+    const positionBlock = (position: string) => `
         <h2>${position}</h2>
         <table>
             <tr><th></th><th>raw frame</th><th>base60</th>${BLUR_LEVELS.map((l) => `<th>blur_${l}</th>`).join("")}</tr>
@@ -236,7 +288,7 @@ ${FRAME_POSITIONS.map(positionBlock).join("")}
 </body></html>`;
 };
 
-const main = async () => {
+const main = async (): Promise<void> => {
     const [videoAArg, videoBArg, outDirArg] = process.argv.slice(2);
     if (!videoAArg || !videoBArg) {
         console.error("Usage: node scripts/debugCompareVideos.js <videoA> <videoB> [outDir]");
@@ -253,7 +305,10 @@ const main = async () => {
 
     const outDir = outDirArg
         ? path.resolve(outDirArg)
-        : path.join(__dirname, "..", "debug", new Date().toISOString().replace(/[:.]/g, "-"));
+        // Compiled to electron-dist/scripts/, two levels below the repo root
+        // (unlike the old scripts/debugCompareVideos.js, which was one level
+        // down) - go up two to keep landing debug output at <repo>/debug.
+        : path.join(__dirname, "..", "..", "debug", new Date().toISOString().replace(/[:.]/g, "-"));
     fs.mkdirSync(outDir, { recursive: true });
 
     console.log(`Comparing:\n  A: ${videoA}\n  B: ${videoB}\nOutput: ${outDir}\n`);
@@ -280,12 +335,12 @@ const main = async () => {
 
     // Same-timestamp pixel-similarity, independent of MD5: how close A and B
     // actually are at each blur level, even when no hash matched.
-    const diffStats = [];
+    const diffStats: DiffStatsEntry[] = [];
     for (const position of FRAME_POSITIONS) {
         const frameA = resultA.frames.find((f) => f.position === position);
         const frameB = resultB.frames.find((f) => f.position === position);
         if (!frameA || !frameB) continue;
-        const blurs = {};
+        const blurs: Record<string, PixelDiffStats> = {};
         for (const level of BLUR_LEVELS) {
             blurs[`blur_${level}`] = pixelDiffStats(frameA._blurBuffers[`blur_${level}`], frameB._blurBuffers[`blur_${level}`]);
         }
@@ -296,8 +351,8 @@ const main = async () => {
         console.log(`  ${stat.position} base60: mean|diff|=${stat.base.meanAbsDiff.toFixed(2)} max=${stat.base.maxAbsDiff} identical=${stat.base.pctIdentical.toFixed(1)}% within2=${stat.base.pctWithin2.toFixed(1)}%`);
     }
 
-    const stripPrivate = (key, value) => (key.startsWith("_") ? undefined : value);
-    const report = {
+    const stripPrivate = (key: string, value: unknown) => (key.startsWith("_") ? undefined : value);
+    const report: Report = {
         videoA: resultA,
         videoB: resultB,
         contentHashA,

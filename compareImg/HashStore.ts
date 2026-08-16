@@ -1,7 +1,7 @@
-const fs = require("fs");
-const Database = require("better-sqlite3");
-const { getDbDir, getDbPath } = require("./cache");
-const { createMediaSchema } = require("../mediaDb/mediaSchema");
+import fs from "fs";
+import Database from "better-sqlite3";
+import { getDbDir, getDbPath } from "./cache";
+import { createMediaSchema } from "../mediaDb/mediaSchema";
 
 // baseGrey (the raw cropped/greyscale pixel buffer) has no index:
 // duplicateFinder.js compares it by pixel distance, not SQL equality, so
@@ -15,22 +15,52 @@ const { createMediaSchema } = require("../mediaDb/mediaSchema");
 // whatever columns actually exist on disk from a previous run's config -
 // exactly the "no such column: blur_2" crash this replaced. A fixed schema
 // can't drift.
-const METADATA_COLUMNS = ["framePosition", "futurePosition", "baseMd5", "baseGrey"];
+const METADATA_COLUMNS = ["framePosition", "futurePosition", "baseMd5", "baseGrey"] as const;
 
-let db = null;
+export interface ItemRow {
+    id: string;
+    framePosition: string;
+    futurePosition: number;
+    baseMd5: string | null;
+    baseGrey: Buffer | null;
+}
+
+export interface UpsertItemInput {
+    id: string;
+    metadata: {
+        framePosition: string;
+        futurePosition: number;
+        baseMd5: string;
+        baseGrey: Buffer;
+    };
+}
+
+export interface BaseGreyRow {
+    mediaId: string;
+    baseGrey: Buffer;
+    localPath: string;
+}
+
+interface SavedDetectionClass {
+    classId: number;
+    name: string;
+    updatedAt: number;
+}
+
+let db: Database.Database | null = null;
 
 // Adds a column to an already-created table if it predates this schema
 // version. CREATE TABLE IF NOT EXISTS is a no-op on an existing table, so
 // this is the only way an existing installation's index.db picks up new
 // columns without the user losing their whole index.
-const ensureColumn = (database, table, name, type) => {
-    const columns = database.pragma(`table_info(${table})`).map((c) => c.name);
-    if (!columns.includes(name)) {
+const ensureColumn = (database: Database.Database, table: string, name: string, type: string): void => {
+    const columns = database.pragma(`table_info(${table})`) as Array<{ name: string }>;
+    if (!columns.some((c) => c.name === name)) {
         database.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
     }
 };
 
-const createSchema = (database) => {
+const createSchema = (database: Database.Database): void => {
     // items is keyed by content (contentMd5, or contentMd5_framePosition for
     // video/gif frames - see mediaIndexer.js), NOT by media: two different
     // media rows whose files are byte-identical duplicates hash to the SAME
@@ -67,7 +97,7 @@ const createSchema = (database) => {
     createMediaSchema(database);
 };
 
-const openDb = () => {
+const openDb = (): Database.Database => {
     fs.mkdirSync(getDbDir(), { recursive: true });
     return new Database(getDbPath());
 };
@@ -78,11 +108,11 @@ const openDb = () => {
 // they're read out before the wipe and re-inserted after - losing them on a
 // rebuild would be silent data loss. The read is best-effort: a corrupted db
 // must still be rebuildable even if this query itself fails.
-const rebuildIndex = () => {
-    let savedClasses = [];
+export const rebuildIndex = (): void => {
+    let savedClasses: SavedDetectionClass[] = [];
     if (db) {
         try {
-            savedClasses = db.prepare("SELECT classId, name, updatedAt FROM detection_class ORDER BY classId ASC").all();
+            savedClasses = db.prepare("SELECT classId, name, updatedAt FROM detection_class ORDER BY classId ASC").all() as SavedDetectionClass[];
         } catch {
             savedClasses = [];
         }
@@ -93,7 +123,7 @@ const rebuildIndex = () => {
     createSchema(db);
     if (savedClasses.length > 0) {
         const insert = db.prepare("INSERT INTO detection_class (classId, name, updatedAt) VALUES (@classId, @name, @updatedAt)");
-        const insertAll = db.transaction((rows) => rows.forEach((row) => insert.run(row)));
+        const insertAll = db.transaction((rows: SavedDetectionClass[]) => rows.forEach((row) => insert.run(row)));
         insertAll(savedClasses);
     }
 };
@@ -101,39 +131,40 @@ const rebuildIndex = () => {
 // Closes the current connection without deleting anything, so the next
 // ensureReady() call re-opens against whatever folder is active - used when
 // the user switches to a different folder (its own tmp/hashIndex/index.db).
-const closeConnection = () => {
+export const closeConnection = (): void => {
     if (db) {
         db.close();
         db = null;
     }
 };
 
-const verifyIntegrity = () => {
+const verifyIntegrity = (): void => {
     try {
-        const result = db.pragma("integrity_check", { simple: true });
-        if (result !== "ok") throw new Error(result);
+        const result = db!.pragma("integrity_check", { simple: true });
+        if (result !== "ok") throw new Error(String(result));
     } catch (error) {
-        console.error("compareImg: index corrupted, rebuilding:", error.message);
+        console.error("compareImg: index corrupted, rebuilding:", (error as Error).message);
         rebuildIndex();
     }
 };
 
-const ensureReady = () => {
+export const ensureReady = (): void => {
     if (db) return;
     db = openDb();
     createSchema(db);
     verifyIntegrity();
 };
 
-const getItem = (id) => db.prepare("SELECT * FROM items WHERE id = ?").get(id);
+export const getItem = (id: string): ItemRow | undefined =>
+    db!.prepare("SELECT * FROM items WHERE id = ?").get(id) as ItemRow | undefined;
 
 // better-sqlite3 calls are synchronous with no internal await, so concurrent
 // callers (see ITEM_CONCURRENCY in mediaIndexer.js) can never interleave
 // mid-write.
-const upsertItem = ({ id, metadata }) => {
+export const upsertItem = ({ id, metadata }: UpsertItemInput): void => {
     const columns = ["id", ...METADATA_COLUMNS];
     const assignments = METADATA_COLUMNS.map((c) => `${c} = excluded.${c}`).join(", ");
-    const stmt = db.prepare(`
+    const stmt = db!.prepare(`
         INSERT INTO items (${columns.join(", ")}) VALUES (${columns.map((c) => `@${c}`).join(", ")})
         ON CONFLICT(id) DO UPDATE SET ${assignments}
     `);
@@ -145,8 +176,8 @@ const upsertItem = ({ id, metadata }) => {
 // the item's baseMd5/baseGrey were already computed by an earlier (possibly
 // different) media with byte-identical content, so that duplicate keeps its
 // own membership instead of being silently dropped.
-const linkItemMedia = (itemId, mediaId) => {
-    db.prepare("INSERT OR IGNORE INTO media_item (mediaId, itemId) VALUES (?, ?)").run(mediaId, itemId);
+export const linkItemMedia = (itemId: string, mediaId: string): void => {
+    db!.prepare("INSERT OR IGNORE INTO media_item (mediaId, itemId) VALUES (?, ?)").run(mediaId, itemId);
 };
 
 // Every (item, media) link with a stored pixel buffer, for duplicateFinder.js's
@@ -155,7 +186,7 @@ const linkItemMedia = (itemId, mediaId) => {
 // media sharing that content, not per item - so byte-identical duplicate
 // media (same baseGrey, diff = 0) fall out of the same comparison the
 // near-duplicate case already does, with no special-casing needed.
-const allBaseGreyRows = () => db
+export const allBaseGreyRows = (): BaseGreyRow[] => db!
     .prepare(`
         SELECT media_item.mediaId AS mediaId, items.baseGrey AS baseGrey, media.localPath AS localPath
         FROM media_item
@@ -163,39 +194,26 @@ const allBaseGreyRows = () => db
         JOIN media ON media.id = media_item.mediaId
         WHERE items.baseGrey IS NOT NULL
     `)
-    .all();
+    .all() as BaseGreyRow[];
 
 // Column names of the live items table, for validating that an imported
 // (exported-elsewhere) database has the identical structure before comparing.
-const columnNames = () => db.pragma("table_info(items)").map((c) => c.name);
+export const columnNames = (): string[] =>
+    (db!.pragma("table_info(items)") as Array<{ name: string }>).map((c) => c.name);
 
-const countItems = () => db.prepare("SELECT COUNT(*) AS n FROM items").get().n;
+export const countItems = (): number => (db!.prepare("SELECT COUNT(*) AS n FROM items").get() as { n: number }).n;
 
 // Uses SQLite's online backup API (safe on a live connection, unlike copying
 // the file directly which could race a write) so the exported file is a
 // consistent snapshot other machines can later import and compare against.
-const exportDatabase = (destPath) => {
+export const exportDatabase = (destPath: string): Promise<Database.BackupMetadata> => {
     ensureReady();
-    return db.backup(destPath);
+    return db!.backup(destPath);
 };
 
 // Single shared connection for mediaDb/MediaStore.js - callers must not open
 // a second `new Database(...)` on the same file.
-const getDb = () => {
+export const getDb = (): Database.Database => {
     ensureReady();
-    return db;
-};
-
-module.exports = {
-    ensureReady,
-    rebuildIndex,
-    closeConnection,
-    getItem,
-    upsertItem,
-    linkItemMedia,
-    allBaseGreyRows,
-    columnNames,
-    countItems,
-    exportDatabase,
-    getDb,
+    return db!;
 };

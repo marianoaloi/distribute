@@ -1,14 +1,16 @@
+import type Database from "better-sqlite3";
+
 // Duplicated from HashStore.js rather than imported: this file is DDL-only
 // and must stay requirable with no dependencies, so HashStore can require it
 // without a cycle (HashStore -> mediaSchema, MediaStore -> HashStore).
-const ensureColumn = (database, table, name, type) => {
-    const columns = database.pragma(`table_info(${table})`).map((c) => c.name);
-    if (!columns.includes(name)) {
+const ensureColumn = (database: Database.Database, table: string, name: string, type: string): void => {
+    const columns = database.pragma(`table_info(${table})`) as Array<{ name: string }>;
+    if (!columns.some((c) => c.name === name)) {
         database.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
     }
 };
 
-const createMediaSchema = (database) => {
+export const createMediaSchema = (database: Database.Database): void => {
     database.exec(`
         CREATE TABLE IF NOT EXISTS media (
             id          TEXT PRIMARY KEY,
@@ -63,5 +65,3 @@ const createMediaSchema = (database) => {
     database.exec("CREATE INDEX IF NOT EXISTS idx_media_detection_mediaId ON media_detection(mediaId);");
     database.exec("CREATE INDEX IF NOT EXISTS idx_media_detection_classId ON media_detection(classId);");
 };
-
-module.exports = { createMediaSchema };

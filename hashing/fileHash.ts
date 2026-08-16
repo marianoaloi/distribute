@@ -1,24 +1,26 @@
-const fs = require("fs");
-const crypto = require("crypto");
+import fs from "fs";
+import crypto from "crypto";
+
+import type { Semaphore } from "../types/domain";
 
 const CHUNK_SIZE = 1024 * 1024;
 
 // Caps how many files are being streamed/read for MD5 at once, independent
 // of the frame-extraction semaphore in compareImg/videoFrames.js - hashing
 // is a different resource (disk IO) and shouldn't share that limiter.
-const FILE_HASH_CONCURRENCY = 4;
+export const FILE_HASH_CONCURRENCY = 4;
 
-const createSemaphore = (limit) => {
+const createSemaphore = (limit: number): Semaphore => {
     let active = 0;
-    const queue = [];
-    const acquire = () => {
+    const queue: Array<() => void> = [];
+    const acquire = (): Promise<void> => {
         if (active < limit) {
             active++;
             return Promise.resolve();
         }
-        return new Promise(resolve => queue.push(resolve)).then(() => { active++; });
+        return new Promise<void>(resolve => queue.push(resolve)).then(() => { active++; });
     };
-    const release = () => {
+    const release = (): void => {
         active--;
         const next = queue.shift();
         if (next) next();
@@ -31,10 +33,10 @@ const hashLimiter = createSemaphore(FILE_HASH_CONCURRENCY);
 // Streamed so multi-GB video files never get fully loaded into memory.
 // Resolves null (instead of throwing) on a locked/deleted file so callers can
 // fall back to the path-hash thumbnail name rather than failing the load.
-const fileMd5 = async (filePath) => {
+export const fileMd5 = async (filePath: string): Promise<string | null> => {
     await hashLimiter.acquire();
     try {
-        return await new Promise((resolve) => {
+        return await new Promise<string | null>((resolve) => {
             const hash = crypto.createHash("md5");
             const stream = fs.createReadStream(filePath, { highWaterMark: CHUNK_SIZE });
             stream.on("data", (chunk) => hash.update(chunk));
@@ -49,8 +51,8 @@ const fileMd5 = async (filePath) => {
 // Synchronous counterpart for the FixFiles/recursive-load path - loops a
 // reused buffer through fs.readSync instead of fs.readFileSync so a large
 // video doesn't get slurped into memory whole.
-const fileMd5Sync = (filePath) => {
-    let fd;
+export const fileMd5Sync = (filePath: string): string | null => {
+    let fd: number;
     try {
         fd = fs.openSync(filePath, "r");
     } catch {
@@ -59,7 +61,7 @@ const fileMd5Sync = (filePath) => {
     try {
         const hash = crypto.createHash("md5");
         const buffer = Buffer.alloc(CHUNK_SIZE);
-        let bytesRead;
+        let bytesRead: number;
         do {
             bytesRead = fs.readSync(fd, buffer, 0, CHUNK_SIZE, null);
             if (bytesRead > 0) hash.update(buffer.subarray(0, bytesRead));
@@ -70,10 +72,4 @@ const fileMd5Sync = (filePath) => {
     } finally {
         fs.closeSync(fd);
     }
-};
-
-module.exports = {
-    fileMd5,
-    fileMd5Sync,
-    FILE_HASH_CONCURRENCY,
 };

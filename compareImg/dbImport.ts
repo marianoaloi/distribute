@@ -1,8 +1,21 @@
-const fs = require("fs");
-const path = require("path");
-const Database = require("better-sqlite3");
-const compareImgStore = require("./HashStore");
-const { meanAbsDiff, MEAN_DIFF_THRESHOLD } = require("./duplicateFinder");
+import fs from "fs";
+import path from "path";
+import Database from "better-sqlite3";
+import * as compareImgStore from "./HashStore";
+import { meanAbsDiff, MEAN_DIFF_THRESHOLD } from "./duplicateFinder";
+
+import type { Dialog, BrowserWindow } from "electron";
+import type { StreamMediaItem } from "../types/domain";
+
+export interface ImportMatch {
+    localPath: string;
+    actualIds: string[];
+    exists: boolean;
+}
+
+export type CompareImportedDatabaseResult =
+    | { error: string; matches?: undefined }
+    | { matches: ImportMatch[]; error?: undefined };
 
 // Compares another folder's exported index database (see HashStore's
 // exportDatabase) against the live index, WITHOUT merging anything into it:
@@ -15,22 +28,22 @@ const { meanAbsDiff, MEAN_DIFF_THRESHOLD } = require("./duplicateFinder");
 // { matches: [{ localPath, actualIds }] } where localPath is the external
 // file (verified to still exist on disk) and actualIds are the media ids in
 // the current folder it visually duplicates.
-const compareImportedDatabase = (importedPath) => {
+export const compareImportedDatabase = (importedPath: string): CompareImportedDatabaseResult => {
     compareImgStore.ensureReady();
 
-    let imported;
+    let imported: Database.Database;
     try {
         imported = new Database(importedPath, { readonly: true, fileMustExist: true });
     } catch (error) {
-        return { error: `Could not open the selected file as a database: ${error.message}` };
+        return { error: `Could not open the selected file as a database: ${(error as Error).message}` };
     }
 
     try {
-        const importedCols = imported.pragma("table_info(items)").map((c) => c.name);
+        const importedCols = (imported.pragma("table_info(items)") as Array<{ name: string }>).map((c) => c.name);
         if (importedCols.length === 0) {
             return { error: "Selected file has no 'items' table — not an exported index database" };
         }
-        const sorted = (cols) => [...cols].sort().join(",");
+        const sorted = (cols: string[]) => [...cols].sort().join(",");
         if (sorted(importedCols) !== sorted(compareImgStore.columnNames())) {
             return { error: "Database structure differs from the actual index (different columns) — import ignored" };
         }
@@ -45,20 +58,20 @@ const compareImportedDatabase = (importedPath) => {
                 JOIN media ON media.id = media_item.mediaId
                 WHERE items.baseGrey IS NOT NULL
             `)
-            .all();
+            .all() as Array<{ localPath: string; baseGrey: Buffer }>;
 
         // Videos contribute one row per extracted frame sharing a localPath,
         // so cache the on-disk check and accumulate matches per file.
-        const existsCache = new Map();
-        const stillExists = (p) => {
+        const existsCache = new Map<string, boolean>();
+        const stillExists = (p: string): boolean => {
             if (!existsCache.has(p)) existsCache.set(p, fs.existsSync(p));
-            return existsCache.get(p);
+            return existsCache.get(p) as boolean;
         };
 
         // Files missing from disk still participate: the match proves the
         // ACTUAL folder's item is duplicated elsewhere, which is what the
         // user decides on — the missing file just gets a placeholder tile.
-        const matchesByPath = new Map();
+        const matchesByPath = new Map<string, Set<string>>();
         for (const row of importedRows) {
             // Same physical file indexed in both databases is not a
             // cross-folder duplicate (e.g. re-importing this folder's own export).
@@ -66,7 +79,7 @@ const compareImportedDatabase = (importedPath) => {
             for (const actual of actualRows) {
                 if (meanAbsDiff(row.baseGrey, actual.baseGrey) <= MEAN_DIFF_THRESHOLD) {
                     if (!matchesByPath.has(row.localPath)) matchesByPath.set(row.localPath, new Set());
-                    matchesByPath.get(row.localPath).add(actual.mediaId);
+                    (matchesByPath.get(row.localPath) as Set<string>).add(actual.mediaId);
                 }
             }
         }
@@ -94,16 +107,34 @@ const MISSING_PLACEHOLDER = "data:image/svg+xml;utf8," + encodeURIComponent(
 
 // Same shape transformDataStreaming produces, but for a file that is gone:
 // rendered as an image tile backed by the placeholder above.
-const missingFileItem = (localPath, id) => ({
+const missingFileItem = (localPath: string, id: string): StreamMediaItem => ({
     item: localPath,
     mime: "image/svg+xml",
     fileName: MISSING_PLACEHOLDER,
     filename: path.basename(localPath),
     size: 0,
+    mtimeMs: 0,
     hasAudio: false,
+    kind: "image",
     id,
     imported: true,
 });
+
+type TransformDataStreaming = (
+    data: string[],
+    folderOpened: string,
+    onReadyGo: (items: StreamMediaItem[]) => void,
+    onSendOneMedia: (item: StreamMediaItem) => void,
+    onDone: () => void,
+    extraFields?: Partial<StreamMediaItem>,
+) => unknown;
+
+export interface RunImportFlowDeps {
+    dialog: Dialog;
+    mainWindow: BrowserWindow;
+    transformDataStreaming: TransformDataStreaming;
+    hashFor: (input: string) => string;
+}
 
 // The whole ipc flow behind app.js's "importDatabase" handler, with the
 // electron/util pieces injected so app.js stays a thin dispatcher (and this
@@ -111,8 +142,8 @@ const missingFileItem = (localPath, id) => ({
 // "databaseImported" channel; on success also streams every matched external
 // file as an { imported: true } fake item and finally sends the cross-folder
 // groups via "duplicatesFound".
-const runImportFlow = async ({ dialog, mainWindow, transformDataStreaming, hashFor }) => {
-    const report = (payload) => mainWindow.webContents.send("databaseImported", payload);
+export const runImportFlow = async ({ dialog, mainWindow, transformDataStreaming, hashFor }: RunImportFlowDeps): Promise<void> => {
+    const report = (payload: Record<string, unknown>) => mainWindow.webContents.send("databaseImported", payload);
     try {
         compareImgStore.ensureReady();
         if (compareImgStore.countItems() === 0) {
@@ -129,7 +160,7 @@ const runImportFlow = async ({ dialog, mainWindow, transformDataStreaming, hashF
             return;
         }
         const compared = compareImportedDatabase(picked.filePaths[0]);
-        if (compared.error) {
+        if (compared.error !== undefined) {
             report({ success: false, error: compared.error });
             return;
         }
@@ -144,7 +175,7 @@ const runImportFlow = async ({ dialog, mainWindow, transformDataStreaming, hashF
         compared.matches.filter(m => !m.exists).forEach(m =>
             mainWindow.webContents.send("addOneMedia", missingFileItem(m.localPath, hashFor(m.localPath))));
         // addOneMedia dedupes by id in the renderer, so re-importing is idempotent.
-        await new Promise((resolve) => transformDataStreaming(
+        await new Promise<void>((resolve) => transformDataStreaming(
             onDisk.map(m => m.localPath),
             "",
             (images) => images.forEach(img => mainWindow.webContents.send("addOneMedia", img)),
@@ -158,11 +189,6 @@ const runImportFlow = async ({ dialog, mainWindow, transformDataStreaming, hashF
         report({ success: true, matched: compared.matches.length });
     } catch (error) {
         console.error("importDatabase failed", error);
-        report({ success: false, error: error.message });
+        report({ success: false, error: (error as Error).message });
     }
-};
-
-module.exports = {
-    compareImportedDatabase,
-    runImportFlow,
 };

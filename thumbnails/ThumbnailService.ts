@@ -1,14 +1,17 @@
-const path = require("path");
-const fs = require("fs");
-const cache = require("./cache");
-const { getPlaceholderPath } = require("./providers/placeholder");
+import path from "path";
+import fs from "fs";
+import * as cache from "./cache";
+import { getPlaceholderPath } from "./providers/placeholder";
+import ffmpegStaticProvider from "./providers/ffmpegStatic";
 
-const providers = [
-    require("./providers/ffmpegStatic"),
+import type { ThumbnailProvider } from "../types/domain";
+
+const providers: ThumbnailProvider[] = [
+    ffmpegStaticProvider,
 ];
 
-let selected;
-const getProvider = () => {
+let selected: ThumbnailProvider | null | undefined;
+const getProvider = (): ThumbnailProvider | null => {
     if (selected === undefined) {
         selected = providers.find((p) => p.isAvailable()) || null;
         console.log("Thumbnail provider:", selected ? selected.name : "none (placeholder only)");
@@ -17,9 +20,9 @@ const getProvider = () => {
 };
 
 // Some filenames break the encoder: retry through a hard link with a safe name
-const linkPathFor = (input) => path.join(cache.getLinkDir(), cache.hashFor(input) + path.extname(input));
+const linkPathFor = (input: string): string => path.join(cache.getLinkDir(), cache.hashFor(input) + path.extname(input));
 
-const withLinkRetrySync = (provider, input, output) => {
+const withLinkRetrySync = (provider: ThumbnailProvider, input: string, output: string): void => {
     try {
         provider.generateSync(input, output);
     } catch {
@@ -34,7 +37,7 @@ const withLinkRetrySync = (provider, input, output) => {
     }
 };
 
-const withLinkRetry = async (provider, input, output) => {
+const withLinkRetry = async (provider: ThumbnailProvider, input: string, output: string): Promise<void> => {
     try {
         await provider.generate(input, output);
     } catch {
@@ -54,7 +57,7 @@ const withLinkRetry = async (provider, input, output) => {
 // thumbnail generated before the background MD5 backfill learned the file's
 // contentMd5 gets re-homed. Never lets an adoption failure break the load -
 // falls through to normal generation instead.
-const adoptLegacyThumbnail = (videoPath, contentMd5, output) => {
+const adoptLegacyThumbnail = (videoPath: string, contentMd5: string | null | undefined, output: string): boolean => {
     if (!contentMd5 || fs.existsSync(output)) return false;
     const legacy = cache.legacyThumbnailPathFor(videoPath);
     if (!fs.existsSync(legacy)) return false;
@@ -62,13 +65,13 @@ const adoptLegacyThumbnail = (videoPath, contentMd5, output) => {
         fs.renameSync(legacy, output);
         return fs.existsSync(output);
     } catch (error) {
-        console.error("Thumbnail adoption failed for", videoPath, "-", error.message);
+        console.error("Thumbnail adoption failed for", videoPath, "-", (error as Error).message);
         return false;
     }
 };
 
 // Never throws: always resolves to a path the renderer can display
-const getThumbnailSync = (videoPath, contentMd5) => {
+export const getThumbnailSync = (videoPath: string, contentMd5?: string | null): string => {
     const output = cache.thumbnailPathFor(videoPath, contentMd5);
     if (fs.existsSync(output)) return output;
     if (adoptLegacyThumbnail(videoPath, contentMd5, output)) return output;
@@ -79,13 +82,13 @@ const getThumbnailSync = (videoPath, contentMd5) => {
             withLinkRetrySync(provider, videoPath, output);
             if (fs.existsSync(output)) return output;
         } catch (error) {
-            console.error("Thumbnail failed for", videoPath, "-", error.message);
+            console.error("Thumbnail failed for", videoPath, "-", (error as Error).message);
         }
     }
     return getPlaceholderPath();
 };
 
-const getThumbnail = async (videoPath, contentMd5) => {
+export const getThumbnail = async (videoPath: string, contentMd5?: string | null): Promise<string> => {
     const output = cache.thumbnailPathFor(videoPath, contentMd5);
     if (fs.existsSync(output)) return output;
     if (adoptLegacyThumbnail(videoPath, contentMd5, output)) return output;
@@ -96,7 +99,7 @@ const getThumbnail = async (videoPath, contentMd5) => {
             await withLinkRetry(provider, videoPath, output);
             if (fs.existsSync(output)) return output;
         } catch (error) {
-            console.error("Thumbnail failed for", videoPath, "-", error.message);
+            console.error("Thumbnail failed for", videoPath, "-", (error as Error).message);
         }
     }
     return getPlaceholderPath();
@@ -109,16 +112,11 @@ const getThumbnail = async (videoPath, contentMd5) => {
 // still under the legacy path-hash name) for one extra load after the hash
 // becomes known. No-op (returns null) when there's nothing to adopt or
 // nothing needs adopting because it's already in place.
-const adoptThumbnail = (videoPath, contentMd5) => {
+export const adoptThumbnail = (videoPath: string, contentMd5?: string | null): string | null => {
     if (!contentMd5) return null;
     const output = cache.thumbnailPathFor(videoPath, contentMd5);
     if (fs.existsSync(output)) return output;
     return adoptLegacyThumbnail(videoPath, contentMd5, output) ? output : null;
 };
 
-module.exports = {
-    getThumbnail,
-    getThumbnailSync,
-    adoptThumbnail,
-    ensureCacheDir: cache.ensureCacheDir,
-};
+export const ensureCacheDir = cache.ensureCacheDir;

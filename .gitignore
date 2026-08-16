@@ -10,6 +10,7 @@
 
 # production
 /build
+/electron-dist
 
 # misc
 .DS_Store
@@ -39,3 +40,10 @@ ruvector.db
 xcxv/** 
 agentdb.rvf
 agentdb.rvf.lock
+
+# Ruflo local secrets and runtime data
+.env
+.env.*.local
+.claude-flow/data/
+.claude-flow/logs/
+.claude-flow/sessions/

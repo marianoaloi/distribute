@@ -1,10 +1,12 @@
-const fs = require("fs");
-const { Jimp } = require("jimp");
-const ort = require("onnxruntime-node");
+import fs from "fs";
+import { Jimp } from "jimp";
+import * as ort from "onnxruntime-node";
+
+import type { DetectionBox } from "../types/domain";
 
 // Set by the renderer's "choose model" file dialog (see app.js's
 // chooseOnnxModel handler) - no longer a fixed path under ./xcxv.
-let modelPath = null;
+let modelPath: string | null = null;
 
 const SIZE = 640;
 const CONF = 0.25;
@@ -15,38 +17,47 @@ const IOU = 0.45;
 // "class N" for any index left blank. The chosen model itself is the source
 // of truth for how many classes there are (see numClasses in decode()), so
 // this list can grow later without touching the detection code.
-let classNames = [];
+let classNames: string[] = [];
 
-const setClassNames = (names) => { classNames = Array.isArray(names) ? names : []; };
+export const setClassNames = (names: string[]): void => { classNames = Array.isArray(names) ? names : []; };
 
-const getClassNames = () => classNames;
+export const getClassNames = (): string[] => classNames;
 
-const classNameFor = (classId) => classNames[classId] || `class ${classId}`;
+const classNameFor = (classId: number): string => classNames[classId] || `class ${classId}`;
 
-let sessionPromise = null;
+let sessionPromise: Promise<ort.InferenceSession> | null = null;
 
 // Resets the cached session so the next detect() call loads the newly
 // picked model instead of reusing one built from the old path.
-const setModelPath = (newPath) => {
+export const setModelPath = (newPath: string): void => {
     if (newPath === modelPath) return;
     modelPath = newPath;
     sessionPromise = null;
 };
 
-const getModelPath = () => modelPath;
+export const getModelPath = (): string | null => modelPath;
 
-const getSession = () => {
-    if (!sessionPromise) sessionPromise = ort.InferenceSession.create(modelPath);
+const getSession = (): Promise<ort.InferenceSession> => {
+    if (!sessionPromise) sessionPromise = ort.InferenceSession.create(modelPath as string);
     return sessionPromise;
 };
 
-const isAvailable = () => Boolean(modelPath && fs.existsSync(modelPath));
+export const isAvailable = (): boolean => Boolean(modelPath && fs.existsSync(modelPath));
+
+interface LetterboxContext {
+    chw: Float32Array;
+    scale: number;
+    padX: number;
+    padY: number;
+    origWidth: number;
+    origHeight: number;
+}
 
 // Resizes onto a centered SIZE x SIZE canvas preserving aspect ratio (the
 // same letterbox preprocessing Ultralytics' export expects), returning the
 // float32 CHW tensor data alongside the scale/pad needed to map boxes back
 // to the original image's pixel space.
-const letterbox = async (input) => {
+const letterbox = async (input: string): Promise<LetterboxContext> => {
     const image = await Jimp.read(input);
     const origWidth = image.bitmap.width;
     const origHeight = image.bitmap.height;
@@ -69,9 +80,9 @@ const letterbox = async (input) => {
     return { chw, scale, padX, padY, origWidth, origHeight };
 };
 
-const clamp01 = (v) => Math.min(1, Math.max(0, v));
+const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
 
-const iou = (a, b) => {
+const iou = (a: DetectionBox, b: DetectionBox): number => {
     const ax2 = a.x + a.w, ay2 = a.y + a.h;
     const bx2 = b.x + b.w, by2 = b.y + b.h;
     const ix1 = Math.max(a.x, b.x), iy1 = Math.max(a.y, b.y);
@@ -84,8 +95,8 @@ const iou = (a, b) => {
 
 // Greedy NMS, class-aware: boxes of different classes never suppress
 // each other, matching standard YOLO postprocessing.
-const nms = (boxes) => {
-    const kept = [];
+const nms = (boxes: DetectionBox[]): DetectionBox[] => {
+    const kept: DetectionBox[] = [];
     const sorted = [...boxes].sort((a, b) => b.score - a.score);
     for (const box of sorted) {
         const overlaps = kept.some(k => k.classId === box.classId && iou(k, box) > IOU);
@@ -96,10 +107,10 @@ const nms = (boxes) => {
 
 // Output rows are YOLOv5-style: [cx, cy, w, h, objectness, ...classScores]
 // in pixel coordinates of the SIZE x SIZE letterboxed input (not normalized).
-const decode = (output, dims, ctx) => {
+const decode = (output: ArrayLike<number>, dims: readonly number[], ctx: LetterboxContext): DetectionBox[] => {
     const [, numAnchors, numCols] = dims;
     const numClasses = numCols - 5;
-    const boxes = [];
+    const boxes: DetectionBox[] = [];
 
     for (let a = 0; a < numAnchors; a++) {
         const base = a * numCols;
@@ -139,13 +150,13 @@ const decode = (output, dims, ctx) => {
     return nms(boxes);
 };
 
-const detect = async (imagePath) => {
+export const detect = async (imagePath: string): Promise<DetectionBox[]> => {
     const session = await getSession();
     const ctx = await letterbox(imagePath);
     const tensor = new ort.Tensor("float32", ctx.chw, [1, 3, SIZE, SIZE]);
     const results = await session.run({ [session.inputNames[0]]: tensor });
     const output = results[session.outputNames[0]];
-    return decode(output.data, output.dims, ctx);
+    return decode(output.data as ArrayLike<number>, output.dims, ctx);
 };
 
-module.exports = { detect, isAvailable, setModelPath, getModelPath, setClassNames, getClassNames, SIZE, CONF, IOU };
+export { SIZE, CONF, IOU };

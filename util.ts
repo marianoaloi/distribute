@@ -1,21 +1,24 @@
-const path = require("path");
-const fs = require("fs");
+import path from "path";
+import fs from "fs";
 
-const mime = require('mime-types');
-const thumbnails = require("./thumbnails/ThumbnailService");
-const cache = require("./thumbnails/cache");
+import * as mime from "mime-types";
+import * as thumbnails from "./thumbnails/ThumbnailService";
+import * as cache from "./thumbnails/cache";
+import { hasAudio as videoHasAudio } from "./compareImg/videoFrames";
+import * as MediaStore from "./mediaDb/MediaStore";
+import { backfillContentMd5 } from "./mediaDb/backfill";
+
+import type { MediaKind, MediaRow, StreamMediaItem } from "./types/domain";
+
 const { hashFor } = cache;
-const videoFrames = require("./compareImg/videoFrames");
-const MediaStore = require("./mediaDb/MediaStore");
-const { backfillContentMd5 } = require("./mediaDb/backfill");
 
-const kindFor = (itemMime) => {
+const kindFor = (itemMime: string | false): MediaKind => {
     if (itemMime && itemMime.includes('gif')) return 'gif';
     if (itemMime && itemMime.includes('video')) return 'video';
     return 'image';
 };
 
-const upsertMediaSafe = (item) => {
+const upsertMediaSafe = (item: StreamMediaItem): void => {
     // Cross-folder "fake" items from compareImg/dbImport.js live outside the
     // opened folder and have no business in THIS folder's media table - a
     // row here would make the content-MD5 backfill read an external file in
@@ -34,9 +37,19 @@ const upsertMediaSafe = (item) => {
             thumbPath: item.kind === 'image' ? null : item.fileName,
         });
     } catch (error) {
-        console.error("upsertMedia failed for", item.item, "-", error.message);
+        console.error("upsertMedia failed for", item.item, "-", (error as Error).message);
     }
 };
+
+// A raw item mid-pipeline: mime hasn't been confirmed present/relevant yet
+// (mime.lookup can return false), unlike the StreamMediaItem the renderer
+// ultimately receives.
+interface RawStreamItem extends Omit<StreamMediaItem, "mime"> {
+    mime: string | false;
+}
+
+const hasUsableMime = (item: RawStreamItem): item is RawStreamItem & { mime: string } =>
+    Boolean(item.mime && (item.mime.includes('image') || item.mime.includes('video')));
 
 // onDone fires once every video's thumbnail has been generated and sent —
 // videos are added one at a time (each awaits its own thumbnail), so the
@@ -47,12 +60,19 @@ const upsertMediaSafe = (item) => {
 // still reusing this same thumbnail/metadata pipeline. Pass an empty
 // folderOpened to treat data as absolute paths (import items live outside
 // the opened folder).
-const transformDataStreaming = async (data, folderOpened, onReadyGo, onSendOneMedia, onDone, extraFields = {}) => {
+export const transformDataStreaming = async (
+    data: string[],
+    folderOpened: string,
+    onReadyGo: (items: StreamMediaItem[]) => void,
+    onSendOneMedia: (item: StreamMediaItem) => void,
+    onDone?: () => void,
+    extraFields: Partial<StreamMediaItem> = {},
+): Promise<void> => {
     const allPaths = folderOpened ? data.map(item => path.join(folderOpened, item)) : data;
 
     const withMeta = allPaths
         .map(item => { try { return { item, stat: fs.statSync(item) }; } catch { return { item, stat: null }; } })
-        .filter(({ stat }) => stat && stat.isFile())
+        .filter((entry): entry is { item: string; stat: fs.Stats } => entry.stat !== null && entry.stat.isFile())
         .map(({ item, stat }) => {
             const itemMime = mime.lookup(item);
             return {
@@ -68,54 +88,54 @@ const transformDataStreaming = async (data, folderOpened, onReadyGo, onSendOneMe
                 // counter), so it survives a re-scan and stays valid as the key
                 // compareImg's duplicate index stores duplicate-group membership under.
                 id: hashFor(item),
-                ...extraFields
-            };
+                ...extraFields,
+            } as RawStreamItem;
         })
-        .filter(item => item.mime && (item.mime.includes('image') || item.mime.includes('video')));
+        .filter(hasUsableMime);
 
     // GIFs are many-frame media like video (see compareImg/mediaIndexer.js),
     // not a single still like a plain image, so they're routed through the
     // thumbnail pipeline instead of being emitted as-is.
-    const images = withMeta.filter(i => i.kind === 'image');
-    const framed = withMeta.filter(i => i.kind === 'video' || i.kind === 'gif');
+    const images: StreamMediaItem[] = withMeta.filter(i => i.kind === 'image');
+    const framed: StreamMediaItem[] = withMeta.filter(i => i.kind === 'video' || i.kind === 'gif');
 
     // Batched indexed lookup against the media table so a video/gif whose
     // thumbnail is already cached can skip the slow per-item ffmpeg loop
     // below entirely. Any DB failure here must never stop the folder from
     // opening - fall through to the slow path for every framed item.
-    let cached = new Map();
+    let cached = new Map<string, MediaRow>();
     try {
         MediaStore.ensureReady();
         cached = MediaStore.findAllMediaThatExists()
-                        .reduce((map, row) => {
-                                map.set(row.id, row);
-                                return map;
-                            }, new Map());
+            .reduce((map, row) => {
+                map.set(row.id, row);
+                return map;
+            }, new Map<string, MediaRow>());
     } catch (error) {
-        console.error("transformDataStreaming: media DB lookup failed, falling back to slow path:", error.message);
+        console.error("transformDataStreaming: media DB lookup failed, falling back to slow path:", (error as Error).message);
         cached = new Map();
     }
-    
+
     for (const item of images) {
         upsertMediaSafe(item);
     }
     onReadyGo(images);
 
-    const ready = [];
-    const pending = [];
+    const ready: StreamMediaItem[] = [];
+    const pending: StreamMediaItem[] = [];
     for (const item of framed) {
         const row = cached.get(item.id);
         const thumbPath = row && row.contentMd5 ? cache.thumbnailPathFor(item.item, row.contentMd5) : null;
         const isReady = Boolean(row)
-            && row.size === item.size
-            && row.mtimeMs === item.mtimeMs
-            && Boolean(row.contentMd5)
+            && row!.size === item.size
+            && row!.mtimeMs === item.mtimeMs
+            && Boolean(row!.contentMd5)
             && Boolean(thumbPath)
-            && fs.existsSync(thumbPath);
+            && fs.existsSync(thumbPath as string);
         if (isReady) {
-            item.fileName = thumbPath;
-            item.hasAudio = Boolean(row.hasAudio);
-            item.contentMd5 = row.contentMd5;
+            item.fileName = thumbPath as string;
+            item.hasAudio = Boolean(row!.hasAudio);
+            item.contentMd5 = row!.contentMd5 as string;
             ready.push(item);
         } else {
             pending.push(item);
@@ -126,7 +146,7 @@ const transformDataStreaming = async (data, folderOpened, onReadyGo, onSendOneMe
     // (populateArray assigns, it does not append) - it may only be called
     // once per load, so the already-cached items are folded into this single
     // call instead of trickling in through onVideo like the slow ones.
-    
+
     for (const item of ready) {
         upsertMediaSafe(item);
     }
@@ -138,13 +158,11 @@ const transformDataStreaming = async (data, folderOpened, onReadyGo, onSendOneMe
         for (const item of group) {
             const row = cached.get(item.id);
             item.fileName = await thumbnails.getThumbnail(item.item, row && row.contentMd5);
-            item.hasAudio = await videoFrames.hasAudio(item.item);
+            item.hasAudio = await videoHasAudio(item.item);
             upsertMediaSafe(item);
         }
-            onReadyGo(group);
-
+        onReadyGo(group);
     }
-
 
     if (onDone) onDone();
 
@@ -153,8 +171,3 @@ const transformDataStreaming = async (data, folderOpened, onReadyGo, onSendOneMe
     // file bytes again.
     backfillContentMd5();
 };
-
-
-module.exports = {
-    transformDataStreaming,
-}

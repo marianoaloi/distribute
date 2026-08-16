@@ -1,8 +1,8 @@
 {
   "name": "distribute",
-  "version": "2.0.66",
+  "version": "2.0.67",
   "private": true,
-  "main": "app.js",
+  "main": "electron-dist/app.js",
   "homepage": "./",
   "dependencies": {
     "@emotion/react": "^11.13.3",
@@ -15,6 +15,7 @@
     "electron-is-dev": "^3.0.1",
     "ffmpeg-static": "^5.3.0",
     "jimp": "^1.6.1",
+    "mime-types": "^2.1.35",
     "onnxruntime-node": "^1.27.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -32,7 +33,9 @@
     "@testing-library/jest-dom": "^5.17.0",
     "@testing-library/react": "^13.4.0",
     "@testing-library/user-event": "^13.5.0",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/jest": "^27.5.2",
+    "@types/mime-types": "^3.0.1",
     "@types/node": "^16.18.112",
     "@types/react": "^18.3.10",
     "@types/react-dom": "^18.3.0",
@@ -50,16 +53,8 @@
     },
     "files": [
       "build/**/*",
-      "app.js",
-      "preload.js",
+      "electron-dist/**/*",
       "menu.js",
-      "util.js",
-      "DirectorioCache.js",
-      "thumbnails/**/*",
-      "compareImg/**/*",
-      "objectDetection/**/*",
-      "mediaDb/**/*",
-      "hashing/**/*",
       "package.json"
     ],
     "asarUnpack": [
@@ -68,7 +63,7 @@
       "node_modules/onnxruntime-node/**"
     ],
     "extraMetadata": {
-      "main": "app.js"
+      "main": "electron-dist/app.js"
     },
     "icon": "public/logo512.png",
     "win": {
@@ -77,16 +72,20 @@
   },
   "scripts": {
     "postinstall": "electron-rebuild -f -o better-sqlite3",
-    "startele": "nodemon -e js --exec electron . ",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "watch:electron": "tsc -p tsconfig.electron.json -w",
+    "prestartele": "npm run build:electron",
+    "startele": "nodemon -e js --watch electron-dist --exec electron . ",
     "start": "react-scripts start --no-browser  --source-map --base-href ",
     "build": "react-scripts build",
     "buildMaloi": "react-scripts build --source-map --base-href ",
     "test": "react-scripts test",
+    "preelectron": "npm run build:electron",
     "electron": "npm version patch --no-git-tag-version && electron .",
     "eject": "react-scripts eject",
-    "buildele": "npm run build && ./ExecutableLinux.sh",
+    "buildele": "npm run build && npm run build:electron && ./ExecutableLinux.sh",
     "deb64": "electron-installer-debian --src dist_resume/getimage-linux-x64/ --dest dist_resume/installers/ --arch amd64",
-    "execWindows": "react-scripts build && electron-builder --win --x64 --publish never"
+    "execWindows": "react-scripts build && npm run build:electron && electron-builder --win --x64 --publish never"
   },
   "eslintConfig": {
     "extends": [
