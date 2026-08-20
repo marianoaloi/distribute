@@ -14,6 +14,14 @@ import { DetectionBoxLabel, DetectionBoxOutline, DetectionGridWrap, DetectionRes
 // on-screen list is capped.
 const MAX_VISIBLE_MEDIAS = 500
 
+// Once the run has gone 3/4 of the way through the visible window, slide the
+// window forward so the grid keeps showing what's coming up next instead of
+// piling up everything already processed. WINDOW_SHIFT is how far back
+// (from the item just processed) the new window starts, i.e. how much
+// already-processed context stays on screen after the slide.
+const WINDOW_SHIFT_TRIGGER = Math.floor(MAX_VISIBLE_MEDIAS * 3 / 4)
+const WINDOW_SHIFT = MAX_VISIBLE_MEDIAS - WINDOW_SHIFT_TRIGGER
+
 export const GridDetections = (() => {
 
     const dispatch = useDispatch<any>();
@@ -28,7 +36,10 @@ export const GridDetections = (() => {
     const modelName = modelPath ? modelPath.split(/[\\/]/).pop() : null
     const classNames = useSelector(selectDetectionClassNames)
     const lastProcessedId = useSelector(selectLastProcessedId)
-    const visibleMedias = medias.slice(0, MAX_VISIBLE_MEDIAS)
+
+    const [windowStart, setWindowStart] = React.useState(0)
+    const windowEnd = Math.min(windowStart + MAX_VISIBLE_MEDIAS, medias.length)
+    const visibleMedias = medias.slice(windowStart, windowEnd)
 
     const [openClassNames, setOpenClassNames] = React.useState(false)
 
@@ -68,6 +79,27 @@ export const GridDetections = (() => {
             ?.scrollIntoView({ block: "center", behavior: "auto" })
     }, [lastProcessedId])
 
+    // Start each fresh run showing from the top of the list.
+    React.useEffect(() => {
+        if (detecting) {
+            setWindowStart(0)
+        }
+    }, [detecting])
+
+    // Backend processes medias in the same order they were sent, so the index
+    // of the last processed item tells us how far through the window the run
+    // is. Once it crosses the 3/4 mark, slide the window forward so the
+    // already-recognized items at the front drop off the grid and upcoming
+    // ones scroll into view instead.
+    React.useEffect(() => {
+        if (!detecting || !lastProcessedId) return
+        const processedIndex = medias.findIndex(m => m.id === lastProcessedId)
+        if (processedIndex < 0) return
+        if (processedIndex - windowStart >= WINDOW_SHIFT_TRIGGER) {
+            setWindowStart(Math.max(0, processedIndex - WINDOW_SHIFT))
+        }
+    }, [lastProcessedId, detecting, medias, windowStart])
+
     return (
         <div>
             <DetectionResume>
@@ -91,7 +123,7 @@ export const GridDetections = (() => {
                 <span>{Object.keys(detections).length} media scanned</span>
                 {medias.length > MAX_VISIBLE_MEDIAS &&
                     <span title="All loaded media are still sent to detection - only the grid view is capped">
-                        Showing {MAX_VISIBLE_MEDIAS} of {medias.length}
+                        Showing {windowStart + 1}-{windowEnd} of {medias.length}
                     </span>}
                 {detectionError && <span>Detection failed: {detectionError}</span>}
                 <div className="spacer" />
