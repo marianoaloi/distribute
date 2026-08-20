@@ -8,6 +8,12 @@ import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { toMediaUrl } from "../lib/mediaUrl"
 import { DetectionBoxLabel, DetectionBoxOutline, DetectionGridWrap, DetectionResume, DetectionTile, EmptyState } from "./objectDetectionGrid.styled"
 
+// The grid only renders this many tiles at once - with large folders, mounting
+// thousands of <img> tags tanks render/scroll performance. Detection itself
+// still runs over every loaded media (see runDetection below); only the
+// on-screen list is capped.
+const MAX_VISIBLE_MEDIAS = 500
+
 export const GridDetections = (() => {
 
     const dispatch = useDispatch<any>();
@@ -22,6 +28,7 @@ export const GridDetections = (() => {
     const modelName = modelPath ? modelPath.split(/[\\/]/).pop() : null
     const classNames = useSelector(selectDetectionClassNames)
     const lastProcessedId = useSelector(selectLastProcessedId)
+    const visibleMedias = medias.slice(0, MAX_VISIBLE_MEDIAS)
 
     const [openClassNames, setOpenClassNames] = React.useState(false)
 
@@ -82,6 +89,10 @@ export const GridDetections = (() => {
                 </IconButton>
                 {modelName && <span title={modelPath ?? undefined}>Model: {modelName}</span>}
                 <span>{Object.keys(detections).length} media scanned</span>
+                {medias.length > MAX_VISIBLE_MEDIAS &&
+                    <span title="All loaded media are still sent to detection - only the grid view is capped">
+                        Showing {MAX_VISIBLE_MEDIAS} of {medias.length}
+                    </span>}
                 {detectionError && <span>Detection failed: {detectionError}</span>}
                 <div className="spacer" />
             </DetectionResume>
@@ -133,7 +144,7 @@ export const GridDetections = (() => {
 
             {medias.length > 0
                 ? <DetectionGridWrap>
-                    {medias.map(media => (
+                    {visibleMedias.map(media => (
                         <DetectionTile id={`detection-media-${media.id}`} key={media.id} size={config.pxzoom}>
                             <img src={toMediaUrl(media.media)} alt={media.filename} draggable={false} />
                             {(detections[media.id] || []).map((box, idx) => (
