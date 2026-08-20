@@ -513,7 +513,7 @@ const moveFile = (bol: boolean, dest: string, onlyCopy: boolean, data: MoveFileE
     // moved themselves.
     data.filter(f => f.checked === bol && !f.imported).forEach(media => {
         // let completeDestine = path.join(path.dirname(media.path), dest);
-        const completeDestine = path.join(fileGlobal as string, dest);
+        const completeDestine = path.join(fileGlobal as string, "tmp" ,dest);
         if (!fs.existsSync(completeDestine)) {
             fs.mkdirSync(completeDestine);
         }
