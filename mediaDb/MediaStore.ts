@@ -7,7 +7,7 @@ export const ensureReady = (): void => HashStore.ensureReady();
 
 const MEDIA_COLUMNS = ["localPath", "filename", "mime", "kind", "size", "mtimeMs", "contentMd5", "hasAudio", "thumbPath", "updatedAt"] as const;
 
-const MEDIA_SELECT_COLUMNS = "id, localPath, contentMd5, size, mtimeMs, hasAudio, thumbPath , mime, kind, detectionClasses, detectionAt";
+const MEDIA_SELECT_COLUMNS = "id, localPath, contentMd5, size, mtimeMs, hasAudio, thumbPath , mime, kind";
 
 // Callers (util.js's transformDataStreaming) re-upsert every media row on
 // every folder load without knowing the backfilled contentMd5, so a plain
@@ -50,15 +50,6 @@ export const setContentMd5 = (id: string, contentMd5: string): void => {
 export const setThumbPath = (id: string, thumbPath: string): void => {
     const db = HashStore.getDb();
     db.prepare("UPDATE media SET thumbPath = ?, updatedAt = ? WHERE id = ?").run(thumbPath, Date.now(), id);
-};
-
-// Records the class-name snapshot a media was just detected against, so a
-// later detectObjects run can tell "already recognized with today's classes"
-// (skip) apart from "recognized under a class list that has since changed"
-// (redo). No-op update if the media row doesn't exist (e.g. an imported item).
-export const setDetectionState = (id: string, classesSnapshot: string): void => {
-    const db = HashStore.getDb();
-    db.prepare("UPDATE media SET detectionClasses = ?, detectionAt = ? WHERE id = ?").run(classesSnapshot, Date.now(), id);
 };
 
 // SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 999, so ids are looked up in
@@ -109,47 +100,138 @@ export const saveDetectionClasses = (names: string[]): void => {
     run(names);
 };
 
-export const replaceDetections = (mediaId: string, boxes: DetectionBox[], modelPath: string | null): void => {
+// Mirrors setDetectionState above, one level down: records the class-name
+// snapshot THIS item (not the whole media) was just detected against - see
+// mediaSchema.js's item_detection_state table.
+export const setItemDetectionState = (itemId: string, classesSnapshot: string): void => {
     const db = HashStore.getDb();
-    const del = db.prepare("DELETE FROM media_detection WHERE mediaId = ?");
+    db.prepare(`
+        INSERT INTO item_detection_state (itemId, detectionClasses, detectionAt) VALUES (@itemId, @classesSnapshot, @detectedAt)
+        ON CONFLICT(itemId) DO UPDATE SET detectionClasses = excluded.detectionClasses, detectionAt = excluded.detectionAt
+    `).run({ itemId, classesSnapshot, detectedAt: Date.now() });
+};
+
+export interface ItemDetectionState {
+    detectionClasses: string | null;
+    detectionAt: number | null;
+}
+
+// Bulk lookup (same chunking rationale as findMediaByIds above - SQLite's
+// default SQLITE_MAX_VARIABLE_NUMBER is 999) so detectObjects can decide,
+// per item, whether to skip re-running the model on it.
+export const findItemsDetectionState = (ids: string[]): Map<string, ItemDetectionState> => {
+    const db = HashStore.getDb();
+    const result = new Map<string, ItemDetectionState>();
+    for (let i = 0; i < ids.length; i += ID_CHUNK) {
+        const chunk = ids.slice(i, i + ID_CHUNK);
+        if (chunk.length === 0) continue;
+        const placeholders = chunk.map(() => "?").join(",");
+        const rows = db.prepare(
+            `SELECT itemId, detectionClasses, detectionAt FROM item_detection_state WHERE itemId IN (${placeholders})`
+        ).all(...chunk) as Array<{ itemId: string; detectionClasses: string | null; detectionAt: number | null }>;
+        for (const row of rows) result.set(row.itemId, { detectionClasses: row.detectionClasses, detectionAt: row.detectionAt });
+    }
+    return result;
+};
+
+// Upserts the row for this model path (one row per distinct path ever
+// chosen - see mediaSchema.js's model_path table) and returns its id, so
+// item_detection can reference *which* model produced a result without
+// repeating the path text on every row.
+export const getOrCreateModelPath = (path: string): number => {
+    const db = HashStore.getDb();
+    const row = db.prepare(`
+        INSERT INTO model_path (path, updatedAt) VALUES (@path, @updatedAt)
+        ON CONFLICT(path) DO UPDATE SET updatedAt = excluded.updatedAt
+        RETURNING id
+    `).get({ path, updatedAt: Date.now() }) as { id: number };
+    return row.id;
+};
+
+// Detection now runs per item (an image's 1 item, or a video/GIF's up to 4
+// frame items - see app.js's detectObjects), not per media - className is
+// intentionally not stored, it's joined from detection_class at read time.
+export const replaceItemDetections = (itemId: string, boxes: DetectionBox[], modelPathId: number | null): void => {
+    const db = HashStore.getDb();
+    const del = db.prepare("DELETE FROM item_detection WHERE itemId = ?");
     const insert = db.prepare(`
-        INSERT INTO media_detection (mediaId, classId, className, score, x, y, w, h, modelPath, detectedAt)
-        VALUES (@mediaId, @classId, @className, @score, @x, @y, @w, @h, @modelPath, @detectedAt)
+        INSERT INTO item_detection (itemId, classId, score, x, y, w, h, modelPathId, detectedAt)
+        VALUES (@itemId, @classId, @score, @x, @y, @w, @h, @modelPathId, @detectedAt)
     `);
     const run = db.transaction((list: DetectionBox[]) => {
-        del.run(mediaId);
+        del.run(itemId);
         const detectedAt = Date.now();
         list.forEach((box) => insert.run({
-            mediaId,
+            itemId,
             classId: box.classId,
-            className: box.className,
             score: box.score,
             x: box.x,
             y: box.y,
             w: box.w,
             h: box.h,
-            modelPath: modelPath || null,
+            modelPathId: modelPathId ?? null,
             detectedAt,
         }));
     });
     run(boxes || []);
 };
 
-export const getDetections = (mediaId: string): DetectionRow[] => {
+const ITEM_DETECTION_SELECT = `
+    SELECT item_detection.classId AS classId, detection_class.name AS className,
+           item_detection.score AS score, item_detection.x AS x, item_detection.y AS y,
+           item_detection.w AS w, item_detection.h AS h, model_path.path AS modelPath
+    FROM item_detection
+    LEFT JOIN detection_class ON detection_class.classId = item_detection.classId
+    LEFT JOIN model_path ON model_path.id = item_detection.modelPathId
+    WHERE item_detection.itemId = ?
+`;
+
+export const getItemDetections = (itemId: string): DetectionRow[] => {
     const db = HashStore.getDb();
-    return db.prepare("SELECT classId, className, score, x, y, w, h, modelPath FROM media_detection WHERE mediaId = ?").all(mediaId) as DetectionRow[];
+    return db.prepare(ITEM_DETECTION_SELECT).all(itemId) as DetectionRow[];
 };
 
 export interface DetectionRowWithMediaId extends DetectionRow {
     mediaId: string;
 }
 
-// Every stored detection for the folder's index.db in one pass - index.db is
-// per-folder, so "all rows" is exactly the media the renderer has loaded.
-// Ordered by mediaId so app.js can group with a single linear scan.
-export const getAllDetections = (): DetectionRowWithMediaId[] => {
+// Boxes for on-screen overlay: only the single "display item" per media (the
+// sole item for an image, the end10s frame item for a video/GIF - the one
+// whose pixels the grid actually shows as the thumbnail), so x/y/w/h stay
+// spatially valid against the displayed image. items.framePosition is '' for
+// an image's item and 'end10s' for that one video/GIF frame - mutually
+// exclusive per media, so this single WHERE picks exactly one item per media
+// with no extra grouping needed. Ordered by mediaId so app.js can group with
+// a single linear scan.
+export const getAllDisplayDetections = (): DetectionRowWithMediaId[] => {
     const db = HashStore.getDb();
-    return db.prepare(
-        "SELECT mediaId, classId, className, score, x, y, w, h, modelPath FROM media_detection ORDER BY mediaId"
-    ).all() as DetectionRowWithMediaId[];
+    return db.prepare(`
+        SELECT media_item.mediaId AS mediaId, item_detection.classId AS classId,
+               detection_class.name AS className, item_detection.score AS score,
+               item_detection.x AS x, item_detection.y AS y, item_detection.w AS w, item_detection.h AS h,
+               model_path.path AS modelPath
+        FROM media_item
+        JOIN items ON items.id = media_item.itemId
+        JOIN item_detection ON item_detection.itemId = items.id
+        LEFT JOIN detection_class ON detection_class.classId = item_detection.classId
+        LEFT JOIN model_path ON model_path.id = item_detection.modelPathId
+        WHERE items.framePosition IN ('', 'end10s')
+        ORDER BY media_item.mediaId
+    `).all() as DetectionRowWithMediaId[];
+};
+
+// Filtering (classFilter.tsx/gridImg.tsx) only needs "does this media contain
+// class X anywhere", so - unlike the display boxes above - it uses the union
+// of classes across EVERY item linked to a media (all 4 frames for a video/
+// GIF, not just the thumbnail one). DISTINCT collapses the same class
+// detected in multiple frames/boxes into one entry per media.
+export const getDetectionClassesByMedia = (): Array<{ mediaId: string; className: string }> => {
+    const db = HashStore.getDb();
+    return db.prepare(`
+        SELECT DISTINCT media_item.mediaId AS mediaId, detection_class.name AS className
+        FROM media_item
+        JOIN item_detection ON item_detection.itemId = media_item.itemId
+        LEFT JOIN detection_class ON detection_class.classId = item_detection.classId
+        WHERE detection_class.name IS NOT NULL
+    `).all() as Array<{ mediaId: string; className: string }>;
 };

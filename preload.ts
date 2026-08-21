@@ -31,6 +31,7 @@ const ipc = {
             'saveDetectionClasses',
             'loadDetectionClasses',
             'loadDetections',
+            'getMediaFrames',
         ],
         // From main to render.
         'receive': ['directoryOpen',
@@ -45,6 +46,7 @@ const ipc = {
             'open',
             'cleanGrid',
             'duplicatesFound',
+            'mediaFramesFound',
         ],
         // From render to main and back again.
         'sendReceive': [
@@ -74,6 +76,7 @@ const ipc = {
             'detectionClassesLoaded',
             'detectionsLoaded',
             'fileProcessed',
+            'mediaFramesFound',
         ]
     }
 };

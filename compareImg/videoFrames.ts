@@ -76,7 +76,7 @@ const timestampsFor = (duration: number): Timestamps => ({
 
 export const FRAME_POSITIONS = ["start10s", "end10s", "pct50", "pct10"] as const;
 
-const framePathFor = (input: string, position: string): string => path.join(getFramesDir(), `${hashFor(input)}_${position}.jpg`);
+export const framePathFor = (input: string, position: string): string => path.join(getFramesDir(), `${hashFor(input)}_${position}.jpg`);
 
 
 const extractFramesFFMPEG = (
@@ -124,6 +124,11 @@ const frameExtractionLimiter = createSemaphore(FRAME_EXTRACTION_CONCURRENCY);
 const existingFramesFor = (input: string): VideoFrame[] => FRAME_POSITIONS
     .map(position => ({ position, path: framePathFor(input, position) }))
     .filter(frame => fs.existsSync(frame.path));
+
+// Read-only variant of extractFrames for callers that only want whatever's
+// already been extracted (e.g. the duplicates grid's frame-collage
+// thumbnail) - never spawns ffmpeg, so it's safe to call on every render.
+export const frameSetForMedia = (localPath: string): VideoFrame[] => existingFramesFor(localPath);
 
 // Returns [{ position, path }] for frames it managed to extract; skips ones ffmpeg can't produce
 export const extractFrames = async (input: string): Promise<VideoFrame[]> => {

@@ -1,4 +1,4 @@
-import { IconButton, CircularProgress, LinearProgress, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, Button, TextField } from "@mui/material"
+import { IconButton, CircularProgress, LinearProgress, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, Button, TextField, Snackbar, Alert } from "@mui/material"
 import { PlayArrow, Stop, FolderOpen, Label } from "@mui/icons-material"
 import React from "react"
 import { Media } from "../entity/Media"
@@ -22,6 +22,15 @@ const MAX_VISIBLE_MEDIAS = 500
 const WINDOW_SHIFT_TRIGGER = Math.floor(MAX_VISIBLE_MEDIAS * 3 / 4)
 const WINDOW_SHIFT = MAX_VISIBLE_MEDIAS - WINDOW_SHIFT_TRIGGER
 
+// detectObjects' backend gate (app.ts) sends these codes back instead of a
+// prose message - the renderer pre-checks the same two conditions before
+// ever dispatching (see runDetection below), so this mapping is really only
+// hit by a race (e.g. stale client state) rather than normal use.
+const DETECTION_ERROR_MESSAGES: Record<string, string> = {
+    "no-model": "No ONNX model selected - choose a model file first",
+    "no-classes": "No detection classes set - add at least one class name first",
+}
+
 export const GridDetections = (() => {
 
     const dispatch = useDispatch<any>();
@@ -42,9 +51,23 @@ export const GridDetections = (() => {
     const visibleMedias = medias.slice(windowStart, windowEnd)
 
     const [openClassNames, setOpenClassNames] = React.useState(false)
+    const [gateAlert, setGateAlert] = React.useState<string | null>(null)
 
     const chooseModel = () => dispatch(ChooseOnnxModel())
-    const runDetection = () => dispatch(RunDetection(medias))
+    // Only start when a model AND at least one class are configured - the
+    // Play button stays enabled either way so the user finds out why via
+    // this alert instead of the button just silently refusing to do anything.
+    const runDetection = () => {
+        if (!modelPath) {
+            setGateAlert("Choose an ONNX model first")
+            return
+        }
+        if (classNames.length === 0) {
+            setGateAlert("Set at least one detection class first")
+            return
+        }
+        dispatch(RunDetection(medias))
+    }
     const stopDetection = () => dispatch(StopDetection())
     const openClassNamesDialog = () => setOpenClassNames(true)
     const closeClassNamesDialog = () => setOpenClassNames(false)
@@ -107,7 +130,7 @@ export const GridDetections = (() => {
                     title={modelPath ? `Model: ${modelPath} (click to change)` : "Choose an ONNX model file"}>
                     <FolderOpen />
                 </IconButton>
-                <IconButton onClick={runDetection} disabled={detecting || medias.length === 0 || !modelPath}
+                <IconButton onClick={runDetection} disabled={detecting || medias.length === 0}
                     title={modelPath ? `Run ONNX object detection (${modelName}) over every loaded media` : "Choose an ONNX model file first"}>
                     {detecting ? <CircularProgress size={20} /> : <PlayArrow />}
                 </IconButton>
@@ -125,7 +148,7 @@ export const GridDetections = (() => {
                     <span title="All loaded media are still sent to detection - only the grid view is capped">
                         Showing {windowStart + 1}-{windowEnd} of {medias.length}
                     </span>}
-                {detectionError && <span>Detection failed: {detectionError}</span>}
+                {detectionError && <span>Detection failed: {DETECTION_ERROR_MESSAGES[detectionError] || detectionError}</span>}
                 <div className="spacer" />
             </DetectionResume>
 
@@ -179,7 +202,7 @@ export const GridDetections = (() => {
                     {visibleMedias.map(media => (
                         <DetectionTile id={`detection-media-${media.id}`} key={media.id} size={config.pxzoom}>
                             <img src={toMediaUrl(media.media)} alt={media.filename} draggable={false} />
-                            {(detections[media.id] || []).map((box, idx) => (
+                            {(detections[media.id]?.boxes || []).map((box, idx) => (
                                 <DetectionBoxOutline key={idx} x={box.x} y={box.y} w={box.w} h={box.h}>
                                     <DetectionBoxLabel>{box.className} {(box.score * 100).toFixed(0)}%</DetectionBoxLabel>
                                 </DetectionBoxOutline>
@@ -189,6 +212,12 @@ export const GridDetections = (() => {
                 </DetectionGridWrap>
                 : <EmptyState>No media loaded yet. Open a folder first, then run detection.</EmptyState>
             }
+
+            <Snackbar open={gateAlert !== null} autoHideDuration={4000} onClose={() => setGateAlert(null)}>
+                <Alert onClose={() => setGateAlert(null)} severity="warning" variant="filled">
+                    {gateAlert}
+                </Alert>
+            </Snackbar>
         </div>
     )
 })

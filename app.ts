@@ -22,6 +22,7 @@ import { hashFor } from "./thumbnails/cache";
 import * as onnxDetector from "./objectDetection/onnxDetector";
 import * as MediaStore from "./mediaDb/MediaStore";
 import * as ThumbnailService from "./thumbnails/ThumbnailService";
+import { framePathFor, frameSetForMedia } from "./compareImg/videoFrames";
 import type { DetectionBox, StreamMediaItem } from "./types/domain";
 
 const transformDataStreaming = util.transformDataStreaming;
@@ -282,17 +283,19 @@ ipcMain.on("chooseOnnxModel", () => {
     dialog.showOpenDialog(options).then(file => {
         if (!file.canceled && file.filePaths[0]) {
             const chosenPath = file.filePaths[0];
+            MediaStore.ensureReady();
             if (path.extname(chosenPath).toLowerCase() === ".maloi") {
                 const maloi: MaloiFile = JSON.parse(fs.readFileSync(chosenPath, "utf8"));
                 const onnxPath = path.resolve(path.dirname(chosenPath), maloi.onnx || "");
                 onnxDetector.setModelPath(onnxPath);
+                MediaStore.getOrCreateModelPath(onnxPath);
                 const names = splitClassNames(maloi.classes || "");
-                MediaStore.ensureReady();
                 MediaStore.saveDetectionClasses(names);
                 onnxDetector.setClassNames(names);
                 mainWindow!.webContents.send("detectionClassesLoaded", { names });
             } else {
                 onnxDetector.setModelPath(chosenPath);
+                MediaStore.getOrCreateModelPath(chosenPath);
             }
         }
         mainWindow!.webContents.send("onnxModelChosen", { path: onnxDetector.getModelPath() });
@@ -303,46 +306,89 @@ ipcMain.on("chooseOnnxModel", () => {
 
 ipcMain.on("detectObjects", async (event: IpcMainEvent, data: DetectObjectsPayload) => {
     const medias = (data && data.medias) || [];
+    // Gate: refuse to start (rather than silently no-op or error mid-run)
+    // unless both a model and at least one class name are configured - the
+    // renderer pre-checks the same two conditions and shows an alert, this
+    // is the authoritative backend guard.
     if (!onnxDetector.isAvailable()) {
-        mainWindow!.webContents.send("detectionsComplete", { error: "No ONNX model selected - choose a model file first" });
+        mainWindow!.webContents.send("detectionsComplete", { error: "no-model" });
         return;
     }
+    const classNames = onnxDetector.getClassNames();
+    if (classNames.length === 0) {
+        mainWindow!.webContents.send("detectionsComplete", { error: "no-classes" });
+        return;
+    }
+
     detectionStopRequested = false;
     let processed = 0;
     const total = medias.length;
-    // A media already has a stored result for the *current* class list when
+    // An item already has a stored result for the *current* class list when
     // its snapshot matches classesSnapshot below - skip re-running the model
-    // on it and just replay what's already in media_detection. Any class
+    // on it and just replay what's already in item_detection. Any class
     // list edit changes the snapshot, so a redo is forced for everyone again.
-    const classesSnapshot = onnxDetector.getClassNames().join(",");
+    const classesSnapshot = classNames.join(",");
+    MediaStore.ensureReady();
+    const modelPathId = MediaStore.getOrCreateModelPath(onnxDetector.getModelPath() as string);
     const mediaState = MediaStore.findMediaByIds(medias.map((media) => media.id));
 
-    // Detection runs 20 medias at a time: the awaited parts (file read, JPEG
+    // Detection is keyed by item (an image's 1 item, or a video/GIF's up to 4
+    // extracted frame items - compareImg/HashStore.js), the same content-
+    // addressable unit the duplicate finder already uses, so two media
+    // sharing identical content only ever get detected once. indexMediaBackground
+    // is idempotent (a no-op for content already indexed), so this
+    // transparently backfills items for any media never run through
+    // "Rebuild index" instead of requiring that as a separate step first.
+    await mediaIndexer.indexMediaBackground([...mediaState.values()].map((row) => ({
+        item: row.localPath,
+        mime: row.mime,
+        kind: row.kind,
+        contentMd5: row.contentMd5,
+        id: row.id,
+    })));
+
+    // Detection runs 20 items at a time: the awaited parts (file read, JPEG
     // decode, letterbox, session.run scheduling) overlap instead of queueing
     // behind each other. The native inference itself still runs one at a time
     // on the main process thread - the win is in everything around it.
     const DETECTION_BATCH_SIZE = 20;
 
+    // The grid only ever displays one image per media (the thumbnail - the
+    // end10s frame for a video/GIF, the image itself otherwise), so that's
+    // the only item whose boxes are spatially valid to overlay on it. ''
+    // marks an image's own item; 'end10s' is picked over the other 3 video/
+    // GIF frames for the same reason. Falls back to whatever's linked if
+    // extraction didn't produce either (partial failure).
+    const isDisplayFrame = (framePosition: string): boolean => framePosition === "" || framePosition === "end10s";
+
+    const pixelSourceFor = (localPath: string, framePosition: string): string =>
+        framePosition ? framePathFor(localPath, framePosition) : localPath;
+
     const processOne = async (media: DetectMediaRef): Promise<void> => {
         const state = mediaState.get(media.id);
-        const alreadyRecognized = Boolean(state && state.detectionAt && state.detectionClasses === classesSnapshot);
-        if (alreadyRecognized) {
-            const boxes = MediaStore.getDetections(media.id);
-            mainWindow!.webContents.send("detectionFound", { id: media.id, boxes });
-        } else {
-            try {
-                const boxes: DetectionBox[] = await onnxDetector.detect(media.media);
-                mainWindow!.webContents.send("detectionFound", { id: media.id, boxes });
-                try {
-                    MediaStore.replaceDetections(media.id, boxes, onnxDetector.getModelPath());
-                    MediaStore.setDetectionState(media.id, classesSnapshot);
-                } catch (error) {
-                    console.error("Persisting detections failed for", media.media, error);
+        try {
+            const items = state ? compareImgStore.itemsForMedia(media.id) : [];
+            if (items.length === 0 || !state) {
+                mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: [], classes: [] });
+            } else {
+                const itemsState = MediaStore.findItemsDetectionState(items.map((i) => i.itemId));
+                for (const item of items) {
+                    const itemState = itemsState.get(item.itemId);
+                    const alreadyRecognized = Boolean(itemState && itemState.detectionAt && itemState.detectionClasses === classesSnapshot);
+                    if (alreadyRecognized) continue;
+                    const boxes: DetectionBox[] = await onnxDetector.detect(pixelSourceFor(state.localPath, item.framePosition));
+                    MediaStore.replaceItemDetections(item.itemId, boxes, modelPathId);
+                    MediaStore.setItemDetectionState(item.itemId, classesSnapshot);
                 }
-            } catch (error) {
-                console.error("detectObjects failed for", media.media, error);
-                mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: [], error: (error as Error).message });
+
+                const perItem = items.map((item) => ({ item, boxes: MediaStore.getItemDetections(item.itemId) }));
+                const displayItem = perItem.find((d) => isDisplayFrame(d.item.framePosition)) || perItem[0];
+                const classes = [...new Set(perItem.flatMap((d) => d.boxes.map((b) => b.className)))];
+                mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: displayItem.boxes, classes });
             }
+        } catch (error) {
+            console.error("detectObjects failed for", media.media, error);
+            mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: [], classes: [], error: (error as Error).message });
         }
         processed++;
         mainWindow!.webContents.send("detectionProgress", { processed, total });
@@ -392,22 +438,62 @@ ipcMain.on("loadDetectionClasses", () => {
 // Hydrates every persisted detection for the current folder into the renderer
 // in one message, so the grid's class filter works on a freshly opened folder
 // without the user having to press Play again. index.db is per-folder, so no
-// id list is needed - the whole media_detection table is the current media.
+// id list is needed - the whole item_detection table (joined through
+// media_item) is the current media. boxes (for the detection grid's overlay)
+// come from each media's single display item; classes (for classFilter/
+// gridImg's filter) are the union across every item linked to that media -
+// see MediaStore.getAllDisplayDetections/getDetectionClassesByMedia.
 ipcMain.on("loadDetections", () => {
     try {
         MediaStore.ensureReady();
-        const rows = MediaStore.getAllDetections();
-        const byId = new Map<string, DetectionBox[]>();
-        for (const row of rows) {
+        const boxRows = MediaStore.getAllDisplayDetections();
+        const boxesById = new Map<string, DetectionBox[]>();
+        for (const row of boxRows) {
             const { mediaId, ...box } = row;
-            if (!byId.has(mediaId)) byId.set(mediaId, []);
-            (byId.get(mediaId) as DetectionBox[]).push(box);
+            if (!boxesById.has(mediaId)) boxesById.set(mediaId, []);
+            (boxesById.get(mediaId) as DetectionBox[]).push(box);
         }
-        const items = [...byId].map(([id, boxes]) => ({ id, boxes }));
+
+        const classRows = MediaStore.getDetectionClassesByMedia();
+        const classesById = new Map<string, string[]>();
+        for (const row of classRows) {
+            if (!classesById.has(row.mediaId)) classesById.set(row.mediaId, []);
+            (classesById.get(row.mediaId) as string[]).push(row.className);
+        }
+
+        const mediaIds = new Set([...boxesById.keys(), ...classesById.keys()]);
+        const items = [...mediaIds].map((id) => ({
+            id,
+            boxes: boxesById.get(id) || [],
+            classes: classesById.get(id) || [],
+        }));
         mainWindow!.webContents.send("detectionsLoaded", { items });
     } catch (error) {
         console.error("loadDetections failed", error);
         mainWindow!.webContents.send("detectionsLoaded", { items: [], error: (error as Error).message });
+    }
+});
+
+// Frame paths for the duplicates grid's 4-frame collage thumbnail - only for
+// video/GIF media whose frames were already extracted (compareImg's
+// duplicate-finder indexing); never spawns ffmpeg, so entries with nothing
+// cached are simply omitted and the renderer falls back to a plain thumbnail.
+ipcMain.on("getMediaFrames", (event: IpcMainEvent, data: { medias?: DetectMediaRef[] }) => {
+    try {
+        const medias = (data && data.medias) || [];
+        const mediaState = MediaStore.findMediaByIds(medias.map((media) => media.id));
+        const items = medias
+            .map((media) => {
+                const state = mediaState.get(media.id);
+                if (!state) return null;
+                const frames = frameSetForMedia(state.localPath).map((f) => f.path);
+                return frames.length > 0 ? { id: media.id, frames } : null;
+            })
+            .filter((item): item is { id: string; frames: string[] } => item !== null);
+        mainWindow!.webContents.send("mediaFramesFound", { items });
+    } catch (error) {
+        console.error("getMediaFrames failed", error);
+        mainWindow!.webContents.send("mediaFramesFound", { items: [], error: (error as Error).message });
     }
 });
 

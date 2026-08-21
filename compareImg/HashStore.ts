@@ -25,6 +25,11 @@ export interface ItemRow {
     baseGrey: Buffer | null;
 }
 
+export interface MediaItemRow {
+    itemId: string;
+    framePosition: string;
+}
+
 export interface UpsertItemInput {
     id: string;
     metadata: {
@@ -195,6 +200,18 @@ export const allBaseGreyRows = (): BaseGreyRow[] => db!
         WHERE items.baseGrey IS NOT NULL
     `)
     .all() as BaseGreyRow[];
+
+// Every item linked to a media (1 for an image, up to the 4 frame positions
+// for a video/GIF - see mediaIndexer.js), for detectObjects to run per-item
+// detection instead of once per media.
+export const itemsForMedia = (mediaId: string): MediaItemRow[] => db!
+    .prepare(`
+        SELECT media_item.itemId AS itemId, items.framePosition AS framePosition
+        FROM media_item
+        JOIN items ON items.id = media_item.itemId
+        WHERE media_item.mediaId = ?
+    `)
+    .all(mediaId) as MediaItemRow[];
 
 // Column names of the live items table, for validating that an imported
 // (exported-elsewhere) database has the identical structure before comparing.

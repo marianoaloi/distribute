@@ -56,6 +56,24 @@ export const ExportDatabase = () => {
     }
 }
 
+// Frame paths for the duplicates grid's 4-frame collage thumbnail (video/GIF
+// media only - see app.js's getMediaFrames handler). Read-only: never
+// triggers ffmpeg extraction, so it's safe to call whenever medias load.
+export const GetMediaFrames = (medias: Media[]) => {
+
+    if (!isElectronApp) {
+        return (dispatch: any) => { }
+    }
+
+    return (dispatch: any) => {
+        if (ipcRender) {
+            ipcRender.send('getMediaFrames', {
+                medias: medias.map(m => ({ id: m.id, media: m.media }))
+            });
+        }
+    }
+}
+
 // Imports another folder's exported index database (readonly, never merged
 // into this folder's index) and streams back cross-folder duplicates as
 // transient fake items — see app.js's importDatabase handler.

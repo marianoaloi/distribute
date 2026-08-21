@@ -29,7 +29,7 @@ export const GridIMGs = (() => {
     // duplicate groups — the main grid stays a true view of the actual folder.
     const medias = useSelector(selectMedias).filter(m => !m.deleted && !m.imported)
         .filter(m => matchesMediaType(m.mime, config.mediaType))
-        .filter(m => matchesClassFilter(detections[m.id], classFilterGroups))
+        .filter(m => matchesClassFilter(detections[m.id]?.classes, classFilterGroups))
     const currentPage = config.page;
     const setCurrentPage = (page: number) => dispatch(setPage(page));
     const postsPerPage = config.postsPerPage;

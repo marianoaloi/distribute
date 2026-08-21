@@ -1,0 +1,9 @@
+/swarm:swarm using sarmsuse the swarms feature from ruflo . Any doubt call me . 
+
+in the duplication create a special thumbnail with the 4 imagine del frame stract from video or GIF . Create a div with the 4 images (or item there are in the table "item" that have relation with table media by media_item table) of frames stracted from media, the size of the div will grow and small zoom like a normal image thumbnail. 
+
+Create a modelPath table and make the table media_detection relationship with this new table. When i choice the model I fill this table. in the table remove the column className in media_detection , because the name of the class need to be in the table detectionb class
+
+Only start the detection process when the model and classes table are filled. not fill need present a alert message. 
+
+Change the name of table media_detection for item_detection and detect the classes in the the item and not media. The relacion of item_detection and media will be by media_item to make the detection grid in the front end to work or the imgGrid when make filter. 

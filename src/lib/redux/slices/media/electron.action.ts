@@ -3,7 +3,7 @@ import { example } from './populateExample';
 import { Media } from '../../../../entity/Media';
 import { addFolder } from '../folders';
 import { mediaLoadComplete, mediaLoadStart, zoomIn, zoomOut } from '../configurations';
-import { setDuplicateGroups, indexRebuildFinished, setIndexRebuildProgress, databaseExportFinished, databaseImportFinished } from '../duplicates';
+import { setDuplicateGroups, indexRebuildFinished, setIndexRebuildProgress, databaseExportFinished, databaseImportFinished, setMediaFrames } from '../duplicates';
 import { setDetectionResult, mergeDetections, setDetectionProgress, detectingFinished, setModelPath, setDetectionClasses } from '../detections';
 import { FileDTO } from '../../../../entity/FileDTO';
 
@@ -24,7 +24,7 @@ export const ElectronConnection = () => {
 
     return (dispatch: any) => {
         if (ipcRender) {
-            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete', 'onnxModelChosen', 'databaseExported', 'databaseImported', 'detectionClassesLoaded', 'detectionsLoaded', 'fileProcessed'];
+            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete', 'onnxModelChosen', 'databaseExported', 'databaseImported', 'detectionClassesLoaded', 'detectionsLoaded', 'fileProcessed', 'mediaFramesFound'];
             channels.forEach(ch => ipcRender.removeAllListeners(ch));
 
             ipcRender.on('directoryOpen', (e: any, args: any) => {
@@ -106,7 +106,7 @@ export const ElectronConnection = () => {
             ipcRender.on('mediaLoadComplete', () => {
                 dispatch(mediaLoadComplete())
             })
-            ipcRender.on('detectionFound', (e: any, result: { id: string, boxes: any[] }) => {
+            ipcRender.on('detectionFound', (e: any, result: { id: string, boxes: any[], classes: string[] }) => {
                 dispatch(setDetectionResult(result))
             })
             ipcRender.on('detectionProgress', (e: any, progress: { processed: number, total: number }) => {
@@ -121,7 +121,7 @@ export const ElectronConnection = () => {
             ipcRender.on('detectionClassesLoaded', (e: any, result: { names: string[] }) => {
                 dispatch(setDetectionClasses(result.names))
             })
-            ipcRender.on('detectionsLoaded', (e: any, result: { items: { id: string, boxes: any[] }[] }) => {
+            ipcRender.on('detectionsLoaded', (e: any, result: { items: { id: string, boxes: any[], classes: string[] }[] }) => {
                 dispatch(mergeDetections(result))
             })
             ipcRender.on('databaseExported', (e: any, result: { success: boolean, path?: string, error?: string, canceled?: boolean }) => {
@@ -129,6 +129,9 @@ export const ElectronConnection = () => {
                     error: result.canceled ? null : (result.success ? null : (result.error || 'Export failed')),
                     path: result.success ? result.path : undefined,
                 }))
+            })
+            ipcRender.on('mediaFramesFound', (e: any, result: { items: { id: string, frames: string[] }[] }) => {
+                dispatch(setMediaFrames(result))
             })
             ipcRender.on('databaseImported', (e: any, result: { success: boolean, matched?: number, error?: string, canceled?: boolean }) => {
                 dispatch(databaseImportFinished({

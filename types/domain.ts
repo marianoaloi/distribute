@@ -16,8 +16,6 @@ export interface MediaRow {
     thumbPath: string | null;
     mime: string | null;
     kind: MediaKind;
-    detectionClasses: string | null;
-    detectionAt: number | null;
 }
 
 /** Input to MediaStore.upsertMedia - one media file's metadata. */
