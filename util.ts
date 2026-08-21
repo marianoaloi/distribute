@@ -125,7 +125,7 @@ export const transformDataStreaming = async (
     const pending: StreamMediaItem[] = [];
     for (const item of framed) {
         const row = cached.get(item.id);
-        const thumbPath = row && row.contentMd5 ? cache.thumbnailPathFor(item.item, row.contentMd5) : null;
+        const thumbPath = row && row.contentMd5 ? cache.thumbnailPathFor(item.item, row.id) : null;
         const isReady = Boolean(row)
             && row!.size === item.size
             && row!.mtimeMs === item.mtimeMs
