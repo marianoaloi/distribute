@@ -73,6 +73,11 @@ export const findIndexDuplicates = async (): Promise<string[][]> => {
             const a = rows[i];
             const b = rows[j];
             if (a.mediaId === b.mediaId) continue;
+            if (a.contentMd5 && b.contentMd5 && a.contentMd5 === b.contentMd5) {
+                matchedIds.add(a.mediaId);
+                matchedIds.add(b.mediaId);
+                union(a.mediaId, b.mediaId);
+            } else
             if (meanAbsDiff(a.baseGrey, b.baseGrey) <= MEAN_DIFF_THRESHOLD) {
                 matchedIds.add(a.mediaId);
                 matchedIds.add(b.mediaId);

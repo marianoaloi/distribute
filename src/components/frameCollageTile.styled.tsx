@@ -13,9 +13,9 @@ export const CollageWrap = styled.div<{ size: number }>((props: any) => `
     cursor: pointer;
 `)
 
-export const CollageFrame = styled.img`
-    width: 100%;
-    height: 100%;
+export const CollageFrame = styled.img<{ size: number }>((props: any) => `
+    width: ${props.size/2}px;
+    height: ${props.size/2}px;
     object-fit: cover;
     display: block;
-`
+`)

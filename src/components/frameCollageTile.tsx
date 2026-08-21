@@ -59,7 +59,7 @@ export const FrameCollageTile: React.FC<FrameCollageTileProps> = ({ media, frame
     return <ThePhoto onMouseMove={mouseMoveOpen}>
         <CollageWrap size={config.pxzoom} onClick={(val) => changeCkecked(val)}
             title={`${media.path}\n${media.id} ${media.screenIndex}`}>
-            {frames.map((frame, idx) => <CollageFrame key={idx} src={toMediaUrl(frame)} draggable={false} />)}
+            {frames.map((frame, idx) => <CollageFrame size={config.pxzoom} key={idx} src={toMediaUrl(frame)} draggable={false} />)}
         </CollageWrap>
         <CheckBoxSelect readOnly onClick={(val) => changeCkecked(val)} checked={media.checked} type="checkbox"></CheckBoxSelect>
         <PreviewMedia onClick={openPreview} isGif={media.mime.includes('gif')} isVideo={media.mime.includes('video')} hasSound={media.hasAudio}>

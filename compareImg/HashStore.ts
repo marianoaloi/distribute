@@ -44,6 +44,7 @@ export interface BaseGreyRow {
     mediaId: string;
     baseGrey: Buffer;
     localPath: string;
+    contentMd5: string | null;
 }
 
 interface SavedDetectionClass {
@@ -193,7 +194,7 @@ export const linkItemMedia = (itemId: string, mediaId: string): void => {
 // near-duplicate case already does, with no special-casing needed.
 export const allBaseGreyRows = (): BaseGreyRow[] => db!
     .prepare(`
-        SELECT media_item.mediaId AS mediaId, items.baseGrey AS baseGrey, media.localPath AS localPath
+        SELECT media_item.mediaId AS mediaId, items.baseGrey AS baseGrey, media.localPath AS localPath , media.contentMd5 AS contentMd5
         FROM media_item
         JOIN items ON items.id = media_item.itemId
         JOIN media ON media.id = media_item.mediaId

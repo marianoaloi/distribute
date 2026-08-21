@@ -24,7 +24,7 @@ export const CheckBoxSelect = styled.input`
 `
 
 export const ThePhoto = styled.div`
-        display: unset;
+        display: ruby;
         position: relative;
 `
 

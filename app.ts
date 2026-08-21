@@ -228,7 +228,6 @@ ipcMain.on("open", () => {
             compareImgStore.closeConnection();
         }
         openfile();
-        buildIndex();
     }).catch(err => {
         console.error(err);
     })
@@ -725,7 +724,6 @@ const loadRecursive = async (): Promise<void> => {
             mainWindow!.webContents.send("mediaLoadStart");
             openfileRecursive(file.filePaths[0]);
 
-            buildIndex();
         }
     }).catch(err => {
         console.error(err);
