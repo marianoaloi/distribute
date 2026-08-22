@@ -51,26 +51,21 @@ interface RawStreamItem extends Omit<StreamMediaItem, "mime"> {
 const hasUsableMime = (item: RawStreamItem): item is RawStreamItem & { mime: string } =>
     Boolean(item.mime && (item.mime.includes('image') || item.mime.includes('video')));
 
-// onDone fires once every video's thumbnail has been generated and sent —
-// videos are added one at a time (each awaits its own thumbnail), so the
-// caller has no other way to know the grid is still being populated.
-//
-// extraFields is stamped onto every produced item — used by the database
-// import flow to mark cross-folder "fake" items ({ imported: true }) while
-// still reusing this same thumbnail/metadata pipeline. Pass an empty
-// folderOpened to treat data as absolute paths (import items live outside
-// the opened folder).
-export const transformDataStreaming = async (
-    data: string[],
-    folderOpened: string,
+// One PATH_SLICE_SIZE-sized slice of transformDataStreaming's path list run
+// through the full business pipeline: stat/mime detection, image vs video/gif
+// split, cache-hit check against `cached` (looked up once up front by the
+// caller - it reflects rows already in the DB before this run started, so
+// re-querying it per slice would just repeat the same work), and - for
+// whatever isn't already cached - frame extraction. onReadyGo maps to the
+// "loadMedias" channel, which appends (addListinActualArray) rather than
+// replacing - safe to call multiple times per slice, and once per slice.
+const processPathsSlice = async (
+    paths: string[],
+    cached: Map<string, MediaRow>,
     onReadyGo: (items: StreamMediaItem[]) => void,
-    onSendOneMedia: (item: StreamMediaItem) => void,
-    onDone?: () => void,
-    extraFields: Partial<StreamMediaItem> = {},
+    extraFields: Partial<StreamMediaItem>,
 ): Promise<void> => {
-    const allPaths = folderOpened ? data.map(item => path.join(folderOpened, item)) : data;
-
-    const withMeta = allPaths
+    const withMeta = paths
         .map(item => { try { return { item, stat: fs.statSync(item) }; } catch { return { item, stat: null }; } })
         .filter((entry): entry is { item: string; stat: fs.Stats } => entry.stat !== null && entry.stat.isFile())
         .map(({ item, stat }) => {
@@ -99,23 +94,6 @@ export const transformDataStreaming = async (
     const images: StreamMediaItem[] = withMeta.filter(i => i.kind === 'image');
     const framed: StreamMediaItem[] = withMeta.filter(i => i.kind === 'video' || i.kind === 'gif');
 
-    // Batched indexed lookup against the media table so a video/gif whose
-    // thumbnail is already cached can skip the slow per-item ffmpeg loop
-    // below entirely. Any DB failure here must never stop the folder from
-    // opening - fall through to the slow path for every framed item.
-    let cached = new Map<string, MediaRow>();
-    try {
-        MediaStore.ensureReady();
-        cached = MediaStore.findAllMediaThatExists()
-            .reduce((map, row) => {
-                map.set(row.id, row);
-                return map;
-            }, new Map<string, MediaRow>());
-    } catch (error) {
-        console.error("transformDataStreaming: media DB lookup failed, falling back to slow path:", (error as Error).message);
-        cached = new Map();
-    }
-
     for (const item of images) {
         upsertMediaSafe(item);
     }
@@ -142,11 +120,6 @@ export const transformDataStreaming = async (
         }
     }
 
-    // onReadyGo maps to the "directoryOpen" channel which REPLACES the grid
-    // (populateArray assigns, it does not append) - it may only be called
-    // once per load, so the already-cached items are folded into this single
-    // call instead of trickling in through onVideo like the slow ones.
-
     for (const item of ready) {
         upsertMediaSafe(item);
     }
@@ -162,6 +135,56 @@ export const transformDataStreaming = async (
             upsertMediaSafe(item);
         }
         onReadyGo(group);
+    }
+};
+
+// Slice size for processPathsSlice above - a folder can hold thousands of
+// files, and doing stat/mime-lookup over all of them in one synchronous pass
+// before the renderer sees anything would make a big folder's first paint
+// take far longer than it needs to. Slicing lets results stream in
+// progressively, PATH_SLICE_SIZE files at a time, same idea as the pending
+// ffmpeg groupSize above.
+const PATH_SLICE_SIZE = 200;
+
+// onDone fires once every video's thumbnail has been generated and sent —
+// videos are added one at a time (each awaits its own thumbnail), so the
+// caller has no other way to know the grid is still being populated.
+//
+// extraFields is stamped onto every produced item — used by the database
+// import flow to mark cross-folder "fake" items ({ imported: true }) while
+// still reusing this same thumbnail/metadata pipeline. Pass an empty
+// folderOpened to treat data as absolute paths (import items live outside
+// the opened folder).
+export const transformDataStreaming = async (
+    data: string[],
+    folderOpened: string,
+    onReadyGo: (items: StreamMediaItem[]) => void,
+    onSendOneMedia: (item: StreamMediaItem) => void,
+    onDone?: () => void,
+    extraFields: Partial<StreamMediaItem> = {},
+): Promise<void> => {
+    const allPaths = folderOpened ? data.map(item => path.join(folderOpened, item)) : data;
+
+    // Batched indexed lookup against the media table so a video/gif whose
+    // thumbnail is already cached can skip the slow per-item ffmpeg loop in
+    // processPathsSlice entirely. Any DB failure here must never stop the
+    // folder from opening - fall through to the slow path for every framed
+    // item. Computed once, not per slice below - see processPathsSlice's doc.
+    let cached = new Map<string, MediaRow>();
+    try {
+        MediaStore.ensureReady();
+        cached = MediaStore.findAllMediaThatExists()
+            .reduce((map, row) => {
+                map.set(row.id, row);
+                return map;
+            }, new Map<string, MediaRow>());
+    } catch (error) {
+        console.error("transformDataStreaming: media DB lookup failed, falling back to slow path:", (error as Error).message);
+        cached = new Map();
+    }
+
+    for (let i = 0; i < allPaths.length; i += PATH_SLICE_SIZE) {
+        await processPathsSlice(allPaths.slice(i, i + PATH_SLICE_SIZE), cached, onReadyGo, extraFields);
     }
 
     if (onDone) onDone();
