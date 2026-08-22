@@ -4,7 +4,7 @@ import { prettifySizeF } from "./media"
 import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, ImgWrapper, MediaControllersCSS, FoldersZoom, MuteIcon, InfoBox, ZoomHeader, VideoProgress } from "./modalZoom.styled"
 import { IconButton, Slider, Modal } from "@mui/material"
 import { toMediaUrl } from "../lib/mediaUrl"
-import { ArrowBackIos, ArrowForwardIos, CleaningServices, Label } from "@mui/icons-material"
+import { ArrowBackIos, ArrowForwardIos, CleaningServices, Label, ContentCopy, Check } from "@mui/icons-material"
 import { updateArrayItem, useDispatch, useSelector, selectDetections } from "../lib/redux"
 import { configurationsSelector, setVideoVolume } from "../lib/redux/slices/configurations"
 import { DetectionBoxOutline, DetectionBoxLabel } from "./objectDetectionGrid.styled"
@@ -38,6 +38,16 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         const [duration, setDuration] = useState(0);
         const [showDetections, setShowDetections] = useState(false);
         const toggleDetections = () => setShowDetections(v => !v)
+        const [pathCopied, setPathCopied] = useState(false)
+
+        const copyPathToClipboard = (): void => {
+            navigator.clipboard.writeText(mediaWithPreview.path).then(() => {
+                setPathCopied(true)
+                setTimeout(() => setPathCopied(false), 1500)
+            }).catch((error) => {
+                console.error("Failed to copy media path to clipboard", error)
+            })
+        }
 
 
         useImperativeHandle(ref, () => ({
@@ -304,22 +314,32 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                     <InfoBox>
                                         {!mediaWithPreview.hasAudio ? <MuteIcon color="error" /> : <span>{`${(volumeLevel * 100).toFixed(2)}%`}</span>}
                                         <span>{`${formatTime(currentTime)} / ${formatTime(duration)}`}</span>
+                                        <IconButton onClick={copyPathToClipboard} title={pathCopied ? "Copied!" : "Copy file path to clipboard"}>
+                                            {pathCopied ? <Check color="success" /> : <ContentCopy />}
+                                        </IconButton>
                                     </InfoBox>
                                 </>
                                 :
-                                <ImgWrapper>
-                                    <ImgPresentation
-                                        onDoubleClick={changeCheckbox}
-                                        draggable={false}
-                                        onWheel={(ev) => zoomImage(ev, imgRef.current)}
-                                        ref={imgRef} src={toMediaUrl(mediaWithPreview.path)}
-                                        alt={mediaWithPreview.path} title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></ImgPresentation>
-                                    {showDetections && detectedObjects.map((box, idx) => (
-                                        <DetectionBoxOutline key={idx} x={box.x} y={box.y} w={box.w} h={box.h}>
-                                            <DetectionBoxLabel>{box.className} {(box.score * 100).toFixed(0)}%</DetectionBoxLabel>
-                                        </DetectionBoxOutline>
-                                    ))}
-                                </ImgWrapper>
+                                <>
+                                    <ImgWrapper>
+                                        <ImgPresentation
+                                            onDoubleClick={changeCheckbox}
+                                            draggable={false}
+                                            onWheel={(ev) => zoomImage(ev, imgRef.current)}
+                                            ref={imgRef} src={toMediaUrl(mediaWithPreview.path)}
+                                            alt={mediaWithPreview.path} title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></ImgPresentation>
+                                        {showDetections && detectedObjects.map((box, idx) => (
+                                            <DetectionBoxOutline key={idx} x={box.x} y={box.y} w={box.w} h={box.h}>
+                                                <DetectionBoxLabel>{box.className} {(box.score * 100).toFixed(0)}%</DetectionBoxLabel>
+                                            </DetectionBoxOutline>
+                                        ))}
+                                    </ImgWrapper>
+                                    <InfoBox>
+                                        <IconButton onClick={copyPathToClipboard} title={pathCopied ? "Copied!" : "Copy file path to clipboard"}>
+                                            {pathCopied ? <Check color="success" /> : <ContentCopy />}
+                                        </IconButton>
+                                    </InfoBox>
+                                </>
                         }
                     </MediaPresentation>
                     <MediaControllers />

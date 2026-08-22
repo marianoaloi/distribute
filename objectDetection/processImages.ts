@@ -78,6 +78,12 @@ export const processMediaToDetections = async (mainWindow: any, onnxDetector: an
             } else {
                 const perItem: { item: DetectMediaRef; boxes: DetectionBox[] }[] = [];
                 for (const item of items) {
+                    if (!item.itemId){
+                        if (item.kind === "video" || item.kind === "gif") {
+                            continue; // skip videos/gifs without extracted frames
+                        }
+                        item.itemId = item.id; // use the media's own item for images
+                    }
                     const boxes: DetectionBox[] = await onnxDetector.detect(item.media);
                     MediaStore.replaceItemDetections(item.itemId, boxes, modelPathId);
                     MediaStore.setItemDetectionState(item.itemId, boxes.map(box => box.className).join(","));

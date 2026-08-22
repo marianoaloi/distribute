@@ -420,7 +420,6 @@ ipcMain.on("getMediaFrames", (event: IpcMainEvent, data: { medias?: DetectMediaR
 // to re-open/re-scan the folder to recover from a corrupted index.db.
 const buildIndex = async (): Promise<void> => {
     try {
-        await compareImgStore.rebuildIndex();
         const medias = MediaStore.findAllMediaThatExists() || [];
         mainWindow!.webContents.send("indexRebuildProgress", { processed: 0, total: medias.length });
         await mediaIndexer.indexMediaBackground(medias.map(m => ({

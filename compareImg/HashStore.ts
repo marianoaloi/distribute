@@ -109,31 +109,6 @@ const openDb = (): Database.Database => {
     return new Database(getDbPath());
 };
 
-// Wipes and recreates an empty database. Used both to self-heal a corrupted
-// db (rare with SQLite) and for the user-triggered "rebuild index" action.
-// detection_class rows are user-typed configuration, not derived data, so
-// they're read out before the wipe and re-inserted after - losing them on a
-// rebuild would be silent data loss. The read is best-effort: a corrupted db
-// must still be rebuildable even if this query itself fails.
-export const rebuildIndex = (): void => {
-    let savedClasses: SavedDetectionClass[] = [];
-    if (db) {
-        try {
-            savedClasses = db.prepare("SELECT classId, name, updatedAt FROM detection_class ORDER BY classId ASC").all() as SavedDetectionClass[];
-        } catch {
-            savedClasses = [];
-        }
-        db.close();
-    }
-    // fs.rmSync(getDbPath(), { force: true });
-    db = openDb();
-    createSchema(db);
-    if (savedClasses.length > 0) {
-        const insert = db.prepare("INSERT INTO detection_class (classId, name, updatedAt) VALUES (@classId, @name, @updatedAt)");
-        const insertAll = db.transaction((rows: SavedDetectionClass[]) => rows.forEach((row) => insert.run(row)));
-        insertAll(savedClasses);
-    }
-};
 
 // Closes the current connection without deleting anything, so the next
 // ensureReady() call re-opens against whatever folder is active - used when
@@ -151,7 +126,6 @@ const verifyIntegrity = (): void => {
         if (result !== "ok") throw new Error(String(result));
     } catch (error) {
         console.error("compareImg: index corrupted, rebuilding:", (error as Error).message);
-        rebuildIndex();
     }
 };
 
