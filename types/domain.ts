@@ -86,3 +86,13 @@ export interface ThumbnailProvider {
     generate: (input: string, output: string) => Promise<void>;
     generateSync: (input: string, output: string) => void;
 }
+
+
+export interface DetectMediaRef {
+    id: string;
+    media: string;
+}
+
+export interface DetectObjectsPayload {
+    medias?: DetectMediaRef[];
+}

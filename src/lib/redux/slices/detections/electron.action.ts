@@ -16,9 +16,7 @@ export const RunDetection = (medias: Media[]) => {
     return (dispatch: any) => {
         dispatch(startDetecting());
         if (ipcRender) {
-            ipcRender.send('detectObjects', {
-                medias: medias.map(m => ({ id: m.id, media: m.media }))
-            });
+            ipcRender.send('detectObjects',null);
         }
     }
 }

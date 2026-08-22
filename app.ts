@@ -23,7 +23,7 @@ import * as onnxDetector from "./objectDetection/onnxDetector";
 import * as MediaStore from "./mediaDb/MediaStore";
 import * as ThumbnailService from "./thumbnails/ThumbnailService";
 import { framePathFor, frameSetForMedia } from "./compareImg/videoFrames";
-import type { DetectionBox, StreamMediaItem } from "./types/domain";
+import type { DetectionBox, DetectMediaRef, DetectObjectsPayload, StreamMediaItem } from "./types/domain";
 
 const transformDataStreaming = util.transformDataStreaming;
 
@@ -40,14 +40,7 @@ interface ProcessPayload {
     data: MoveFileEntry[];
 }
 
-interface DetectMediaRef {
-    id: string;
-    media: string;
-}
 
-interface DetectObjectsPayload {
-    medias?: DetectMediaRef[];
-}
 
 interface SaveDetectionClassesPayload {
     classes?: string;
@@ -304,7 +297,7 @@ ipcMain.on("chooseOnnxModel", () => {
 });
 
 ipcMain.on("detectObjects", async (event: IpcMainEvent, data: DetectObjectsPayload) => {
-    const medias = (data && data.medias) || [];
+    const medias = MediaStore.findAllItemsExists() || [];
     // Gate: refuse to start (rather than silently no-op or error mid-run)
     // unless both a model and at least one class name are configured - the
     // renderer pre-checks the same two conditions and shows an alert, this

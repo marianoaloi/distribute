@@ -1,7 +1,9 @@
 import * as HashStore from "../compareImg/HashStore";
 import fs from "fs";
+import path from "path";
 
-import type { MediaRow, UpsertMediaInput, MediaMissingMd5Row, DetectionBox, DetectionRow } from "../types/domain";
+import type { MediaRow, UpsertMediaInput, MediaMissingMd5Row, DetectionBox, DetectionRow, DetectMediaRef } from "../types/domain";
+import { getCacheDir } from "../thumbnails/cache";
 
 export const ensureReady = (): void => HashStore.ensureReady();
 
@@ -77,6 +79,26 @@ export const findAllMediaThatExists = (): MediaRow[] => {
     return (db.prepare(`SELECT ${MEDIA_SELECT_COLUMNS} FROM media`).all() as MediaRow[])
         .filter(row => fs.existsSync(row.localPath));
 };
+
+export const findAllItemsExists = (): DetectMediaRef[] => {
+    const db = HashStore.getDb();
+    return db.prepare(`select
+                    m.id as idMedia,
+                    m.kind ,
+                    i.id  as idItem,
+                    m.localPath 
+                from
+                    media m
+                left join media_item mi on
+                    m.id = mi.mediaId
+                left join items i on
+                    i.id = mi.itemId`)
+                    .all()
+            .map((row : any) => {
+                return { id: row.idMedia, media: row.kind === "image" ? row.localPath : path.join(getCacheDir(),`${row.idItem}.jpg`) } as DetectMediaRef;
+            })
+        .filter(row => fs.existsSync(row.media));
+}
 
 export const mediaMissingContentMd5 = (limit: number): MediaMissingMd5Row[] => {
     const db = HashStore.getDb();
