@@ -2,7 +2,7 @@ import * as HashStore from "../compareImg/HashStore";
 import fs from "fs";
 import path from "path";
 
-import type { MediaRow, UpsertMediaInput, MediaMissingMd5Row, DetectionBox, DetectionRow, DetectMediaRef } from "../types/domain";
+import type { MediaRow, UpsertMediaInput, MediaMissingMd5Row, DetectionBox, DetectionRow, DetectMediaRef, ItemDetectionState } from "../types/domain";
 import { getCacheDir } from "../thumbnails/cache";
 
 export const ensureReady = (): void => HashStore.ensureReady();
@@ -84,9 +84,13 @@ export const findAllItemsExists = (): DetectMediaRef[] => {
     const db = HashStore.getDb();
     return db.prepare(`select
                     m.id as idMedia,
-                    m.kind ,
-                    i.id  as idItem,
-                    m.localPath 
+                    i.id  as idItem ,
+	                i.framePosition,
+                    ${MEDIA_SELECT_COLUMNS
+                        .split(",")
+                        .map(c => c.trim())
+                        .filter(c => c !== "id")
+                        .map(c => `m.${c} as ${c}`).join(", ")}
                 from
                     media m
                 left join media_item mi on
@@ -95,10 +99,33 @@ export const findAllItemsExists = (): DetectMediaRef[] => {
                     i.id = mi.itemId`)
                     .all()
             .map((row : any) => {
-                return { id: row.idMedia, media: row.kind === "image" ? row.localPath : path.join(getCacheDir(),`${row.idItem}.jpg`) } as DetectMediaRef;
+                return { 
+                    id: row.idMedia, 
+                    itemId: row.idItem,
+                    media: row.kind === "image" ? row.localPath : path.join(getCacheDir(),`${row.idItem}.jpg`), 
+                    mime: row.mime,
+                    kind: row.kind,
+                    contentMd5: row.contentMd5,
+                    framePosition: row.framePosition
+                } as DetectMediaRef;
             })
         .filter(row => fs.existsSync(row.media));
 }
+
+export const findAllDetectionExists = (): Map<string, ItemDetectionState[]> => {
+    const db = HashStore.getDb();
+    const rows = db.prepare(`
+        select id.itemId , id.classId, dc.name as classname, id.score, id.x, id.y, id.w, id.h
+        from item_detection id 
+        join detection_class dc on id.classId = dc.classId 
+        `).all() as ItemDetectionState[];
+
+    return rows.reduce((map, row) => {
+        if (!map.has(row.itemId)) map.set(row.itemId, []);
+        map.get(row.itemId)!.push(row);
+        return map;
+    }, new Map<string, ItemDetectionState[]>());
+};
 
 export const mediaMissingContentMd5 = (limit: number): MediaMissingMd5Row[] => {
     const db = HashStore.getDb();
@@ -133,28 +160,8 @@ export const setItemDetectionState = (itemId: string, classesSnapshot: string): 
     `).run({ itemId, classesSnapshot, detectedAt: Date.now() });
 };
 
-export interface ItemDetectionState {
-    detectionClasses: string | null;
-    detectionAt: number | null;
-}
 
-// Bulk lookup (same chunking rationale as findMediaByIds above - SQLite's
-// default SQLITE_MAX_VARIABLE_NUMBER is 999) so detectObjects can decide,
-// per item, whether to skip re-running the model on it.
-export const findItemsDetectionState = (ids: string[]): Map<string, ItemDetectionState> => {
-    const db = HashStore.getDb();
-    const result = new Map<string, ItemDetectionState>();
-    for (let i = 0; i < ids.length; i += ID_CHUNK) {
-        const chunk = ids.slice(i, i + ID_CHUNK);
-        if (chunk.length === 0) continue;
-        const placeholders = chunk.map(() => "?").join(",");
-        const rows = db.prepare(
-            `SELECT itemId, detectionClasses, detectionAt FROM item_detection_state WHERE itemId IN (${placeholders})`
-        ).all(...chunk) as Array<{ itemId: string; detectionClasses: string | null; detectionAt: number | null }>;
-        for (const row of rows) result.set(row.itemId, { detectionClasses: row.detectionClasses, detectionAt: row.detectionAt });
-    }
-    return result;
-};
+
 
 // Upserts the row for this model path (one row per distinct path ever
 // chosen - see mediaSchema.js's model_path table) and returns its id, so

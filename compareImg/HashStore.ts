@@ -68,16 +68,16 @@ const ensureColumn = (database: Database.Database, table: string, name: string, 
 };
 
 const createSchema = (database: Database.Database): void => {
-    // items is keyed by content (contentMd5, or contentMd5_framePosition for
-    // video/gif frames - see mediaIndexer.js), NOT by media: two different
-    // media rows whose files are byte-identical duplicates hash to the SAME
-    // item id. So one item can belong to many media, and one media has many
-    // items (its frames) - a real many-to-many, resolved through the
-    // media_item join table below rather than a mediaId column on items
-    // (a single column can only ever point at the last media that indexed
-    // that content, silently dropping every earlier duplicate's membership).
-    // localPath and kind live on the related media row - join through
-    // media_item instead of duplicating them here.
+    // Item ids are media.contentMd5 concatenated with media.id (plus a
+    // _framePosition suffix for video/GIF frames - see mediaIndexer.js), so
+    // each media owns its own item(s) rather than sharing one item id across
+    // every media with byte-identical content. One media still has many
+    // items (its up to-4 frames), resolved through the media_item join table
+    // below rather than a mediaId column on items (a single column can only
+    // ever point at the last media that indexed that content, silently
+    // dropping every earlier duplicate's membership). localPath and kind
+    // live on the related media row - join through media_item instead of
+    // duplicating them here.
     database.exec(`
         CREATE TABLE IF NOT EXISTS items (
             id TEXT PRIMARY KEY,
@@ -178,11 +178,10 @@ export const upsertItem = ({ id, metadata }: UpsertItemInput): void => {
     stmt.run({ id, ...metadata });
 };
 
-// Records that mediaId's file produced/shares itemId's content. Idempotent -
+// Records that mediaId's file produced itemId's content. Idempotent -
 // mediaIndexer.js calls this every time it touches an item, including when
-// the item's baseMd5/baseGrey were already computed by an earlier (possibly
-// different) media with byte-identical content, so that duplicate keeps its
-// own membership instead of being silently dropped.
+// the item's baseMd5/baseGrey were already computed by an earlier indexing
+// pass over the same media (e.g. a previous rebuild).
 export const linkItemMedia = (itemId: string, mediaId: string): void => {
     db!.prepare("INSERT OR IGNORE INTO media_item (mediaId, itemId) VALUES (?, ?)").run(mediaId, itemId);
 };

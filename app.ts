@@ -24,6 +24,7 @@ import * as MediaStore from "./mediaDb/MediaStore";
 import * as ThumbnailService from "./thumbnails/ThumbnailService";
 import { framePathFor, frameSetForMedia } from "./compareImg/videoFrames";
 import type { DetectionBox, DetectMediaRef, DetectObjectsPayload, StreamMediaItem } from "./types/domain";
+import { processMediaToDetections } from "./objectDetection/processImages";
 
 const transformDataStreaming = util.transformDataStreaming;
 
@@ -224,7 +225,7 @@ ipcMain.on("open", () => {
     }).catch(err => {
         console.error(err);
     })
-    .finally();
+        .finally();
 
 });
 
@@ -297,7 +298,6 @@ ipcMain.on("chooseOnnxModel", () => {
 });
 
 ipcMain.on("detectObjects", async (event: IpcMainEvent, data: DetectObjectsPayload) => {
-    const medias = MediaStore.findAllItemsExists() || [];
     // Gate: refuse to start (rather than silently no-op or error mid-run)
     // unless both a model and at least one class name are configured - the
     // renderer pre-checks the same two conditions and shows an alert, this
@@ -313,85 +313,11 @@ ipcMain.on("detectObjects", async (event: IpcMainEvent, data: DetectObjectsPaylo
     }
 
     detectionStopRequested = false;
-    let processed = 0;
-    const total = medias.length;
-    // An item already has a stored result for the *current* class list when
-    // its snapshot matches classesSnapshot below - skip re-running the model
-    // on it and just replay what's already in item_detection. Any class
-    // list edit changes the snapshot, so a redo is forced for everyone again.
-    const classesSnapshot = classNames.join(",");
-    MediaStore.ensureReady();
-    const modelPathId = MediaStore.getOrCreateModelPath(onnxDetector.getModelPath() as string);
-    const mediaState = MediaStore.findMediaByIds(medias.map((media) => media.id));
 
-    // Detection is keyed by item (an image's 1 item, or a video/GIF's up to 4
-    // extracted frame items - compareImg/HashStore.js), the same content-
-    // addressable unit the duplicate finder already uses, so two media
-    // sharing identical content only ever get detected once. indexMediaBackground
-    // is idempotent (a no-op for content already indexed), so this
-    // transparently backfills items for any media never run through
-    // "Rebuild index" instead of requiring that as a separate step first.
-    await mediaIndexer.indexMediaBackground([...mediaState.values()].map((row) => ({
-        item: row.localPath,
-        mime: row.mime,
-        kind: row.kind,
-        contentMd5: row.contentMd5,
-        id: row.id,
-    })));
-
-    // Detection runs 20 items at a time: the awaited parts (file read, JPEG
-    // decode, letterbox, session.run scheduling) overlap instead of queueing
-    // behind each other. The native inference itself still runs one at a time
-    // on the main process thread - the win is in everything around it.
-    const DETECTION_BATCH_SIZE = 20;
-
-    // The grid only ever displays one image per media (the thumbnail - the
-    // end10s frame for a video/GIF, the image itself otherwise), so that's
-    // the only item whose boxes are spatially valid to overlay on it. ''
-    // marks an image's own item; 'end10s' is picked over the other 3 video/
-    // GIF frames for the same reason. Falls back to whatever's linked if
-    // extraction didn't produce either (partial failure).
-    const isDisplayFrame = (framePosition: string): boolean => framePosition === "" || framePosition === "end10s";
-
-    const pixelSourceFor = (localPath: string, framePosition: string): string =>
-        framePosition ? framePathFor(localPath, framePosition) : localPath;
-
-    const processOne = async (media: DetectMediaRef): Promise<void> => {
-        const state = mediaState.get(media.id);
-        try {
-            const items = state ? compareImgStore.itemsForMedia(media.id) : [];
-            if (items.length === 0 || !state) {
-                mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: [], classes: [] });
-            } else {
-                const itemsState = MediaStore.findItemsDetectionState(items.map((i) => i.itemId));
-                for (const item of items) {
-                    const itemState = itemsState.get(item.itemId);
-                    const alreadyRecognized = Boolean(itemState && itemState.detectionAt && itemState.detectionClasses === classesSnapshot);
-                    if (alreadyRecognized) continue;
-                    const boxes: DetectionBox[] = await onnxDetector.detect(pixelSourceFor(state.localPath, item.framePosition));
-                    MediaStore.replaceItemDetections(item.itemId, boxes, modelPathId);
-                    MediaStore.setItemDetectionState(item.itemId, classesSnapshot);
-                }
-
-                const perItem = items.map((item) => ({ item, boxes: MediaStore.getItemDetections(item.itemId) }));
-                const displayItem = perItem.find((d) => isDisplayFrame(d.item.framePosition)) || perItem[0];
-                const classes = [...new Set(perItem.flatMap((d) => d.boxes.map((b) => b.className)))];
-                mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: displayItem.boxes, classes });
-            }
-        } catch (error) {
-            console.error("detectObjects failed for", media.media, error);
-            mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: [], classes: [], error: (error as Error).message });
-        }
-        processed++;
-        mainWindow!.webContents.send("detectionProgress", { processed, total });
-    };
-
-    for (let i = 0; i < medias.length; i += DETECTION_BATCH_SIZE) {
-        // Stop is honoured between batches - an in-flight batch is allowed to
-        // finish so its already-computed boxes still get persisted and shown.
-        if (detectionStopRequested) break;
-        await Promise.allSettled(medias.slice(i, i + DETECTION_BATCH_SIZE).map(processOne));
-    }
+    
+    await processMediaToDetections(mainWindow,onnxDetector,classNames,detectionStopRequested).catch(error => {
+        console.error("processMediaToDetections failed", error);
+    });
 
     mainWindow!.webContents.send("detectionsComplete", detectionStopRequested ? { stopped: true } : {});
 });
@@ -591,7 +517,7 @@ const moveFile = (bol: boolean, dest: string, onlyCopy: boolean, data: MoveFileE
     // moved themselves.
     data.filter(f => f.checked === bol && !f.imported).forEach(media => {
         // let completeDestine = path.join(path.dirname(media.path), dest);
-        const completeDestine = path.join(fileGlobal as string, "tmp" ,dest);
+        const completeDestine = path.join(fileGlobal as string, "tmp", dest);
         if (!fs.existsSync(completeDestine)) {
             fs.mkdirSync(completeDestine);
         }

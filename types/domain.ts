@@ -52,6 +52,10 @@ export interface DetectionRow extends DetectionBox {
     modelPath?: string | null;
 }
 
+export interface ItemDetectionState extends DetectionBox {
+    itemId: string;
+}
+
 /** Item produced by util.ts's transformDataStreaming and sent to the renderer. */
 export interface StreamMediaItem {
     item: string;
@@ -90,7 +94,12 @@ export interface ThumbnailProvider {
 
 export interface DetectMediaRef {
     id: string;
+    itemId: string;
     media: string;
+    mime: string | null;
+    kind: MediaKind;
+    contentMd5: string | null;
+    framePosition: string | null;
 }
 
 export interface DetectObjectsPayload {
