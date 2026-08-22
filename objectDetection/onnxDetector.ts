@@ -12,6 +12,14 @@ const SIZE = 640;
 const CONF = 0.25;
 const IOU = 0.45;
 
+// jpeg-js (the decoder @jimp/js-jpeg calls into) defaults to
+// maxMemoryUsageInMB: 512 / maxResolutionInMP: 100 as a decompression-bomb
+// guard - a legitimate high-res modern phone photo can exceed that (seen:
+// "maxMemoryUsageInMB limit exceeded by at least 31MB" on an ordinary JPEG),
+// failing that one item's detection. Raised generously rather than disabled -
+// still bounds worst-case memory for a truly malicious/corrupt file.
+const JPEG_DECODE_OPTIONS = { maxMemoryUsageInMB: 4096, maxResolutionInMP: 200 };
+
 // Set by app.js's saveDetectionClasses/loadDetectionClasses handlers, backed
 // by the detection_class table (mediaDb/MediaStore.js) - falls back to
 // "class N" for any index left blank. The chosen model itself is the source
@@ -58,7 +66,15 @@ interface LetterboxContext {
 // float32 CHW tensor data alongside the scale/pad needed to map boxes back
 // to the original image's pixel space.
 const letterbox = async (input: string): Promise<LetterboxContext> => {
-    const image = await Jimp.read(input);
+    // Jimp.read(path) drops decode options for local files (only its
+    // Buffer/URL branches forward them - see @jimp/core's fromBuffer), so
+    // the raised JPEG_DECODE_OPTIONS above would silently never apply if
+    // called that way. Reading the buffer ourselves and calling
+    // Jimp.fromBuffer directly is what actually gets them through to
+    // jpeg-js. Ignored (harmless) for non-JPEG input - Jimp.fromBuffer only
+    // applies options keyed by the format it detects.
+    const buffer = await fs.promises.readFile(input);
+    const image = await Jimp.fromBuffer(buffer, { "image/jpeg": JPEG_DECODE_OPTIONS });
     const origWidth = image.bitmap.width;
     const origHeight = image.bitmap.height;
     const scale = Math.min(SIZE / origWidth, SIZE / origHeight);
