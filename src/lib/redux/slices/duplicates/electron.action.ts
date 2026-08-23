@@ -20,6 +20,22 @@ export const FindIndexDuplicates = () => {
     }
 }
 
+// Loads whatever the last scan persisted (items_duplicated table) instead of
+// re-running the slow O(n^2) comparison - call this when the duplicates view
+// opens so it can show its last result immediately.
+export const GetDuplicateGroups = () => {
+
+    if (!isElectronApp) {
+        return (dispatch: any) => { }
+    }
+
+    return (dispatch: any) => {
+        if (ipcRender) {
+            ipcRender.send('getDuplicateGroups', undefined);
+        }
+    }
+}
+
 // Recovers from a corrupted compareImg vector index (e.g. "Unexpected end of
 // JSON input" from a truncated index.json): wipes the index on disk and
 // re-indexes it from the media already loaded in redux, so the user doesn't

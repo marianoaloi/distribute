@@ -98,5 +98,10 @@ export const findIndexDuplicates = async (): Promise<string[][]> => {
         (groups.get(root) as string[]).push(id);
     }
 
-    return [...groups.values()].filter(group => group.length > 1);
+    const result = [...groups.values()].filter(group => group.length > 1);
+    // This scan is O(n^2) and can take a while on a real library - persist
+    // the result (items_duplicated table) so it survives an app restart
+    // instead of only living in this function's return value.
+    compareImgStore.replaceDuplicateGroups(result);
+    return result;
 };

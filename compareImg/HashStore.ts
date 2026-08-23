@@ -1,4 +1,5 @@
 import fs from "fs";
+import crypto from "crypto";
 import Database from "better-sqlite3";
 import { getDbDir, getDbPath } from "./cache";
 import { createMediaSchema } from "../mediaDb/mediaSchema";
@@ -106,6 +107,24 @@ const createSchema = (database: Database.Database): void => {
     `);
     database.exec("CREATE INDEX IF NOT EXISTS idx_media_item_itemId ON media_item(itemId);");
 
+    // Persisted result of duplicateFinder.js's O(n^2) pixel-comparison scan -
+    // that scan is slow enough (whole-library pairwise compare) that losing
+    // it on every app restart/DB reopen would mean re-running it just to see
+    // the same groups again. One row per (group, media) membership rather
+    // than a JSON blob column so a single media's groups are a plain indexed
+    // lookup. Logical FK to media.id, same pattern as media_item.mediaId.
+    // Wiped and fully rewritten each time a scan finishes (see
+    // replaceDuplicateGroups) since the scan result is a complete snapshot
+    // of the whole library, not an incremental delta.
+    database.exec(`
+        CREATE TABLE IF NOT EXISTS items_duplicated (
+            groupId TEXT NOT NULL,
+            mediaId TEXT NOT NULL,
+            PRIMARY KEY (groupId, mediaId)
+        );
+    `);
+    database.exec("CREATE INDEX IF NOT EXISTS idx_items_duplicated_mediaId ON items_duplicated(mediaId);");
+
     createMediaSchema(database);
 };
 
@@ -193,6 +212,41 @@ export const itemsForMedia = (mediaId: string): MediaItemRow[] => db!
         WHERE media_item.mediaId = ?
     `)
     .all(mediaId) as MediaItemRow[];
+
+// Overwrites the stored duplicate-group result with a freshly computed one.
+// Each call to duplicateFinder.findIndexDuplicates() re-scans the whole
+// library, so its result is a complete snapshot, not an incremental delta -
+// wiping first means media that's since moved/been deleted (or stopped
+// matching) doesn't linger in a stale group. Wrapped in a transaction so a
+// crash mid-write can't leave the table half-cleared. Groups of fewer than 2
+// media are dropped - a "group" of one isn't a duplicate of anything.
+export const replaceDuplicateGroups = (groups: string[][]): void => {
+    const replace = db!.transaction((groups: string[][]): void => {
+        db!.prepare("DELETE FROM items_duplicated").run();
+        const insert = db!.prepare("INSERT INTO items_duplicated (groupId, mediaId) VALUES (?, ?)");
+        for (const group of groups) {
+            if (group.length < 2) continue;
+            const groupId = crypto.randomUUID();
+            for (const mediaId of group) insert.run(groupId, mediaId);
+        }
+    });
+    replace(groups);
+};
+
+// Reads the persisted duplicate groups back out, grouped by groupId - lets a
+// caller show the last scan's result without re-running the slow O(n^2) scan.
+export const getDuplicateGroups = (): string[][] => {
+    const rows = db!
+        .prepare("SELECT groupId, mediaId FROM items_duplicated ORDER BY groupId")
+        .all() as Array<{ groupId: string; mediaId: string }>;
+
+    const groups = new Map<string, string[]>();
+    for (const row of rows) {
+        if (!groups.has(row.groupId)) groups.set(row.groupId, []);
+        (groups.get(row.groupId) as string[]).push(row.mediaId);
+    }
+    return [...groups.values()];
+};
 
 // Column names of the live items table, for validating that an imported
 // (exported-elsewhere) database has the identical structure before comparing.

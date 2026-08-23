@@ -246,6 +246,22 @@ const findIndexDuplicates = async (): Promise<void> => {
 };
 ipcMain.on("findIndexDuplicates", findIndexDuplicates);
 
+// Reads back whatever the last findIndexDuplicates scan persisted
+// (compareImg/HashStore.js's items_duplicated table) instead of re-running
+// the slow O(n^2) pixel comparison - lets the duplicates view show its last
+// result as soon as it opens.
+const getDuplicateGroups = (): void => {
+    try {
+        compareImgStore.ensureReady();
+        const groups = compareImgStore.getDuplicateGroups();
+        mainWindow!.webContents.send("duplicatesFound", groups);
+    } catch (error) {
+        console.error("getDuplicateGroups failed", error);
+        mainWindow!.webContents.send("duplicatesFound", []);
+    }
+};
+ipcMain.on("getDuplicateGroups", getDuplicateGroups);
+
 // Runs ONNX object detection (objectDetection/onnxDetector.js) over the
 // media the renderer currently has loaded, one at a time, streaming each
 // result back as it finishes rather than waiting for the whole batch (same

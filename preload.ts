@@ -22,6 +22,7 @@ const ipc = {
             'sort',
             'open',
             'findIndexDuplicates',
+            'getDuplicateGroups',
             'rebuildIndex',
             'detectObjects',
             'stopDetection',
