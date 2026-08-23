@@ -130,22 +130,25 @@ const existingFramesFor = (input: string): VideoFrame[] => FRAME_POSITIONS
 // thumbnail) - never spawns ffmpeg, so it's safe to call on every render.
 export const frameSetForMedia = (localPath: string): VideoFrame[] => existingFramesFor(localPath);
 
-// Returns [{ position, path }] for frames it managed to extract; skips ones ffmpeg can't produce
+// Returns [{ position, path, seconds }] for frames it managed to extract; skips ones ffmpeg can't produce.
+// Always probes duration (even when every frame is already cached on disk) since that's the only
+// source for each frame's timestamp - a single "ffmpeg -i" duration probe is far cheaper than the
+// filter_complex extraction it lets us skip, so the re-scan fast path stays cheap either way.
 export const extractFrames = async (input: string): Promise<VideoFrame[]> => {
-    // All frames already on disk (e.g. re-scanning a folder): just read them
-    // back, no need to probe duration or spend a concurrency slot on ffmpeg.
     const cached = existingFramesFor(input);
-    if (cached.length === FRAME_POSITIONS.length) return cached;
 
     await frameExtractionLimiter.acquire();
     try {
         const duration = await getDuration(input);
         if (!duration) return [];
 
-        ensureFramesDir();
         const timestamps = timestampsFor(duration);
-        const frames: VideoFrame[] = [];
-        frames.push(...cached);
+        const withSeconds = (frame: VideoFrame): VideoFrame => ({ ...frame, seconds: timestamps[frame.position as keyof Timestamps] });
+
+        if (cached.length === FRAME_POSITIONS.length) return cached.map(withSeconds);
+
+        ensureFramesDir();
+        const frames: VideoFrame[] = cached.map(withSeconds);
 
         const all = FRAME_POSITIONS
             .filter(position => !cached.some(f => f.position === position))
@@ -167,7 +170,7 @@ async function getFramesFromFfmpeg(
 
     try {
         await extractFramesFFMPEG(input, frames);
-        extracted.push(...frames.filter(f => fs.existsSync(f.path)).map(f => ({ position: f.position, path: f.path })));
+        extracted.push(...frames.filter(f => fs.existsSync(f.path)).map(f => ({ position: f.position, path: f.path, seconds: f.seconds })));
     } catch (error) {
         console.error(`Frame extraction failed for ${input} @ ${frames.map(f => f.position).join(', ')}:`, (error as Error).message);
     }

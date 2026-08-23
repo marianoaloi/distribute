@@ -16,7 +16,13 @@ export interface IndexableMediaItem {
 // media file itself for images). mediaId: the media row this item belongs to
 // - id already embeds it (see itemBaseId below), but linkItemMedia still
 // needs it explicitly to populate the media_item join table.
-const indexUnit = async (id: string, pixelSourcePath: string, mediaId: string, framePosition: string): Promise<void> => {
+const indexUnit = async (
+    id: string,
+    pixelSourcePath: string,
+    mediaId: string,
+    framePosition: string,
+    framePositionSeconds: number | null = null,
+): Promise<void> => {
     compareImgStore.linkItemMedia(id, mediaId);
 
     const existing = compareImgStore.getItem(id);
@@ -29,6 +35,7 @@ const indexUnit = async (id: string, pixelSourcePath: string, mediaId: string, f
 
     const metadata = {
         framePosition: framePosition || "",
+        framePositionSeconds,
         futurePosition: -1,
         baseMd5,
         // Raw cropped/greyscale pixel buffer, stored so duplicateFinder.js
@@ -93,7 +100,7 @@ const indexVideo = async (mediaItem: IndexableMediaItem): Promise<void> => {
     for (const frame of frames) {
         const id = `${baseId}_${frame.position}`;
         try {
-            await indexUnit(id, frame.path, mediaItem.id, frame.position);
+            await indexUnit(id, frame.path, mediaItem.id, frame.position, frame.seconds ?? null);
         } catch (error) {
             console.error(`compareImg: failed to index video frame ${frame.path}:`, (error as Error).message);
         }

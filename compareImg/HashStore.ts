@@ -15,11 +15,13 @@ import { createMediaSchema } from "../mediaDb/mediaSchema";
 // whatever columns actually exist on disk from a previous run's config -
 // exactly the "no such column: blur_2" crash this replaced. A fixed schema
 // can't drift.
-const METADATA_COLUMNS = ["framePosition", "futurePosition", "baseMd5", "baseGrey"] as const;
+const METADATA_COLUMNS = ["framePosition", "framePositionSeconds", "futurePosition", "baseMd5", "baseGrey"] as const;
 
 export interface ItemRow {
     id: string;
     framePosition: string;
+    /** Frame's timestamp within the source video/GIF, in seconds (fractional). Null for images. */
+    framePositionSeconds: number | null;
     futurePosition: number;
     baseMd5: string | null;
     baseGrey: Buffer | null;
@@ -34,6 +36,7 @@ export interface UpsertItemInput {
     id: string;
     metadata: {
         framePosition: string;
+        framePositionSeconds: number | null;
         futurePosition: number;
         baseMd5: string;
         baseGrey: Buffer;
@@ -82,12 +85,14 @@ const createSchema = (database: Database.Database): void => {
         CREATE TABLE IF NOT EXISTS items (
             id TEXT PRIMARY KEY,
             framePosition TEXT NOT NULL DEFAULT '',
+            framePositionSeconds REAL,
             futurePosition INTEGER NOT NULL DEFAULT -1,
             baseMd5 TEXT,
             baseGrey BLOB
         );
     `);
     ensureColumn(database, "items", "baseGrey", "BLOB");
+    ensureColumn(database, "items", "framePositionSeconds", "REAL");
     database.exec("CREATE INDEX IF NOT EXISTS idx_items_baseMd5 ON items(baseMd5);");
 
     // Logical FKs (no declared REFERENCES), same pattern as

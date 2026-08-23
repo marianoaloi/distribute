@@ -75,6 +75,12 @@ export interface StreamMediaItem {
 export interface VideoFrame {
     position: string;
     path: string;
+    /**
+     * Frame's timestamp within the source video/GIF, in seconds (fractional).
+     * Only known when duration was probed - frameSetForMedia's read-only,
+     * no-ffmpeg lookup leaves it undefined.
+     */
+    seconds?: number;
 }
 
 /** Generic async concurrency limiter shape, reused by fileHash/videoFrames. */
