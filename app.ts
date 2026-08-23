@@ -59,7 +59,8 @@ const menuTemplate = (): MenuItemConstructorOptions[] => [
     {
         label: 'File',
         submenu: [
-            { label: 'Load recursive', click: loadRecursive }
+            { label: 'Load recursive', click: loadRecursive },
+            { label: 'Load super recursive', click: loadSuperRecursive },
         ]
     },
     {
@@ -279,7 +280,14 @@ ipcMain.on("stopDetection", () => { detectionStopRequested = true; });
 // list in one pick, so switching models doesn't also mean re-typing classes.
 // Sends the chosen path (or the still-unset current one, if canceled) back so
 // the renderer can reflect it and gate the run button.
-ipcMain.on("chooseOnnxModel", () => {
+// Shared by the standalone "chooseOnnxModel" IPC handler below and by
+// loadSuperRecursive (which needs a model picked BEFORE it kicks off a
+// recursive scan, since detectObjects - the last stage of that chain -
+// refuses to run without one). Returns whether a model is available once the
+// dialog closes: freshly chosen, or the previously-configured one if the
+// user cancels (same "still-unset current one" fallback the standalone
+// picker already had).
+const chooseOnnxModelDialog = async (): Promise<boolean> => {
     const options: OpenDialogOptions = {
         properties: ["openFile"],
         title: "Choose ONNX model (or .maloi model+classes file) for object detection",
@@ -289,7 +297,8 @@ ipcMain.on("chooseOnnxModel", () => {
             { name: "Maloi model set", extensions: ["maloi"] },
         ],
     };
-    dialog.showOpenDialog(options).then(file => {
+    try {
+        const file = await dialog.showOpenDialog(options);
         if (!file.canceled && file.filePaths[0]) {
             const chosenPath = file.filePaths[0];
             MediaStore.ensureReady();
@@ -308,12 +317,19 @@ ipcMain.on("chooseOnnxModel", () => {
             }
         }
         mainWindow!.webContents.send("onnxModelChosen", { path: onnxDetector.getModelPath() });
-    }).catch(err => {
+    } catch (err) {
         console.error("chooseOnnxModel failed", err);
-    });
-});
+    }
+    return onnxDetector.isAvailable();
+};
 
-ipcMain.on("detectObjects", async (event: IpcMainEvent, data: DetectObjectsPayload) => {
+ipcMain.on("chooseOnnxModel", () => { chooseOnnxModelDialog(); });
+
+// Shared by the standalone "detectObjects" IPC handler below and by
+// loadSuperRecursive's chain - pulls medias/items straight from MediaStore
+// (see objectDetection/processImages.js), so it needs nothing passed in from
+// the renderer either way.
+const runDetectObjects = async (): Promise<void> => {
     // Gate: refuse to start (rather than silently no-op or error mid-run)
     // unless both a model and at least one class name are configured - the
     // renderer pre-checks the same two conditions and shows an alert, this
@@ -330,12 +346,15 @@ ipcMain.on("detectObjects", async (event: IpcMainEvent, data: DetectObjectsPaylo
 
     detectionStopRequested = false;
 
-    
-    await processMediaToDetections(mainWindow,onnxDetector,classNames,detectionStopRequested).catch(error => {
+    await processMediaToDetections(mainWindow, onnxDetector, classNames, detectionStopRequested).catch(error => {
         console.error("processMediaToDetections failed", error);
     });
 
     mainWindow!.webContents.send("detectionsComplete", detectionStopRequested ? { stopped: true } : {});
+};
+
+ipcMain.on("detectObjects", async (event: IpcMainEvent, data: DetectObjectsPayload) => {
+    await runDetectObjects();
 });
 
 // Persists the user-typed comma-separated class list (mediaDb's
@@ -459,6 +478,26 @@ const rebuildIndex = async (): Promise<void> => {
 };
 
 ipcMain.on("rebuildIndex", rebuildIndex);
+
+// Set by loadSuperRecursive right before it opens the recursive-folder
+// dialog; consumed by notifyMediaLoadComplete once that scan actually
+// finishes, to chain into buildIndex+detectObjects with no further user
+// input. A plain "Load recursive" (menu item or the duplicates view's
+// "open recursively" button) never sets this, so it stays a no-op for them.
+let superExecutionInProgress = false;
+
+// Runs after a recursive scan finishes: same pair "Rebuild index" already
+// runs (buildIndex + findIndexDuplicates), then detectObjects - all reading
+// their media/items straight from MediaStore/HashStore (see buildIndex and
+// runDetectObjects above), so nothing needs passing through from the scan
+// itself. Each stage still streams its own progress/result events exactly
+// like it does when triggered individually, so the renderer's existing UI
+// (loading spinner, index rebuild progress, detection progress) reflects it
+// with no changes needed there.
+const runSuperExecutionPipeline = async (): Promise<void> => {
+    await rebuildIndex();
+    await runDetectObjects();
+};
 
 // Exports a consistent snapshot of the compareImg sqlite index so it can be
 // carried to another machine/folder and later imported for cross-library
@@ -662,13 +701,51 @@ const loadRecursive = async (): Promise<void> => {
             mainWindow!.webContents.send("mediaLoadStart");
             openfileRecursive(file.filePaths[0]);
 
+        } else {
+            // Dialog cancelled: a super execution that already picked its
+            // model has nothing left to scan, so don't leave the flag set
+            // for some later unrelated recursive open to accidentally chain into.
+            superExecutionInProgress = false;
         }
     }).catch(err => {
         console.error(err);
+        superExecutionInProgress = false;
     });
 };
 
+// File > "Load super recursive": picks the ONNX/.maloi model up front (the
+// same dialog "Choose ONNX model" uses - detectObjects, the last stage of
+// this chain, refuses to run without one, so better to ask before the whole
+// recursive scan+index+dup-scan runs than after). If the user cancels with
+// no model configured at all, the chain never starts. Otherwise it opens the
+// recursive-folder dialog exactly like "Load recursive" - the rest of the
+// chain (buildIndex -> findIndexDuplicates -> detectObjects) picks up once
+// the scan itself finishes, see notifyMediaLoadComplete.
+const loadSuperRecursive = async (): Promise<void> => {
+    const modelAvailable = await chooseOnnxModelDialog();
+    if (!modelAvailable) {
+        console.log("Super execution cancelled: no ONNX model configured");
+        return;
+    }
+    superExecutionInProgress = true;
+    await loadRecursive();
+};
+
 let processedFolders: Record<string, boolean> = {};
+
+// Wraps the existing "recursive scan fully finished" signal so
+// loadSuperRecursive can chain into buildIndex+detectObjects right as it
+// fires, instead of the renderer needing to trigger each stage itself.
+const notifyMediaLoadComplete = (): void => {
+    mainWindow!.webContents.send("mediaLoadComplete");
+    if (superExecutionInProgress) {
+        superExecutionInProgress = false;
+        runSuperExecutionPipeline().catch(error => {
+            console.error("super execution pipeline failed", error);
+        });
+    }
+};
+
 const openfileRecursive = (folderPath: string): void => {
 
 
@@ -688,7 +765,7 @@ const openfileRecursive = (folderPath: string): void => {
                 processedFolders[folderPath] = true;
                 if (Object.values(processedFolders).every(v => v === true)) {
                     console.log("All folders processed");
-                    mainWindow!.webContents.send("mediaLoadComplete");
+                    notifyMediaLoadComplete();
                 }
             });
         } else {
