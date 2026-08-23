@@ -495,7 +495,7 @@ let superExecutionInProgress = false;
 // (loading spinner, index rebuild progress, detection progress) reflects it
 // with no changes needed there.
 const runSuperExecutionPipeline = async (): Promise<void> => {
-    await rebuildIndex();
+    // await rebuildIndex();
     await runDetectObjects();
 };
 

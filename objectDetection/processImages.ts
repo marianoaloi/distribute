@@ -30,23 +30,23 @@ export const processMediaToDetections = async (mainWindow: any, onnxDetector: an
         return map;
     }, new Map<string, DetectMediaRef[]>());
 
-    // // Detection is keyed by item (an image's 1 item, or a video/GIF's up to 4
-    // // extracted frame items - compareImg/HashStore.js), the same content-
-    // // addressable unit the duplicate finder already uses, so two media
-    // // sharing identical content only ever get detected once. indexMediaBackground
-    // // is idempotent (a no-op for content already indexed), so this
-    // // transparently backfills items for any media never run through
-    // // "Rebuild index" instead of requiring that as a separate step first.
-    // await mediaIndexer.indexMediaBackground([...mediaState.values()].map((mapper) => {
-    //     const row = mapper[0];
-    //     return {
-    //         item: row.media,
-    //         mime: row.mime,
-    //         kind: row.kind,
-    //         contentMd5: row.contentMd5,
-    //         id: row.id,
-    //     }
-    // }));
+    // Detection is keyed by item (an image's 1 item, or a video/GIF's up to 4
+    // extracted frame items - compareImg/HashStore.js), the same content-
+    // addressable unit the duplicate finder already uses, so two media
+    // sharing identical content only ever get detected once. indexMediaBackground
+    // is idempotent (a no-op for content already indexed), so this
+    // transparently backfills items for any media never run through
+    // "Rebuild index" instead of requiring that as a separate step first.
+    await mediaIndexer.indexMediaBackground([...mediaState.values()].map((mapper) => {
+        const row = mapper[0];
+        return {
+            item: row.media,
+            mime: row.mime,
+            kind: row.kind,
+            contentMd5: row.contentMd5,
+            id: row.id,
+        }
+    }));
 
     // Same continuous worker-pool pattern as compareImg/mediaIndexer.ts's
     // indexMediaBackground (ITEM_CONCURRENCY): a fixed number of workers
