@@ -448,13 +448,17 @@ const buildIndex = async (): Promise<void> => {
             mainWindow!.webContents.send("indexRebuildProgress", { processed, total });
         });
         mainWindow!.webContents.send("indexRebuilt", { success: true, count: medias.length });
-        findIndexDuplicates();
     } catch (error) {
         console.error("rebuildIndex failed", error);
         mainWindow!.webContents.send("indexRebuilt", { success: false, error: (error as Error).message });
     }
 }
-ipcMain.on("rebuildIndex", buildIndex);
+const rebuildIndex = async (): Promise<void> => {
+    await buildIndex();
+    await findIndexDuplicates();
+};
+
+ipcMain.on("rebuildIndex", rebuildIndex);
 
 // Exports a consistent snapshot of the compareImg sqlite index so it can be
 // carried to another machine/folder and later imported for cross-library
