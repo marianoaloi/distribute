@@ -4,7 +4,7 @@ import { Media } from '../../../../entity/Media';
 import { addFolder } from '../folders';
 import { mediaLoadComplete, mediaLoadStart, zoomIn, zoomOut } from '../configurations';
 import { setDuplicateGroups, indexRebuildFinished, setIndexRebuildProgress, databaseExportFinished, databaseImportFinished, setMediaFrames } from '../duplicates';
-import { setDetectionResult, mergeDetections, setDetectionProgress, detectingFinished, setModelPath, setDetectionClasses } from '../detections';
+import { setDetectionResult, mergeDetections, setDetectionProgress, detectingFinished, setModelPath, setDetectionClasses, setDetectionSize } from '../detections';
 import { FileDTO } from '../../../../entity/FileDTO';
 
 
@@ -24,7 +24,7 @@ export const ElectronConnection = () => {
 
     return (dispatch: any) => {
         if (ipcRender) {
-            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete', 'onnxModelChosen', 'databaseExported', 'databaseImported', 'detectionClassesLoaded', 'detectionsLoaded', 'fileProcessed', 'mediaFramesFound'];
+            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete', 'onnxModelChosen', 'databaseExported', 'databaseImported', 'detectionClassesLoaded', 'detectionsLoaded', 'fileProcessed', 'mediaFramesFound', 'detectionSizeLoaded'];
             channels.forEach(ch => ipcRender.removeAllListeners(ch));
 
             ipcRender.on('directoryOpen', (e: any, args: any) => {
@@ -115,11 +115,15 @@ export const ElectronConnection = () => {
             ipcRender.on('detectionsComplete', (e: any, result: { error?: string }) => {
                 dispatch(detectingFinished(result))
             })
-            ipcRender.on('onnxModelChosen', (e: any, result: { path: string | null }) => {
+            ipcRender.on('onnxModelChosen', (e: any, result: { path: string | null, size: number }) => {
                 dispatch(setModelPath(result.path))
+                dispatch(setDetectionSize(result.size))
             })
             ipcRender.on('detectionClassesLoaded', (e: any, result: { names: string[] }) => {
                 dispatch(setDetectionClasses(result.names))
+            })
+            ipcRender.on('detectionSizeLoaded', (e: any, result: { size: number }) => {
+                dispatch(setDetectionSize(result.size))
             })
             ipcRender.on('detectionsLoaded', (e: any, result: { items: { id: string, boxes: any[], classes: string[] }[] }) => {
                 dispatch(mergeDetections(result))

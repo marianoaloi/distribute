@@ -34,6 +34,11 @@ interface DetectionsState {
     modelPath: string | null
     classNames: string[]
     lastProcessedId: string | null
+    // Letterbox/tensor input resolution actually in effect (see
+    // objectDetection/onnxDetector.js's getSize): the .maloi "reshape"
+    // override if one's active, else the user-set value, else 640. Null
+    // until the first detectionSizeLoaded reply arrives.
+    detectionSize: number | null
 }
 
 const initialState: DetectionsState = {
@@ -44,6 +49,7 @@ const initialState: DetectionsState = {
     modelPath: null,
     classNames: [],
     lastProcessedId: null,
+    detectionSize: null,
 }
 
 const detectionsSlice = createSlice({
@@ -100,8 +106,12 @@ const detectionsSlice = createSlice({
             ...state,
             classNames: action.payload,
         }),
+        setDetectionSize: (state, action) => ({
+            ...state,
+            detectionSize: action.payload,
+        }),
     }
 })
 
-export const { startDetecting, setDetectionResult, mergeDetections, setDetectionProgress, detectingFinished, clearDetections, setModelPath, setDetectionClasses } = detectionsSlice.actions;
+export const { startDetecting, setDetectionResult, mergeDetections, setDetectionProgress, detectingFinished, clearDetections, setModelPath, setDetectionClasses, setDetectionSize } = detectionsSlice.actions;
 export default detectionsSlice.reducer;

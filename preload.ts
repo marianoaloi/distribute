@@ -33,6 +33,8 @@ const ipc = {
             'loadDetectionClasses',
             'loadDetections',
             'getMediaFrames',
+            'saveDetectionSize',
+            'getDetectionSize',
         ],
         // From main to render.
         'receive': ['directoryOpen',
@@ -78,6 +80,7 @@ const ipc = {
             'detectionsLoaded',
             'fileProcessed',
             'mediaFramesFound',
+            'detectionSizeLoaded',
         ]
     }
 };

@@ -47,9 +47,20 @@ interface SaveDetectionClassesPayload {
     classes?: string;
 }
 
+interface SaveDetectionSizePayload {
+    size?: number | string | null;
+}
+
 interface MaloiFile {
     onnx?: string;
     classes?: string;
+    // Per-model override for onnxDetector's letterbox/tensor input
+    // resolution (objectDetection/onnxDetector.js's setModelSize) - fixes
+    // onnxruntime's native "ReshapeHelper ... input_shape_size ==
+    // requested_shape_size was false" crash for models whose exported graph
+    // bakes a Reshape op sized for a specific input resolution other than
+    // the 640 default.
+    reshape?: number;
 }
 
 const splitClassNames = (raw: string): string[] =>
@@ -311,12 +322,22 @@ const chooseOnnxModelDialog = async (): Promise<boolean> => {
                 MediaStore.saveDetectionClasses(names);
                 onnxDetector.setClassNames(names);
                 mainWindow!.webContents.send("detectionClassesLoaded", { names });
+                // Always set (even to null/absent) rather than only when
+                // present - otherwise a .maloi with no "reshape" field would
+                // silently inherit whatever override an earlier .maloi pick
+                // left behind, for a model it has nothing to do with.
+                onnxDetector.setModelSize(typeof maloi.reshape === "number" ? maloi.reshape : null);
             } else {
                 onnxDetector.setModelPath(chosenPath);
                 MediaStore.getOrCreateModelPath(chosenPath);
+                // A bare .onnx carries no reshape hint - clear any override
+                // left by a previously-picked .maloi so it doesn't get
+                // reused against an unrelated model (risking the exact
+                // native crash the override exists to avoid).
+                onnxDetector.setModelSize(null);
             }
         }
-        mainWindow!.webContents.send("onnxModelChosen", { path: onnxDetector.getModelPath() });
+        mainWindow!.webContents.send("onnxModelChosen", { path: onnxDetector.getModelPath(), size: onnxDetector.getSize() });
     } catch (err) {
         console.error("chooseOnnxModel failed", err);
     }
@@ -386,6 +407,35 @@ ipcMain.on("loadDetectionClasses", () => {
         console.error("loadDetectionClasses failed", error);
         mainWindow!.webContents.send("detectionClassesLoaded", { names: [], error: (error as Error).message });
     }
+});
+
+// User-facing override for onnxDetector's letterbox/tensor input resolution
+// (objectDetection/onnxDetector.js's setUserSize) - the frontend's "detection
+// size" dialog. Not persisted to index.db (mirrors modelPath, which also
+// resets each app session) - session-only is enough for a value that's
+// really about working around one specific ONNX export's quirks, and a
+// .maloi's "reshape" field (see chooseOnnxModelDialog) is the durable,
+// per-model way to set it anyway. The main process re-validates rather than
+// trusting the renderer's own check - same defense-in-depth as
+// saveDetectionClasses's split/trim.
+ipcMain.on("saveDetectionSize", (event: IpcMainEvent, data: SaveDetectionSizePayload) => {
+    try {
+        const raw = data && data.size;
+        const parsed = (raw === null || raw === undefined || raw === "") ? null : Number(raw);
+        const size = (parsed !== null && Number.isFinite(parsed) && parsed > 0) ? Math.round(parsed) : null;
+        onnxDetector.setUserSize(size);
+        mainWindow!.webContents.send("detectionSizeLoaded", { size: onnxDetector.getSize() });
+    } catch (error) {
+        console.error("saveDetectionSize failed", error);
+    }
+});
+
+// Lets the frontend prefill its "detection size" dialog with whatever's
+// currently in effect (the .maloi override if one's active, otherwise the
+// user-set value, otherwise the 640 default - see onnxDetector.getSize)
+// instead of guessing or always showing the hardcoded default.
+ipcMain.on("getDetectionSize", () => {
+    mainWindow!.webContents.send("detectionSizeLoaded", { size: onnxDetector.getSize() });
 });
 
 // Hydrates every persisted detection for the current folder into the renderer
@@ -497,6 +547,8 @@ let superExecutionInProgress = false;
 const runSuperExecutionPipeline = async (): Promise<void> => {
     // await rebuildIndex();
     await runDetectObjects();
+    await findIndexDuplicates();
+    superExecutionInProgress = false;
 };
 
 // Exports a consistent snapshot of the compareImg sqlite index so it can be

@@ -8,9 +8,33 @@ import type { DetectionBox } from "../types/domain";
 // chooseOnnxModel handler) - no longer a fixed path under ./xcxv.
 let modelPath: string | null = null;
 
-const SIZE = 640;
+const DEFAULT_SIZE = 640;
 const CONF = 0.25;
 const IOU = 0.45;
+
+// Letterbox/tensor input resolution. Two independent overrides, checked in
+// this order (see getSize below):
+//   1. modelSize  - set from the chosen .maloi file's "reshape" field
+//      (app.js's chooseOnnxModelDialog). Some ONNX exports bake a Reshape op
+//      with a hardcoded target shape derived from a specific input
+//      resolution - feeding it any other SIZE makes onnxruntime's native
+//      ReshapeHelper throw ("input_shape_size == requested_shape_size was
+//      false") deep inside session.run(), which no amount of JS-side
+//      post-processing can catch or patch. Per-model since it's a property
+//      of that specific export, not a general preference.
+//   2. userSize   - set via the frontend's "detection size" dialog
+//      (app.js's saveDetectionSize handler). A general override for models
+//      that don't ship a .maloi/reshape hint but still need a non-default size.
+//   3. DEFAULT_SIZE (640) if neither is set.
+let modelSize: number | null = null;
+let userSize: number | null = null;
+
+const normalizeSize = (size: number | null | undefined): number | null =>
+    (typeof size === "number" && Number.isFinite(size) && size > 0) ? Math.round(size) : null;
+
+export const setModelSize = (size: number | null | undefined): void => { modelSize = normalizeSize(size); };
+export const setUserSize = (size: number | null | undefined): void => { userSize = normalizeSize(size); };
+export const getSize = (): number => modelSize ?? userSize ?? DEFAULT_SIZE;
 
 // jpeg-js (the decoder @jimp/js-jpeg calls into) defaults to
 // maxMemoryUsageInMB: 512 / maxResolutionInMP: 100 as a decompression-bomb
@@ -61,11 +85,13 @@ interface LetterboxContext {
     origHeight: number;
 }
 
-// Resizes onto a centered SIZE x SIZE canvas preserving aspect ratio (the
+// Resizes onto a centered size x size canvas preserving aspect ratio (the
 // same letterbox preprocessing Ultralytics' export expects), returning the
 // float32 CHW tensor data alongside the scale/pad needed to map boxes back
-// to the original image's pixel space.
-const letterbox = async (input: string): Promise<LetterboxContext> => {
+// to the original image's pixel space. size comes from getSize() - passed in
+// rather than read again here so it's guaranteed to match the tensor dims
+// detect() builds from the same call's value.
+const letterbox = async (input: string, size: number): Promise<LetterboxContext> => {
     // Jimp.read(path) drops decode options for local files (only its
     // Buffer/URL branches forward them - see @jimp/core's fromBuffer), so
     // the raised JPEG_DECODE_OPTIONS above would silently never apply if
@@ -77,15 +103,15 @@ const letterbox = async (input: string): Promise<LetterboxContext> => {
     const image = await Jimp.fromBuffer(buffer, { "image/jpeg": JPEG_DECODE_OPTIONS });
     const origWidth = image.bitmap.width;
     const origHeight = image.bitmap.height;
-    const scale = Math.min(SIZE / origWidth, SIZE / origHeight);
-    const padX = (SIZE - Math.round(origWidth * scale)) / 2;
-    const padY = (SIZE - Math.round(origHeight * scale)) / 2;
+    const scale = Math.min(size / origWidth, size / origHeight);
+    const padX = (size - Math.round(origWidth * scale)) / 2;
+    const padY = (size - Math.round(origHeight * scale)) / 2;
 
     image.background = 0x727272ff;
-    image.contain({ w: SIZE, h: SIZE });
+    image.contain({ w: size, h: size });
 
-    const { data } = image.bitmap; // RGBA, SIZE*SIZE*4
-    const plane = SIZE * SIZE;
+    const { data } = image.bitmap; // RGBA, size*size*4
+    const plane = size * size;
     const chw = new Float32Array(3 * plane);
     for (let i = 0; i < plane; i++) {
         chw[i] = data[i * 4] / 255;
@@ -168,11 +194,12 @@ const decode = (output: ArrayLike<number>, dims: readonly number[], ctx: Letterb
 
 export const detect = async (imagePath: string): Promise<DetectionBox[]> => {
     const session = await getSession();
-    const ctx = await letterbox(imagePath);
-    const tensor = new ort.Tensor("float32", ctx.chw, [1, 3, SIZE, SIZE]);
+    const size = getSize();
+    const ctx = await letterbox(imagePath, size);
+    const tensor = new ort.Tensor("float32", ctx.chw, [1, 3, size, size]);
     const results = await session.run({ [session.inputNames[0]]: tensor });
     const output = results[session.outputNames[0]];
     return decode(output.data as ArrayLike<number>, output.dims, ctx);
 };
 
-export { SIZE, CONF, IOU };
+export { DEFAULT_SIZE, CONF, IOU };
