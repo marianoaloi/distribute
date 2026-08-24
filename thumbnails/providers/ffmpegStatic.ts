@@ -1,9 +1,14 @@
-const fs = require("fs");
-const { execFile, execFileSync } = require("child_process");
+import fs from "fs";
+import { execFile, execFileSync, ExecFileException } from "child_process";
+import ffmpegStaticPath from "ffmpeg-static";
 
-let ffmpegPath = null;
+import type { ThumbnailProvider } from "../../types/domain";
+
+type ExecError = ExecFileException & { stderr?: string };
+
+let ffmpegPath: string | null = null;
 try {
-    ffmpegPath = require("ffmpeg-static");
+    ffmpegPath = ffmpegStaticPath;
     // the binary cannot be executed from inside the asar archive
     if (ffmpegPath) ffmpegPath = ffmpegPath.replace("app.asar", "app.asar.unpacked");
 } catch {
@@ -13,8 +18,8 @@ try {
 const DURATION_RE = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/;
 
 // ffmpeg always exits non-zero when given no output, but still logs the duration to stderr first
-const getDuration = async (input) => {
-    const { stderr } = await run(["-i", input]).catch(err => ({ stderr: (err && err.stderr) || "" }));
+const getDuration = async (input: string): Promise<number | null> => {
+    const { stderr } = await run(["-i", input]).catch((err: ExecError) => ({ stdout: "", stderr: err.stderr || "" }));
     const match = String(stderr).match(DURATION_RE);
     if (!match) return null;
     const [, h, m, s] = match;
@@ -22,12 +27,12 @@ const getDuration = async (input) => {
     return seconds > 0 ? seconds : null;
 };
 
-const getDurationSync = (input) => {
+const getDurationSync = (input: string): number | null => {
     let stderr = "";
     try {
-        execFileSync(ffmpegPath, ["-i", input], { encoding: "UTF-8", stdio: ["ignore", "pipe", "pipe"] });
+        execFileSync(ffmpegPath as string, ["-i", input], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
     } catch (error) {
-        stderr = (error.stderr || "").toString();
+        stderr = ((error as ExecError).stderr || "").toString();
     }
     const match = stderr.match(DURATION_RE);
     if (!match) return null;
@@ -36,7 +41,7 @@ const getDurationSync = (input) => {
     return seconds > 0 ? seconds : null;
 };
 
-const argsFor = (input, output, seekSeconds) => [
+const argsFor = (input: string, output: string, seekSeconds: number): string[] => [
     "-y", "-loglevel", "error",
     ...(seekSeconds ? ["-ss", String(seekSeconds)] : []),
     "-i", input,
@@ -45,13 +50,13 @@ const argsFor = (input, output, seekSeconds) => [
     output,
 ];
 
-const run = (args) => new Promise((resolve, reject) => {
-    execFile(ffmpegPath, args, { encoding: "UTF-8" }, (error, stdout, stderr) =>
-        error ? reject(Object.assign(error, { stderr })) : resolve({ stdout, stderr })
+const run = (args: string[]): Promise<{ stdout: string; stderr: string }> => new Promise((resolve, reject) => {
+    execFile(ffmpegPath as string, args, { encoding: "utf8" }, (error, stdout, stderr) =>
+        error ? reject(Object.assign(error, { stderr }) as ExecError) : resolve({ stdout, stderr })
     );
 });
 
-module.exports = {
+const ffmpegStaticProvider: ThumbnailProvider & { name: "ffmpeg-static" } = {
     name: "ffmpeg-static",
 
     isAvailable: () => Boolean(ffmpegPath && fs.existsSync(ffmpegPath)),
@@ -60,7 +65,7 @@ module.exports = {
     // thumbnail isn't a black/title frame from the very start. Videos whose
     // duration can't be probed, or where that offset yields no frame, fall
     // back to no seek at all.
-    generate: async (input, output) => {
+    generate: async (input: string, output: string): Promise<void> => {
         const duration = await getDuration(input);
         const seek = duration ? duration * 0.9 : 0;
         await run(argsFor(input, output, seek));
@@ -69,12 +74,14 @@ module.exports = {
         }
     },
 
-    generateSync: (input, output) => {
+    generateSync: (input: string, output: string): void => {
         const duration = getDurationSync(input);
         const seek = duration ? duration * 0.9 : 0;
-        execFileSync(ffmpegPath, argsFor(input, output, seek), { encoding: "UTF-8" });
+        execFileSync(ffmpegPath as string, argsFor(input, output, seek), { encoding: "utf8" });
         if (!fs.existsSync(output)) {
-            execFileSync(ffmpegPath, argsFor(input, output, 0), { encoding: "UTF-8" });
+            execFileSync(ffmpegPath as string, argsFor(input, output, 0), { encoding: "utf8" });
         }
     },
 };
+
+export default ffmpegStaticProvider;

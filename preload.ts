@@ -1,5 +1,11 @@
 // Import the necessary Electron components.
-const { contextBridge, ipcRenderer } = require('electron');
+import { contextBridge, ipcRenderer, IpcRendererEvent } from "electron";
+
+// Renderer-side listener signature varies by channel (each channel carries a
+// different payload shape - see types/domain.ts's StreamMediaItem etc. on the
+// main-process side) - `any[]` here is the generic pass-through boundary this
+// preload script exists to provide, not a place that can be narrowed further.
+type IpcListener = (event: IpcRendererEvent, ...args: unknown[]) => void;
 
 // White-listed channels.
 const ipc = {
@@ -16,6 +22,7 @@ const ipc = {
             'sort',
             'open',
             'findIndexDuplicates',
+            'getDuplicateGroups',
             'rebuildIndex',
             'detectObjects',
             'stopDetection',
@@ -25,6 +32,9 @@ const ipc = {
             'saveDetectionClasses',
             'loadDetectionClasses',
             'loadDetections',
+            'getMediaFrames',
+            'saveDetectionSize',
+            'getDetectionSize',
         ],
         // From main to render.
         'receive': ['directoryOpen',
@@ -39,7 +49,8 @@ const ipc = {
             'open',
             'cleanGrid',
             'duplicatesFound',
-         ],
+            'mediaFramesFound',
+        ],
         // From render to main and back again.
         'sendReceive': [
             'directoryOpen',
@@ -68,6 +79,8 @@ const ipc = {
             'detectionClassesLoaded',
             'detectionsLoaded',
             'fileProcessed',
+            'mediaFramesFound',
+            'detectionSizeLoaded',
         ]
     }
 };
@@ -78,41 +91,41 @@ contextBridge.exposeInMainWorld(
     'electron', {
     ipcRenderer: {
         // From render to main.
-        send: (channel, args) => {
-            let validChannels = ipc.render.send;
+        send: (channel: string, args: unknown) => {
+            const validChannels: string[] = ipc.render.send;
             if (validChannels.includes(channel)) {
                 ipcRenderer.send(channel, args);
             }
         },
         // From main to render.
-        receive: (channel, listener) => {
-            let validChannels = ipc.render.receive;
+        receive: (channel: string, listener: IpcListener) => {
+            const validChannels: string[] = ipc.render.receive;
             if (validChannels.includes(channel)) {
                 // Deliberately strip event as it includes `sender`.
                 ipcRenderer.on(channel, listener);
             }
         },
         // From render to main and back again.
-        invoke: (channel, args) => {
-            let validChannels = ipc.render.sendReceive;
+        invoke: (channel: string, args: unknown) => {
+            const validChannels: string[] = ipc.render.sendReceive;
             if (validChannels.includes(channel)) {
                 return ipcRenderer.invoke(channel, args);
             }
         },
-        on: (channel, listener) => {
-            let validChannels = ipc.render.sendReceive;
+        on: (channel: string, listener: IpcListener) => {
+            const validChannels: string[] = ipc.render.sendReceive;
             if (validChannels.includes(channel)) {
                 ipcRenderer.on(channel, listener);
             }
         },
-        once: (channel, listener) => {
-            let validChannels = ipc.render.sendReceive;
+        once: (channel: string, listener: IpcListener) => {
+            const validChannels: string[] = ipc.render.sendReceive;
             if (validChannels.includes(channel)) {
                 ipcRenderer.once(channel, listener);
             }
         },
-        removeAllListeners: (channel) => {
-            let validChannels = [...ipc.render.send, ...ipc.render.receive, ...ipc.render.sendReceive];
+        removeAllListeners: (channel: string) => {
+            const validChannels: string[] = [...ipc.render.send, ...ipc.render.receive, ...ipc.render.sendReceive];
             if (validChannels.includes(channel)) {
                 ipcRenderer.removeAllListeners(channel);
             }

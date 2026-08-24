@@ -1,22 +1,27 @@
-const compareImgStore = require("./HashStore");
+import * as compareImgStore from "./HashStore";
+
+interface DisjointSet {
+    find: (x: string) => string;
+    union: (a: string, b: string) => void;
+}
 
 // Minimal union-find so a match on any one of HASH_FIELDS merges two media
 // ids into the same duplicate cluster, even if they didn't match on others.
-const makeDisjointSet = () => {
-    const parent = new Map();
-    const find = (x) => {
+const makeDisjointSet = (): DisjointSet => {
+    const parent = new Map<string, string>();
+    const find = (x: string): string => {
         if (!parent.has(x)) parent.set(x, x);
         let root = x;
-        while (parent.get(root) !== root) root = parent.get(root);
+        while (parent.get(root) !== root) root = parent.get(root) as string;
         let cur = x;
         while (parent.get(cur) !== root) {
-            const next = parent.get(cur);
+            const next = parent.get(cur) as string;
             parent.set(cur, root);
             cur = next;
         }
         return root;
     };
-    const union = (a, b) => {
+    const union = (a: string, b: string): void => {
         const rootA = find(a);
         const rootB = find(b);
         if (rootA !== rootB) parent.set(rootA, rootB);
@@ -29,7 +34,7 @@ const makeDisjointSet = () => {
 // different crop/blur constants (imageTransform.js's SQUARE_SIZE/CROP_MARGIN
 // changed since one of them was indexed) - not comparable, so treat as
 // infinitely far apart rather than throwing or false-matching.
-const meanAbsDiff = (a, b) => {
+export const meanAbsDiff = (a: Buffer, b: Buffer): number => {
     if (a.length !== b.length) return Infinity;
     let sum = 0;
     for (let i = 0; i < a.length; i++) sum += Math.abs(a[i] - b[i]);
@@ -41,7 +46,7 @@ const meanAbsDiff = (a, b) => {
 // from measuring real near-duplicate frame pairs (re-encoded/re-cropped
 // re-uploads of the same video): those consistently landed around 0.3;
 // unrelated frames land far higher. See scripts/debugCompareVideos.js.
-const MEAN_DIFF_THRESHOLD = 3;
+export const MEAN_DIFF_THRESHOLD = 3;
 
 // Pairwise-compares every indexed frame's pixel buffer against every other
 // (skipping frames belonging to the same media item) and unions any pair
@@ -56,11 +61,11 @@ const MEAN_DIFF_THRESHOLD = 3;
 // media; if this gets slow on a much larger library, bucket rows by a cheap
 // coarse feature (e.g. average brightness) before doing the full comparison,
 // or switch to a Hamming-distance perceptual hash with an LSH/bucket index.
-const findIndexDuplicates = async () => {
+export const findIndexDuplicates = async (): Promise<string[][]> => {
     compareImgStore.ensureReady();
 
     const { find, union } = makeDisjointSet();
-    const matchedIds = new Set();
+    const matchedIds = new Set<string>();
 
     const rows = compareImgStore.allBaseGreyRows();
     for (let i = 0; i < rows.length; i++) {
@@ -68,6 +73,16 @@ const findIndexDuplicates = async () => {
             const a = rows[i];
             const b = rows[j];
             if (a.mediaId === b.mediaId) continue;
+            if (a.contentMd5 && b.contentMd5 && a.contentMd5 === b.contentMd5) {
+                matchedIds.add(a.mediaId);
+                matchedIds.add(b.mediaId);
+                union(a.mediaId, b.mediaId);
+            } else
+            if (a.baseMd5 && b.baseMd5 && a.baseMd5 === b.baseMd5) {
+                matchedIds.add(a.mediaId);
+                matchedIds.add(b.mediaId);
+                union(a.mediaId, b.mediaId);
+            } else
             if (meanAbsDiff(a.baseGrey, b.baseGrey) <= MEAN_DIFF_THRESHOLD) {
                 matchedIds.add(a.mediaId);
                 matchedIds.add(b.mediaId);
@@ -76,18 +91,17 @@ const findIndexDuplicates = async () => {
         }
     }
 
-    const groups = new Map();
+    const groups = new Map<string, string[]>();
     for (const id of matchedIds) {
         const root = find(id);
         if (!groups.has(root)) groups.set(root, []);
-        groups.get(root).push(id);
+        (groups.get(root) as string[]).push(id);
     }
 
-    return [...groups.values()].filter(group => group.length > 1);
-};
-
-module.exports = {
-    findIndexDuplicates,
-    meanAbsDiff,
-    MEAN_DIFF_THRESHOLD,
+    const result = [...groups.values()].filter(group => group.length > 1);
+    // This scan is O(n^2) and can take a while on a real library - persist
+    // the result (items_duplicated table) so it survives an app restart
+    // instead of only living in this function's return value.
+    compareImgStore.replaceDuplicateGroups(result);
+    return result;
 };

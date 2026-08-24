@@ -1,6 +1,6 @@
-const path = require("path");
-const fs = require("fs");
-const { getCacheDir, ensureCacheDir } = require("../cache");
+import path from "path";
+import fs from "fs";
+import { getCacheDir, ensureCacheDir } from "../cache";
 
 const SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" viewBox="0 0 300 200">
   <rect width="300" height="200" fill="#263238"/>
@@ -10,7 +10,7 @@ const SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" vi
 `;
 
 // Shared static image shown when no thumbnail can be generated
-const getPlaceholderPath = () => {
+export const getPlaceholderPath = (): string => {
     const placeholderPath = path.join(getCacheDir(), "video-placeholder.svg");
     if (!fs.existsSync(placeholderPath)) {
         ensureCacheDir();
@@ -18,5 +18,3 @@ const getPlaceholderPath = () => {
     }
     return placeholderPath;
 };
-
-module.exports = { getPlaceholderPath };

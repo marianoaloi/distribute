@@ -9,7 +9,6 @@ import { LoadDetectionClasses, LoadDetections, selectDetectionClassNames, useSel
 import { configurationsSelector, setClassFilter } from "../lib/redux/slices/configurations"
 import { ClassFilterBar } from "./classFilter.styled"
 import { ClassFilter as ClassFilterExpr, ClassFilterGroup } from "../entity/FilterMedia"
-import { DetectionBox } from "../lib/redux/slices/detections/detections.reduce"
 
 // Drops half-built terms (no class picked yet) and any group left empty by
 // that - a row mid-edit must never silently hide the whole grid.
@@ -19,11 +18,14 @@ export function normalizeClassFilter(filter: ClassFilterExpr): ClassFilterGroup[
         .filter(group => group.length > 0)
 }
 
-// `groups` must already be normalized. Media with no detections has an empty
-// class set, so it fails every positive term and satisfies every negated one.
-export function matchesClassFilter(boxes: DetectionBox[] | undefined, groups: ClassFilterGroup[]): boolean {
+// `groups` must already be normalized. `classes` is the union of classes
+// across every item linked to the media (all 4 video/GIF frames, not just
+// the thumbnail one - see detections.reduce.ts's MediaDetections). Media
+// with no detections has an empty class set, so it fails every positive term
+// and satisfies every negated one.
+export function matchesClassFilter(classes: string[] | undefined, groups: ClassFilterGroup[]): boolean {
     if (groups.length === 0) return true
-    const present = new Set((boxes ?? []).map(box => box.className))
+    const present = new Set(classes ?? [])
     return groups.some(group => group.every(term =>
         term.negate ? !present.has(term.className) : present.has(term.className)
     ))

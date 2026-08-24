@@ -16,9 +16,7 @@ export const RunDetection = (medias: Media[]) => {
     return (dispatch: any) => {
         dispatch(startDetecting());
         if (ipcRender) {
-            ipcRender.send('detectObjects', {
-                medias: medias.map(m => ({ id: m.id, media: m.media }))
-            });
+            ipcRender.send('detectObjects',null);
         }
     }
 }
@@ -99,6 +97,40 @@ export const LoadDetections = () => {
     return (dispatch: any) => {
         if (ipcRender) {
             ipcRender.send('loadDetections', undefined);
+        }
+    }
+}
+
+// Sets onnxDetector's letterbox/tensor input resolution override (main
+// process re-validates - see app.js's saveDetectionSize). The reply
+// (detectionSizeLoaded, handled in media/electron.action.ts) carries back
+// the size actually now in effect, which may differ from what was sent if a
+// .maloi "reshape" override is active (that takes priority - see
+// onnxDetector.getSize).
+export const SaveDetectionSize = (size: number) => {
+
+    if (!isElectronApp) {
+        return (dispatch: any) => { }
+    }
+
+    return (dispatch: any) => {
+        if (ipcRender) {
+            ipcRender.send('saveDetectionSize', { size });
+        }
+    }
+}
+
+// Asks the main process for the size currently in effect, so the "detection
+// size" dialog can prefill with it instead of guessing or always showing 640.
+export const GetDetectionSize = () => {
+
+    if (!isElectronApp) {
+        return (dispatch: any) => { }
+    }
+
+    return (dispatch: any) => {
+        if (ipcRender) {
+            ipcRender.send('getDetectionSize', undefined);
         }
     }
 }

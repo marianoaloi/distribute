@@ -1,26 +1,27 @@
-const { Jimp } = require("jimp");
-const crypto = require("crypto");
+import { Jimp } from "jimp";
+import type { JimpInstance } from "jimp";
+import crypto from "crypto";
 
 // Spec: 68x68 square, crop a 4px border off every side down to 60x60, greyscale
 const SQUARE_SIZE = 48;
 const CROP_MARGIN = 4;
 const FINAL_SIZE = SQUARE_SIZE - (CROP_MARGIN * 2);
-const BLUR_LEVELS = [4] //[1, 2, 4, 8, 16, 32, 64, 128]; // radius in pixels
+const BLUR_LEVELS = [4]; //[1, 2, 4, 8, 16, 32, 64, 128]; // radius in pixels
 
-const hashBuffer = (buffer) => crypto.createHash("md5").update(buffer).digest("hex");
+const hashBuffer = (buffer: Buffer): string => crypto.createHash("md5").update(buffer).digest("hex");
 
 // input: file path or Buffer
-const toBaseImage = async (input) => {
+const toBaseImage = async (input: string | Buffer): Promise<JimpInstance> => {
     const image = await Jimp.read(input);
     image.resize({ w: SQUARE_SIZE, h: SQUARE_SIZE });
     image.crop({ x: CROP_MARGIN, y: CROP_MARGIN, w: FINAL_SIZE, h: FINAL_SIZE });
     image.greyscale();
-    return image;
+    return image as JimpInstance;
 };
 
 // Pulls the greyscale intensity (R channel; R=G=B after greyscale()) out of
 // Jimp's RGBA buffer into a flat single-channel array for blurring.
-const greyscaleChannel = (image) => {
+const greyscaleChannel = (image: JimpInstance): Uint8Array => {
     const { data, width, height } = image.bitmap;
     const out = new Uint8Array(width * height);
     for (let i = 0; i < out.length; i++) out[i] = data[i * 4];
@@ -30,7 +31,13 @@ const greyscaleChannel = (image) => {
 // Sliding-window box blur pass: O(length) regardless of radius, since each
 // step adjusts the running sum instead of re-summing the whole window.
 // Edge pixels clamp to the nearest valid index (replicate at the border).
-const boxBlur1D = (src, outerCount, innerCount, radius, indexFor) => {
+const boxBlur1D = (
+    src: Uint8Array,
+    outerCount: number,
+    innerCount: number,
+    radius: number,
+    indexFor: (outer: number, inner: number) => number,
+): Uint8Array => {
     const out = new Uint8Array(src.length);
     const windowSize = radius * 2 + 1;
     for (let outer = 0; outer < outerCount; outer++) {
@@ -49,10 +56,10 @@ const boxBlur1D = (src, outerCount, innerCount, radius, indexFor) => {
     return out;
 };
 
-const boxBlurHorizontal = (src, width, height, radius) =>
+const boxBlurHorizontal = (src: Uint8Array, width: number, height: number, radius: number): Uint8Array =>
     boxBlur1D(src, height, width, radius, (y, x) => y * width + x);
 
-const boxBlurVertical = (src, width, height, radius) =>
+const boxBlurVertical = (src: Uint8Array, width: number, height: number, radius: number): Uint8Array =>
     boxBlur1D(src, width, height, radius, (x, y) => y * width + x);
 
 // Cheap Gaussian approximation (3 box-blur passes, a standard technique) at
@@ -61,7 +68,7 @@ const boxBlurVertical = (src, width, height, radius) =>
 // a 60x60 image (6.5s alone at radius 50); this is sub-millisecond. The
 // exact kernel shape doesn't matter - these blur levels are only ever used
 // as consistent internal fingerprints, never rendered to the user.
-const boxBlur = (src, width, height, radius) => {
+const boxBlur = (src: Uint8Array, width: number, height: number, radius: number): Uint8Array => {
     let buf = src;
     for (let pass = 0; pass < 3; pass++) {
         buf = boxBlurHorizontal(buf, width, height, radius);
@@ -70,8 +77,13 @@ const boxBlur = (src, width, height, radius) => {
     return buf;
 };
 
+export interface Md5Result {
+    baseMd5: string;
+    blurMd5: string[];
+}
+
 // Base MD5 (of the transformed greyscale pixels) plus one MD5 per blur level
-const md5sFor = async (input) => {
+const md5sFor = async (input: string | Buffer): Promise<Md5Result> => {
     const base = await toBaseImage(input);
     const baseMd5 = hashBuffer(Buffer.from(base.bitmap.data));
 
@@ -81,6 +93,11 @@ const md5sFor = async (input) => {
 
     return { baseMd5, blurMd5 };
 };
+
+export interface PixelsResult {
+    baseMd5: string;
+    grey: Uint8Array;
+}
 
 // baseMd5 (cheap short-circuit for byte-identical crops) plus the raw
 // greyscale pixel buffer itself, so callers can do a real similarity
@@ -92,14 +109,14 @@ const md5sFor = async (input) => {
 // positives once the blur radius got large enough to flatten unrelated
 // frames to the same value. See scripts/debugCompareVideos.js for the
 // measurements this is based on.
-const pixelsFor = async (input) => {
+const pixelsFor = async (input: string | Buffer): Promise<PixelsResult> => {
     const base = await toBaseImage(input);
     const baseMd5 = hashBuffer(Buffer.from(base.bitmap.data));
     const grey = greyscaleChannel(base);
     return { baseMd5, grey };
 };
 
-module.exports = {
+export {
     md5sFor,
     pixelsFor,
     BLUR_LEVELS,

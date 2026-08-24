@@ -18,6 +18,11 @@ interface DuplicatesState {
     // How many cross-folder duplicate files the last import matched
     // (null until an import succeeds; 0 means "imported fine, nothing matched").
     dbImportMatched: number | null
+    // Cached video/GIF frame paths (compareImg's duplicate-finder indexing),
+    // keyed by mediaId, for the duplicates grid's 4-frame collage thumbnail.
+    // A media with no entry here (or an empty array) falls back to a plain
+    // thumbnail - either it's an image, or its frames were never extracted.
+    mediaFrames: Record<string, string[]>
 }
 
 const initialState: DuplicatesState = {
@@ -31,6 +36,7 @@ const initialState: DuplicatesState = {
     dbImporting: false,
     dbImportError: null,
     dbImportMatched: null,
+    mediaFrames: {},
 }
 
 const duplicatesSlice = createSlice({
@@ -84,8 +90,19 @@ const duplicatesSlice = createSlice({
             dbImportError: action.payload.error ?? null,
             dbImportMatched: action.payload.matched ?? null,
         }),
+        // Merges rather than replaces so frames fetched for one batch of
+        // loaded media are not clobbered by a later, smaller batch.
+        setMediaFrames: (state, action) => ({
+            ...state,
+            mediaFrames: {
+                ...state.mediaFrames,
+                ...Object.fromEntries(
+                    action.payload.items.map((item: { id: string, frames: string[] }) => [item.id, item.frames])
+                ),
+            },
+        }),
     }
 })
 
-export const { setDuplicateGroups, clearDuplicateGroups, startIndexRebuild, setIndexRebuildProgress, indexRebuildFinished, startDatabaseExport, databaseExportFinished, startDatabaseImport, databaseImportFinished } = duplicatesSlice.actions;
+export const { setDuplicateGroups, clearDuplicateGroups, startIndexRebuild, setIndexRebuildProgress, indexRebuildFinished, startDatabaseExport, databaseExportFinished, startDatabaseImport, databaseImportFinished, setMediaFrames } = duplicatesSlice.actions;
 export default duplicatesSlice.reducer;

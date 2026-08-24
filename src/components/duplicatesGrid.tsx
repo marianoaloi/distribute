@@ -1,11 +1,12 @@
-import { KeyboardEvent, useRef, useState } from "react"
+import { KeyboardEvent, useEffect, useRef, useState } from "react"
 import { useDispatch } from "react-redux"
 import { IconButton, CircularProgress, LinearProgress } from "@mui/material"
 import { ImageSearch, RestartAlt, FolderOpen, FolderCopyTwoTone, VolumeOff, FileDownload, FileUpload, RadioButtonChecked, RadioButtonUnchecked } from "@mui/icons-material"
 import { Media } from "../entity/Media"
-import { ExportDatabase, FindIndexDuplicates, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
+import { ExportDatabase, FindIndexDuplicates, GetDuplicateGroups, GetMediaFrames, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMediaFrames, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { MediaIMG } from "./media"
+import { FrameCollageTile } from "./frameCollageTile"
 import ModalZoom from "./modalZoom"
 import { CounterImgIndex, DuplicateGroupCard, DuplicateGroupRow, DuplicatesList, DuplicatesResume, EmptyState, GroupLabel, ImportedMediaWrap, RebuildIndexInfo } from "./duplicatesGrid.styled"
 import { Folders } from "./folder"
@@ -27,6 +28,17 @@ export const GridDuplicates = (() => {
     const dbImporting = useSelector(selectDbImporting)
     const dbImportError = useSelector(selectDbImportError)
     const dbImportMatched = useSelector(selectDbImportMatched)
+    const mediaFrames = useSelector(selectMediaFrames)
+
+    // Show whatever the last scan already found as soon as this view mounts,
+    // instead of starting empty until the user clicks "scan" - the scan
+    // itself is a slow whole-library pixel comparison, but its last result
+    // is persisted (compareImg/HashStore.js's items_duplicated table) and
+    // this is just a cheap read of that table.
+    useEffect(() => {
+        dispatch(GetDuplicateGroups())
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
 
     const mediaById = new Map(medias.map(m => [m.id, m]))
 
@@ -38,6 +50,17 @@ export const GridDuplicates = (() => {
         .map(group => group.map(m => ({ ...m, screenIndex: counterIndex++ })))
 
     const flatList = groups.flat()
+
+    // Only video/GIF tiles can ever show the 4-frame collage - fetching for
+    // the rest would just come back empty (frames are only ever extracted
+    // for video/GIF media, see compareImg/mediaIndexer.js). Re-runs whenever
+    // the duplicate groups themselves change (a new scan finished), not on
+    // every render.
+    useEffect(() => {
+        const withFrames = flatList.filter(m => !m.imported && (m.mime.includes('video') || m.mime.includes('gif')))
+        if (withFrames.length > 0) dispatch(GetMediaFrames(withFrames))
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [groupIds])
 
     const modalZoomRefMethods = useRef<{
         chamgeImageClass: () => void,
@@ -251,13 +274,22 @@ export const GridDuplicates = (() => {
                             <GroupLabel>Group {idx + 1} — {group.length} identical files{group.some(m => m.imported) ? ` (${group.filter(m => m.imported).length} from other folder)` : ""}</GroupLabel>
                             <DuplicateGroupRow>
                                 {group.map(media => {
-                                    const tile = <MediaIMG key={media.id} media={media}
-                                        lastClickedEvent={lastClickedEvent}
-                                        shiftSelect={shiftSelect}
-                                        shiftControlSelect={shiftControlSelect}
-                                        handleOpenPreview={handleOpenPreview}
-                                        isLastSeen={lastZoom?.id === media.id}
-                                    />
+                                    const frames = mediaFrames[media.id]
+                                    const tile = frames && frames.length > 0
+                                        ? <FrameCollageTile key={media.id} media={media} frames={frames}
+                                            lastClickedEvent={lastClickedEvent}
+                                            shiftSelect={shiftSelect}
+                                            shiftControlSelect={shiftControlSelect}
+                                            handleOpenPreview={handleOpenPreview}
+                                            isLastSeen={lastZoom?.id === media.id}
+                                        />
+                                        : <MediaIMG key={media.id} media={media}
+                                            lastClickedEvent={lastClickedEvent}
+                                            shiftSelect={shiftSelect}
+                                            shiftControlSelect={shiftControlSelect}
+                                            handleOpenPreview={handleOpenPreview}
+                                            isLastSeen={lastZoom?.id === media.id}
+                                        />
                                     return media.imported
                                         ? <ImportedMediaWrap key={media.id}>{tile}</ImportedMediaWrap>
                                         : tile

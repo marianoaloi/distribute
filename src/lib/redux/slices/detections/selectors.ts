@@ -7,3 +7,4 @@ export const selectDetectionProgress = (state: ReduxState) => state.detections.p
 export const selectModelPath = (state: ReduxState) => state.detections.modelPath;
 export const selectDetectionClassNames = (state: ReduxState) => state.detections.classNames;
 export const selectLastProcessedId = (state: ReduxState) => state.detections.lastProcessedId;
+export const selectDetectionSize = (state: ReduxState) => state.detections.detectionSize;

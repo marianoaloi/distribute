@@ -1,12 +1,41 @@
-import { IconButton, CircularProgress, LinearProgress, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, Button, TextField } from "@mui/material"
-import { PlayArrow, Stop, FolderOpen, Label } from "@mui/icons-material"
+import { IconButton, CircularProgress, LinearProgress, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, Button, TextField, Snackbar, Alert } from "@mui/material"
+import { PlayArrow, Stop, FolderOpen, Label, AspectRatio } from "@mui/icons-material"
 import React from "react"
 import { Media } from "../entity/Media"
-import { ChooseOnnxModel, LoadDetectionClasses, RunDetection, SaveDetectionClasses, StopDetection, selectDetecting, selectDetectionClassNames, selectDetectionError, selectDetectionProgress, selectDetections, selectLastProcessedId, selectMedias, selectModelPath, useSelector } from "../lib/redux"
+import { ChooseOnnxModel, GetDetectionSize, LoadDetectionClasses, RunDetection, SaveDetectionClasses, SaveDetectionSize, StopDetection, selectDetecting, selectDetectionClassNames, selectDetectionError, selectDetectionProgress, selectDetectionSize, selectDetections, selectLastProcessedId, selectMedias, selectModelPath, useSelector } from "../lib/redux"
 import { useDispatch } from "react-redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { toMediaUrl } from "../lib/mediaUrl"
 import { DetectionBoxLabel, DetectionBoxOutline, DetectionGridWrap, DetectionResume, DetectionTile, EmptyState } from "./objectDetectionGrid.styled"
+
+// The grid only renders this many tiles at once - with large folders, mounting
+// thousands of <img> tags tanks render/scroll performance. Detection itself
+// still runs over every loaded media (see runDetection below); only the
+// on-screen list is capped.
+const MAX_VISIBLE_MEDIAS = 500
+
+// Once the run has gone 3/4 of the way through the visible window, slide the
+// window forward so the grid keeps showing what's coming up next instead of
+// piling up everything already processed. WINDOW_SHIFT is how far back
+// (from the item just processed) the new window starts, i.e. how much
+// already-processed context stays on screen after the slide.
+const WINDOW_SHIFT_TRIGGER = Math.floor(MAX_VISIBLE_MEDIAS * 3 / 4)
+const WINDOW_SHIFT = MAX_VISIBLE_MEDIAS - WINDOW_SHIFT_TRIGGER
+
+// detectObjects' backend gate (app.ts) sends these codes back instead of a
+// prose message - the renderer pre-checks the same two conditions before
+// ever dispatching (see runDetection below), so this mapping is really only
+// hit by a race (e.g. stale client state) rather than normal use.
+const DETECTION_ERROR_MESSAGES: Record<string, string> = {
+    "no-model": "No ONNX model selected - choose a model file first",
+    "no-classes": "No detection classes set - add at least one class name first",
+}
+
+// Sanity bounds for the detection input size dialog - wide enough to cover
+// real model export sizes, tight enough to reject typos/nonsense before they
+// reach onnxruntime as a multi-megapixel tensor allocation.
+const MIN_DETECTION_SIZE = 32
+const MAX_DETECTION_SIZE = 4096
 
 export const GridDetections = (() => {
 
@@ -22,17 +51,48 @@ export const GridDetections = (() => {
     const modelName = modelPath ? modelPath.split(/[\\/]/).pop() : null
     const classNames = useSelector(selectDetectionClassNames)
     const lastProcessedId = useSelector(selectLastProcessedId)
+    const detectionSize = useSelector(selectDetectionSize)
+
+    const [windowStart, setWindowStart] = React.useState(0)
+    const windowEnd = Math.min(windowStart + MAX_VISIBLE_MEDIAS, medias.length)
+    const visibleMedias = medias.slice(windowStart, windowEnd)
 
     const [openClassNames, setOpenClassNames] = React.useState(false)
+    const [openDetectionSize, setOpenDetectionSize] = React.useState(false)
+    const [detectionSizeError, setDetectionSizeError] = React.useState<string | null>(null)
+    const [gateAlert, setGateAlert] = React.useState<string | null>(null)
 
     const chooseModel = () => dispatch(ChooseOnnxModel())
-    const runDetection = () => dispatch(RunDetection(medias))
+    // Only start when a model AND at least one class are configured - the
+    // Play button stays enabled either way so the user finds out why via
+    // this alert instead of the button just silently refusing to do anything.
+    const runDetection = () => {
+        if (!modelPath) {
+            setGateAlert("Choose an ONNX model first")
+            return
+        }
+        if (classNames.length === 0) {
+            setGateAlert("Set at least one detection class first")
+            return
+        }
+        dispatch(RunDetection(medias))
+    }
     const stopDetection = () => dispatch(StopDetection())
     const openClassNamesDialog = () => setOpenClassNames(true)
     const closeClassNamesDialog = () => setOpenClassNames(false)
+    const openDetectionSizeDialog = () => setOpenDetectionSize(true)
+    const closeDetectionSizeDialog = () => { setOpenDetectionSize(false); setDetectionSizeError(null) }
 
     React.useEffect(() => {
         dispatch(LoadDetectionClasses())
+    }, [dispatch])
+
+    // Session-only (see app.js's saveDetectionSize) - fetch once on mount so
+    // the dialog and the toolbar label reflect whatever's already in effect
+    // (a .maloi "reshape" override picked earlier this session, etc.)
+    // instead of showing nothing until the user opens the dialog.
+    React.useEffect(() => {
+        dispatch(GetDetectionSize())
     }, [dispatch])
 
     // index.db is per-folder, so the class list must be re-fetched every time
@@ -61,6 +121,27 @@ export const GridDetections = (() => {
             ?.scrollIntoView({ block: "center", behavior: "auto" })
     }, [lastProcessedId])
 
+    // Start each fresh run showing from the top of the list.
+    React.useEffect(() => {
+        if (detecting) {
+            setWindowStart(0)
+        }
+    }, [detecting])
+
+    // Backend processes medias in the same order they were sent, so the index
+    // of the last processed item tells us how far through the window the run
+    // is. Once it crosses the 3/4 mark, slide the window forward so the
+    // already-recognized items at the front drop off the grid and upcoming
+    // ones scroll into view instead.
+    React.useEffect(() => {
+        if (!detecting || !lastProcessedId) return
+        const processedIndex = medias.findIndex(m => m.id === lastProcessedId)
+        if (processedIndex < 0) return
+        if (processedIndex - windowStart >= WINDOW_SHIFT_TRIGGER) {
+            setWindowStart(Math.max(0, processedIndex - WINDOW_SHIFT))
+        }
+    }, [lastProcessedId, detecting, medias, windowStart])
+
     return (
         <div>
             <DetectionResume>
@@ -68,7 +149,7 @@ export const GridDetections = (() => {
                     title={modelPath ? `Model: ${modelPath} (click to change)` : "Choose an ONNX model file"}>
                     <FolderOpen />
                 </IconButton>
-                <IconButton onClick={runDetection} disabled={detecting || medias.length === 0 || !modelPath}
+                <IconButton onClick={runDetection} disabled={detecting || medias.length === 0}
                     title={modelPath ? `Run ONNX object detection (${modelName}) over every loaded media` : "Choose an ONNX model file first"}>
                     {detecting ? <CircularProgress size={20} /> : <PlayArrow />}
                 </IconButton>
@@ -80,9 +161,17 @@ export const GridDetections = (() => {
                     title="Edit the detection class names (comma-separated, position = class id)">
                     <Label />
                 </IconButton>
+                <IconButton onClick={openDetectionSizeDialog}
+                    title={`Detection input size: ${detectionSize ?? 640}px (click to change - only needed if the model wasn't exported for 640)`}>
+                    <AspectRatio />
+                </IconButton>
                 {modelName && <span title={modelPath ?? undefined}>Model: {modelName}</span>}
                 <span>{Object.keys(detections).length} media scanned</span>
-                {detectionError && <span>Detection failed: {detectionError}</span>}
+                {medias.length > MAX_VISIBLE_MEDIAS &&
+                    <span title="All loaded media are still sent to detection - only the grid view is capped">
+                        Showing {windowStart + 1}-{windowEnd} of {medias.length}
+                    </span>}
+                {detectionError && <span>Detection failed: {DETECTION_ERROR_MESSAGES[detectionError] || detectionError}</span>}
                 <div className="spacer" />
             </DetectionResume>
 
@@ -124,6 +213,55 @@ export const GridDetections = (() => {
                 </DialogActions>
             </Dialog>
 
+            <Dialog
+                open={openDetectionSize}
+                onClose={closeDetectionSizeDialog}
+                PaperProps={{
+                    component: 'form',
+                    onSubmit: (event: React.FormEvent<HTMLFormElement>) => {
+                        event.preventDefault();
+                        const formData = new FormData(event.currentTarget);
+                        const raw = String(formData.get('size') ?? '').trim();
+                        const parsed = Number(raw);
+                        if (!raw || !Number.isInteger(parsed) || parsed < MIN_DETECTION_SIZE || parsed > MAX_DETECTION_SIZE) {
+                            setDetectionSizeError(`Enter a whole number between ${MIN_DETECTION_SIZE} and ${MAX_DETECTION_SIZE}`)
+                            return
+                        }
+                        dispatch(SaveDetectionSize(parsed))
+                        closeDetectionSizeDialog();
+                    },
+                }}
+            >
+                <DialogTitle>Detection input size</DialogTitle>
+                <DialogContent>
+                    <DialogContentText>
+                        The ONNX model's letterbox input width/height, in pixels. Defaults to 640 if left unset —
+                        only change this if the chosen model was exported for a different size (a mismatch can make
+                        onnxruntime fail with a native "reshape" error). A .maloi file's own "reshape" field, if set,
+                        overrides this value for that model.
+                    </DialogContentText>
+                    <TextField
+                        autoFocus
+                        margin="dense"
+                        id="size"
+                        name="size"
+                        label="Input size (px)"
+                        type="number"
+                        fullWidth
+                        variant="standard"
+                        defaultValue={detectionSize ?? ''}
+                        placeholder="640"
+                        error={detectionSizeError !== null}
+                        helperText={detectionSizeError ?? undefined}
+                        slotProps={{ htmlInput: { min: MIN_DETECTION_SIZE, max: MAX_DETECTION_SIZE, step: 1 } }}
+                    />
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={closeDetectionSizeDialog}>Cancel</Button>
+                    <Button type="submit">Save</Button>
+                </DialogActions>
+            </Dialog>
+
             {detecting &&
                 <LinearProgress
                     variant={progress && progress.total > 0 ? "determinate" : "indeterminate"}
@@ -133,10 +271,10 @@ export const GridDetections = (() => {
 
             {medias.length > 0
                 ? <DetectionGridWrap>
-                    {medias.map(media => (
+                    {visibleMedias.map(media => (
                         <DetectionTile id={`detection-media-${media.id}`} key={media.id} size={config.pxzoom}>
                             <img src={toMediaUrl(media.media)} alt={media.filename} draggable={false} />
-                            {(detections[media.id] || []).map((box, idx) => (
+                            {(detections[media.id]?.boxes || []).map((box, idx) => (
                                 <DetectionBoxOutline key={idx} x={box.x} y={box.y} w={box.w} h={box.h}>
                                     <DetectionBoxLabel>{box.className} {(box.score * 100).toFixed(0)}%</DetectionBoxLabel>
                                 </DetectionBoxOutline>
@@ -146,6 +284,12 @@ export const GridDetections = (() => {
                 </DetectionGridWrap>
                 : <EmptyState>No media loaded yet. Open a folder first, then run detection.</EmptyState>
             }
+
+            <Snackbar open={gateAlert !== null} autoHideDuration={4000} onClose={() => setGateAlert(null)}>
+                <Alert onClose={() => setGateAlert(null)} severity="warning" variant="filled">
+                    {gateAlert}
+                </Alert>
+            </Snackbar>
         </div>
     )
 })

@@ -1,14 +1,28 @@
-const compareImgStore = require("./HashStore");
-const computePool = require("./computePool");
-const videoFrames = require("./videoFrames");
+import * as compareImgStore from "./HashStore";
+import * as computePool from "./computePool";
+import { extractFrames, FRAME_POSITIONS } from "./videoFrames";
+
+// Shape accepted by indexImage/indexVideo/indexMediaBackground - built by
+// app.js's rebuildIndex handler from MediaStore rows before calling in here.
+export interface IndexableMediaItem {
+    item: string;
+    mime?: string | null;
+    kind?: string;
+    contentMd5?: string | null;
+    id: string;
+}
 
 // pixelSourcePath: what to read pixel data from (the frame file for videos, the
-// media file itself for images). mediaId: the media row this content came
-// from THIS time - always linked, even if id's content was already indexed
-// by an earlier (possibly different, byte-identical-duplicate) media, so
-// that duplicate keeps its own membership in the media x item relation
-// instead of being silently dropped (see HashStore.js's media_item table).
-const indexUnit = async (id, pixelSourcePath, mediaId, framePosition) => {
+// media file itself for images). mediaId: the media row this item belongs to
+// - id already embeds it (see itemBaseId below), but linkItemMedia still
+// needs it explicitly to populate the media_item join table.
+const indexUnit = async (
+    id: string,
+    pixelSourcePath: string,
+    mediaId: string,
+    framePosition: string,
+    framePositionSeconds: number | null = null,
+): Promise<void> => {
     compareImgStore.linkItemMedia(id, mediaId);
 
     const existing = compareImgStore.getItem(id);
@@ -21,6 +35,7 @@ const indexUnit = async (id, pixelSourcePath, mediaId, framePosition) => {
 
     const metadata = {
         framePosition: framePosition || "",
+        framePositionSeconds,
         futurePosition: -1,
         baseMd5,
         // Raw cropped/greyscale pixel buffer, stored so duplicateFinder.js
@@ -32,56 +47,62 @@ const indexUnit = async (id, pixelSourcePath, mediaId, framePosition) => {
     compareImgStore.upsertItem({ id, metadata });
 };
 
-const indexImage = async (mediaItem) => {
+// Item ids are now media.contentMd5 concatenated with media.id, not bare
+// contentMd5 - each media gets its own item(s) instead of sharing one item
+// across every media with byte-identical content.
+const itemBaseId = (mediaItem: IndexableMediaItem): string => `${mediaItem.id}`;
+
+const indexImage = async (mediaItem: IndexableMediaItem): Promise<void> => {
     const localPath = mediaItem.item;
     if (!mediaItem.contentMd5) return;
     try {
-        await indexUnit(mediaItem.contentMd5, localPath, mediaItem.id, "");
+        await indexUnit(itemBaseId(mediaItem), localPath, mediaItem.id, "");
     } catch (error) {
-        console.error(`compareImg: failed to index image ${localPath}:`, error.message);
+        console.error(`compareImg: failed to index image ${localPath}:`, (error as Error).message);
     }
 };
 
 // Frame positions are fixed labels (not duration-derived), so we can check
 // whether a video's frames are already indexed without probing it via ffmpeg.
-const videoAlreadyIndexed = async (mediaItem) => {
-    const baseId = mediaItem.contentMd5;
+const videoAlreadyIndexed = async (mediaItem: IndexableMediaItem): Promise<boolean> => {
+    const baseId = itemBaseId(mediaItem);
     try {
-        for (const position of videoFrames.FRAME_POSITIONS) {
+        for (const position of FRAME_POSITIONS) {
             if (!compareImgStore.getItem(`${baseId}_${position}`)) return false;
         }
         return true;
     } catch (error) {
-        console.error(`compareImg: failed to check index for ${mediaItem.item}:`, error.message);
+        console.error(`compareImg: failed to check index for ${mediaItem.item}:`, (error as Error).message);
         return false;
     }
 };
 
-const indexVideo = async (mediaItem) => {
+const indexVideo = async (mediaItem: IndexableMediaItem): Promise<void> => {
     const localPath = mediaItem.item;
     if (!mediaItem.contentMd5) return;
+    const baseId = itemBaseId(mediaItem);
     if (await videoAlreadyIndexed(mediaItem)) {
-        // Content's items already exist from an earlier (possibly different,
-        // byte-identical-duplicate) media - no ffmpeg/hashing needed, but
-        // THIS media still needs its own link into media_item or it never
-        // shows up as a member of the duplicate group.
-        for (const position of videoFrames.FRAME_POSITIONS) {
-            compareImgStore.linkItemMedia(`${mediaItem.contentMd5}_${position}`, mediaItem.id);
+        // This media's own items already exist from an earlier indexing pass
+        // (e.g. a previous rebuild) - no ffmpeg/hashing needed, but THIS
+        // media still needs its own link into media_item or it never shows
+        // up as a member of the duplicate group.
+        for (const position of FRAME_POSITIONS) {
+            compareImgStore.linkItemMedia(`${baseId}_${position}`, mediaItem.id);
         }
         return;
     }
 
-    const frames = await videoFrames.extractFrames(localPath).catch(error => {
-        console.error(`compareImg: frame extraction failed for ${localPath}:`, error.message);
+    const frames = await extractFrames(localPath).catch(error => {
+        console.error(`compareImg: frame extraction failed for ${localPath}:`, (error as Error).message);
         return [];
     });
 
     for (const frame of frames) {
-        const id = `${mediaItem.contentMd5}_${frame.position}`;
+        const id = `${baseId}_${frame.position}`;
         try {
-            await indexUnit(id, frame.path, mediaItem.id, frame.position);
+            await indexUnit(id, frame.path, mediaItem.id, frame.position, frame.seconds ?? null);
         } catch (error) {
-            console.error(`compareImg: failed to index video frame ${frame.path}:`, error.message);
+            console.error(`compareImg: failed to index video frame ${frame.path}:`, (error as Error).message);
         }
     }
 };
@@ -96,13 +117,16 @@ const ITEM_CONCURRENCY = 6;
 // onProgress(processed, total), if given, fires after each media item (image,
 // or video with all its frames) finishes — lets a caller surface progress
 // since indexing a real library can take minutes (ffmpeg + hashing).
-const indexMediaBackground = async (mediaItems, onProgress) => {
+export const indexMediaBackground = async (
+    mediaItems: IndexableMediaItem[],
+    onProgress?: (processed: number, total: number) => void,
+): Promise<void> => {
     compareImgStore.ensureReady();
     const total = mediaItems.length;
     let processed = 0;
 
     let cursor = 0;
-    const runWorker = async () => {
+    const runWorker = async (): Promise<void> => {
         while (cursor < mediaItems.length) {
             const mediaItem = mediaItems[cursor++];
             if (mediaItem.mime && mediaItem.mime.includes("gif")) {
@@ -122,8 +146,4 @@ const indexMediaBackground = async (mediaItems, onProgress) => {
 
     const workerCount = Math.min(ITEM_CONCURRENCY, mediaItems.length);
     await Promise.all(Array.from({ length: workerCount }, runWorker));
-};
-
-module.exports = {
-    indexMediaBackground,
 };
