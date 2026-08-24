@@ -21,6 +21,7 @@ import * as dbImport from "./compareImg/dbImport";
 import { hashFor } from "./thumbnails/cache";
 import * as onnxDetector from "./objectDetection/onnxDetector";
 import * as MediaStore from "./mediaDb/MediaStore";
+import { backfillContentMd5 } from "./mediaDb/backfill";
 import * as ThumbnailService from "./thumbnails/ThumbnailService";
 import { framePathFor, frameSetForMedia } from "./compareImg/videoFrames";
 import type { DetectionBox, DetectMediaRef, DetectObjectsPayload, StreamMediaItem } from "./types/domain";
@@ -545,6 +546,16 @@ let superExecutionInProgress = false;
 // (loading spinner, index rebuild progress, detection progress) reflects it
 // with no changes needed there.
 const runSuperExecutionPipeline = async (): Promise<void> => {
+    // backfillContentMd5 is normally fire-and-forget (see util.js's
+    // transformDataStreaming) so a plain folder open stays fast. But
+    // buildIndex's indexMediaBackground silently skips any media whose
+    // contentMd5 isn't set yet (mediaIndexer.js's indexImage/indexVideo),
+    // and on a freshly-scanned folder every row is still contentMd5-NULL at
+    // this point - without waiting here, buildIndex would run against a
+    // fully-null batch and never populate `items` for this scan at all,
+    // with nothing else left to retry it later. This chain is the one place
+    // where waiting for the hash pass first is worth the extra time.
+    await backfillContentMd5();
     await buildIndex();
     await runDetectObjects();
     await findIndexDuplicates();
@@ -792,6 +803,20 @@ const notifyMediaLoadComplete = (): void => {
     mainWindow!.webContents.send("mediaLoadComplete");
     if (superExecutionInProgress) {
         superExecutionInProgress = false;
+        // chooseOnnxModelDialog (called by loadSuperRecursive) persists the
+        // .maloi's classes/model path BEFORE the recursive-folder dialog
+        // even opens, since detectObjects refuses to run without a model
+        // picked first. index.db is per-folder though (HashStore closes and
+        // reopens its connection against the newly chosen folder - see
+        // loadRecursive), so that early save lands in whatever folder's DB
+        // was active beforehand, never the one just scanned. Re-persist
+        // here, now that the correct folder's DB is the one open (from this
+        // scan's own MediaStore.ensureReady calls) and right before the
+        // pipeline reads/writes it - saveDetectionClasses/getOrCreateModelPath
+        // are both idempotent so this is safe to redo.
+        MediaStore.ensureReady();
+        MediaStore.saveDetectionClasses(onnxDetector.getClassNames());
+        if (onnxDetector.getModelPath()) MediaStore.getOrCreateModelPath(onnxDetector.getModelPath() as string);
         runSuperExecutionPipeline().catch(error => {
             console.error("super execution pipeline failed", error);
         });
