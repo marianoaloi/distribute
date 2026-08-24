@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { OpenDirectory, OpenDirectoryRecursive, selectDetections, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
+import { OpenDirectory, OpenDirectoryRecursive, selectDetections, selectMedias, selectPipelineRunning, updateManyArrayItem, useSelector } from "../lib/redux"
 import { ImgGrid, NoMediaFound, Qtd, Resume } from "./gridImg.styled"
 import { MediaIMG } from "./media"
 import { Media } from "../entity/Media"
@@ -30,6 +30,8 @@ export const GridIMGs = (() => {
     const medias = useSelector(selectMedias).filter(m => !m.deleted && !m.imported)
         .filter(m => matchesMediaType(m.mime, config.mediaType))
         .filter(m => matchesClassFilter(detections[m.id]?.classes, classFilterGroups))
+    // A loadSuperRecursive run already owns "which folder is open" - see app.ts's rejectIfBusy.
+    const pipelineRunning = useSelector(selectPipelineRunning)
     const currentPage = config.page;
     const setCurrentPage = (page: number) => dispatch(setPage(page));
     const postsPerPage = config.postsPerPage;
@@ -311,8 +313,8 @@ export const GridIMGs = (() => {
 
                 <Folders screenMedias={mediaSliced} />
                 <div className="buttons">
-                    <IconButton className="buttonControl" onClick={() => openDiretory()}><FolderOpen /></IconButton>
-                    <IconButton className="buttonControl" onClick={() => openDiretoryRecursive()}><FolderCopyTwoTone /></IconButton>
+                    <IconButton className="buttonControl" disabled={pipelineRunning} onClick={() => openDiretory()}><FolderOpen /></IconButton>
+                    <IconButton className="buttonControl" disabled={pipelineRunning} onClick={() => openDiretoryRecursive()}><FolderCopyTwoTone /></IconButton>
                     <input type='text' value={speed} readOnly size={3} ref={inputRef} />
                     <IconButton onClick={() => playScrool()}>{play ? <PlayArrow /> : <Pause />}</IconButton>
                 </div>

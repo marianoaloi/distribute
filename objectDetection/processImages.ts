@@ -3,7 +3,12 @@ import * as MediaStore from "../mediaDb/MediaStore";
 import { DetectionBox, DetectMediaRef } from "../types/domain";
 import * as mediaIndexer from "../compareImg/mediaIndexer";
 
-export const processMediaToDetections = async (mainWindow: any, onnxDetector: any, classNames: string[], detectionStopRequested: boolean): Promise<void> => {
+// onProgress mirrors the "detectionProgress" IPC event below but is only
+// forwarded when a caller passes it - app.ts wires it to
+// pipeline/PipelineRun.js's "detect" stage when this run is part of the
+// loadSuperRecursive chain, and leaves it unset for a plain manual run
+// (which already has its own "detecting" progress bar via that IPC event).
+export const processMediaToDetections = async (mainWindow: any, onnxDetector: any, classNames: string[], detectionStopRequested: boolean, onProgress?: (processed: number, total: number) => void): Promise<void> => {
 
 
     let processed = 0;
@@ -101,6 +106,7 @@ export const processMediaToDetections = async (mainWindow: any, onnxDetector: an
         } finally {
             processed++;
             mainWindow!.webContents.send("detectionProgress", { processed, total });
+            if (onProgress) onProgress(processed, total);
         }
     };
 

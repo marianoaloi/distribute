@@ -2,7 +2,7 @@ import { IconButton, CircularProgress, LinearProgress, Dialog, DialogActions, Di
 import { PlayArrow, Stop, FolderOpen, Label, AspectRatio } from "@mui/icons-material"
 import React from "react"
 import { Media } from "../entity/Media"
-import { ChooseOnnxModel, GetDetectionSize, LoadDetectionClasses, RunDetection, SaveDetectionClasses, SaveDetectionSize, StopDetection, selectDetecting, selectDetectionClassNames, selectDetectionError, selectDetectionProgress, selectDetectionSize, selectDetections, selectLastProcessedId, selectMedias, selectModelPath, useSelector } from "../lib/redux"
+import { ChooseOnnxModel, GetDetectionSize, LoadDetectionClasses, RunDetection, SaveDetectionClasses, SaveDetectionSize, StopDetection, selectDetecting, selectDetectionClassNames, selectDetectionError, selectDetectionProgress, selectDetectionSize, selectDetections, selectLastProcessedId, selectMedias, selectModelPath, selectPipelineRunning, useSelector } from "../lib/redux"
 import { useDispatch } from "react-redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { toMediaUrl } from "../lib/mediaUrl"
@@ -52,6 +52,12 @@ export const GridDetections = (() => {
     const classNames = useSelector(selectDetectionClassNames)
     const lastProcessedId = useSelector(selectLastProcessedId)
     const detectionSize = useSelector(selectDetectionSize)
+    // A loadSuperRecursive run drives detection itself once it reaches the
+    // "detect" stage - block picking a different model or starting a second
+    // manual run out from under it (see app.ts's rejectIfBusy). Stop is left
+    // alone: detectionStopRequested already applies to whichever run is
+    // actually in flight, automatic or manual.
+    const pipelineRunning = useSelector(selectPipelineRunning)
 
     const [windowStart, setWindowStart] = React.useState(0)
     const windowEnd = Math.min(windowStart + MAX_VISIBLE_MEDIAS, medias.length)
@@ -145,12 +151,12 @@ export const GridDetections = (() => {
     return (
         <div>
             <DetectionResume>
-                <IconButton onClick={chooseModel}
-                    title={modelPath ? `Model: ${modelPath} (click to change)` : "Choose an ONNX model file"}>
+                <IconButton onClick={chooseModel} disabled={pipelineRunning}
+                    title={pipelineRunning ? "A Load super recursive run is in progress — wait for it to finish" : modelPath ? `Model: ${modelPath} (click to change)` : "Choose an ONNX model file"}>
                     <FolderOpen />
                 </IconButton>
-                <IconButton onClick={runDetection} disabled={detecting || medias.length === 0}
-                    title={modelPath ? `Run ONNX object detection (${modelName}) over every loaded media` : "Choose an ONNX model file first"}>
+                <IconButton onClick={runDetection} disabled={detecting || medias.length === 0 || pipelineRunning}
+                    title={pipelineRunning ? "A Load super recursive run is in progress — wait for it to finish" : modelPath ? `Run ONNX object detection (${modelName}) over every loaded media` : "Choose an ONNX model file first"}>
                     {detecting ? <CircularProgress size={20} /> : <PlayArrow />}
                 </IconButton>
                 <IconButton onClick={stopDetection} disabled={!detecting || !modelPath}

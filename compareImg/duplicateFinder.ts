@@ -61,13 +61,18 @@ export const MEAN_DIFF_THRESHOLD = 3;
 // media; if this gets slow on a much larger library, bucket rows by a cheap
 // coarse feature (e.g. average brightness) before doing the full comparison,
 // or switch to a Hamming-distance perceptual hash with an LSH/bucket index.
-export const findIndexDuplicates = async (): Promise<string[][]> => {
+// onProgress (comparedRows, totalRows) - fires once per outer-loop row
+// (cheap relative to the O(n^2) body itself), so pipeline/PipelineRun.js's
+// "duplicates" stage can show a real percentage/ETA instead of just
+// spinning for however long this scan takes on a real library.
+export const findIndexDuplicates = async (onProgress?: (comparedRows: number, totalRows: number) => void): Promise<string[][]> => {
     compareImgStore.ensureReady();
 
     const { find, union } = makeDisjointSet();
     const matchedIds = new Set<string>();
 
     const rows = compareImgStore.allBaseGreyRows();
+    if (onProgress) onProgress(0, rows.length);
     for (let i = 0; i < rows.length; i++) {
         for (let j = i + 1; j < rows.length; j++) {
             const a = rows[i];
@@ -89,6 +94,7 @@ export const findIndexDuplicates = async (): Promise<string[][]> => {
                 union(a.mediaId, b.mediaId);
             }
         }
+        if (onProgress) onProgress(i + 1, rows.length);
     }
 
     const groups = new Map<string, string[]>();

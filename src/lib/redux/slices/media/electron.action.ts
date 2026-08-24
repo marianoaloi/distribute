@@ -5,6 +5,7 @@ import { addFolder } from '../folders';
 import { mediaLoadComplete, mediaLoadStart, zoomIn, zoomOut } from '../configurations';
 import { setDuplicateGroups, indexRebuildFinished, setIndexRebuildProgress, databaseExportFinished, databaseImportFinished, setMediaFrames } from '../duplicates';
 import { setDetectionResult, mergeDetections, setDetectionProgress, detectingFinished, setModelPath, setDetectionClasses, setDetectionSize } from '../detections';
+import { setPipelineProgress, pipelineFinished, pipelineRejected, PipelineSnapshot } from '../pipeline';
 import { FileDTO } from '../../../../entity/FileDTO';
 
 
@@ -24,7 +25,7 @@ export const ElectronConnection = () => {
 
     return (dispatch: any) => {
         if (ipcRender) {
-            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete', 'onnxModelChosen', 'databaseExported', 'databaseImported', 'detectionClassesLoaded', 'detectionsLoaded', 'fileProcessed', 'mediaFramesFound', 'detectionSizeLoaded'];
+            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete', 'onnxModelChosen', 'databaseExported', 'databaseImported', 'detectionClassesLoaded', 'detectionsLoaded', 'fileProcessed', 'mediaFramesFound', 'detectionSizeLoaded', 'pipelineProgress', 'pipelineFinished', 'pipelineRejected'];
             channels.forEach(ch => ipcRender.removeAllListeners(ch));
 
             ipcRender.on('directoryOpen', (e: any, args: any) => {
@@ -142,6 +143,17 @@ export const ElectronConnection = () => {
                     error: result.canceled ? null : (result.success ? null : (result.error || 'Import failed')),
                     matched: result.success ? result.matched : undefined,
                 }))
+            })
+            // Unified loadSuperRecursive progress/result - see app.js's
+            // pipeline/PipelineRun.js and this app's pipeline redux slice.
+            ipcRender.on('pipelineProgress', (e: any, snapshot: PipelineSnapshot) => {
+                dispatch(setPipelineProgress(snapshot))
+            })
+            ipcRender.on('pipelineFinished', (e: any, result: { kind: string, error: string | null }) => {
+                dispatch(pipelineFinished(result))
+            })
+            ipcRender.on('pipelineRejected', (e: any, result: { message: string }) => {
+                dispatch(pipelineRejected(result))
             })
             ipcRender.send("verifyOpen", undefined)
         }

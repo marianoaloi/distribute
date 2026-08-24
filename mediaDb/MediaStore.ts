@@ -132,6 +132,15 @@ export const mediaMissingContentMd5 = (limit: number): MediaMissingMd5Row[] => {
     return db.prepare("SELECT id, localPath, kind FROM media WHERE contentMd5 IS NULL LIMIT ?").all(limit) as MediaMissingMd5Row[];
 };
 
+// Upfront total for backfillContentMd5's progress reporting - mediaMissingContentMd5
+// only ever returns one page at a time, so the running hash pass needs this
+// separately to know how much work is ahead of it.
+export const countMediaMissingContentMd5 = (): number => {
+    const db = HashStore.getDb();
+    const row = db.prepare("SELECT COUNT(*) as c FROM media WHERE contentMd5 IS NULL").get() as { c: number };
+    return row.c;
+};
+
 export const getDetectionClasses = (): string[] => {
     const db = HashStore.getDb();
     return (db.prepare("SELECT name FROM detection_class ORDER BY classId ASC").all() as Array<{ name: string }>).map((r) => r.name);
