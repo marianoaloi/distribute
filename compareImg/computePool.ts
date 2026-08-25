@@ -53,7 +53,22 @@ let nextTaskId = 0;
 // indexMediaBackground progress counter that drives loadSuperRecursive's
 // "index" stage simply stops moving forever). A generous timeout turns that
 // into a loud, specific, recoverable failure instead.
-const TASK_TIMEOUT_MS = 60_000;
+//
+// Kept short (20s) rather than generous now that compute() retries on
+// failure (see MAX_RETRIES below): most real timeouts turn out to be
+// transient resource contention, not a genuinely bad file (see the
+// 2026-08-25 investigation - the exact file that timed out at 60s decoded
+// fine in 0.26s once run in isolation) - several short attempts recover
+// from that faster than one long wait, at the cost of a genuinely-corrupt
+// file taking longer to finally give up on.
+const TASK_TIMEOUT_MS = 20_000;
+
+// Total attempts for one compute() call is 1 + MAX_RETRIES = 11. Applies to
+// every failure mode (timeout, worker crash, or Jimp itself throwing) - a
+// permanently bad file just burns through all of them before compute()
+// finally rejects, which mediaIndexer.js's existing try/catch already
+// treats as a normal per-item failure (skip and move on).
+const MAX_RETRIES = 10;
 
 const findEntryForTask = (id: number): PoolEntry | undefined =>
     pool?.find((e) => e.pending.has(id));
@@ -104,8 +119,12 @@ function createWorkerEntry(): PoolEntry {
             task.reject(error);
         }
         entry.pending.clear();
-        entry.free = true;
-        dispatchNext();
+        // An uncaught exception inside a Worker terminates it (Node's own
+        // worker_threads behavior) - this entry's `worker` is already dead,
+        // so marking it merely "free" would let the next dispatch
+        // postMessage into a terminated worker instead of a working one,
+        // silently defeating retry for whatever gets dispatched next.
+        replaceHungWorker(entry);
     });
     return entry;
 }
@@ -115,8 +134,10 @@ const ensurePool = (): PoolEntry[] => {
     return pool;
 };
 
-// input: file path to hash. Resolves { baseMd5, grey }.
-export const compute = (input: string): Promise<PixelsResult> => new Promise((resolve, reject) => {
+// Single attempt - exactly the old compute() body. Never retries itself;
+// that's compute()'s job below, which needs to see each individual failure
+// to log/count it.
+const attemptCompute = (input: string): Promise<PixelsResult> => new Promise((resolve, reject) => {
     ensurePool();
     const id = ++nextTaskId;
     const timer = setTimeout(() => {
@@ -139,6 +160,24 @@ export const compute = (input: string): Promise<PixelsResult> => new Promise((re
     queue.push({ id, input, resolve, reject, timer });
     dispatchNext();
 });
+
+// input: file path to hash. Resolves { baseMd5, grey }.
+export const compute = async (input: string): Promise<PixelsResult> => {
+    let lastError: Error = new Error(`Pixel hashing failed for ${input}`);
+    for (let attempt = 1; attempt <= 1 + MAX_RETRIES; attempt++) {
+        try {
+            return await attemptCompute(input);
+        } catch (error) {
+            lastError = error as Error;
+            const willRetry = attempt <= MAX_RETRIES;
+            console.error(
+                `computePool: attempt ${attempt}/${1 + MAX_RETRIES} failed for ${input}: ${lastError.message}`
+                + (willRetry ? " - retrying" : " - giving up"),
+            );
+        }
+    }
+    throw lastError;
+};
 
 // Terminates all pool workers, freeing the threads if the pool is no longer needed.
 export const shutdown = async (): Promise<void> => {
