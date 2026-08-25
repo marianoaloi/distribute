@@ -1,6 +1,7 @@
 import * as compareImgStore from "./HashStore";
 import * as computePool from "./computePool";
 import { extractFrames, FRAME_POSITIONS } from "./videoFrames";
+import { memoryAwareLimit, TASK_MEMORY_ESTIMATE } from "../system/resourceLimits";
 
 // Shape accepted by indexImage/indexVideo/indexMediaBackground - built by
 // app.js's rebuildIndex handler from MediaStore rows before calling in here.
@@ -126,8 +127,12 @@ const indexVideo = async (mediaItem: IndexableMediaItem): Promise<void> => {
 // but independent of each other, so process several concurrently instead of
 // one full item at a time. HashStore.upsertItem is synchronous (no internal
 // await), so concurrent writes can't interleave; isolates per-item failures
-// so one bad file doesn't stop the batch.
-const ITEM_CONCURRENCY = 6;
+// so one bad file doesn't stop the batch. This is the ceiling free RAM is
+// allowed to pull down from (see resourceLimits.ts) - each in-flight item
+// mostly delegates its real memory cost downstream to computePool/
+// extractFrames (both separately memory-gated), but still holds its own
+// slice of state while waiting.
+const ITEM_CONCURRENCY_CEILING = 6;
 
 // onProgress(processed, total), if given, fires after each media item (image,
 // or video with all its frames) finishes — lets a caller surface progress
@@ -159,6 +164,10 @@ export const indexMediaBackground = async (
         }
     };
 
-    const workerCount = Math.min(ITEM_CONCURRENCY, mediaItems.length);
+    // Resolved live for this run rather than once at module load, so a
+    // batch kicked off on a loaded machine starts throttled instead of
+    // discovering the hard way (see computePool/videoFrames' timeouts).
+    const itemConcurrency = memoryAwareLimit(ITEM_CONCURRENCY_CEILING, TASK_MEMORY_ESTIMATE.indexingItem);
+    const workerCount = Math.min(itemConcurrency, mediaItems.length);
     await Promise.all(Array.from({ length: workerCount }, runWorker));
 };

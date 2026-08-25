@@ -1,6 +1,7 @@
 import path from "path";
 import os from "os";
 import { Worker } from "worker_threads";
+import { memoryAwareLimit, TASK_MEMORY_ESTIMATE } from "../system/resourceLimits";
 
 import type { PixelsResult } from "./imageTransform";
 
@@ -8,8 +9,15 @@ const WORKER_PATH = path.join(__dirname, "frameWorker.js");
 
 // Workers only do Jimp pixel hashing (no model to load), so this can scale
 // closer to core count; still capped to leave a core free for the main
-// process/UI and avoid oversubscribing on modest machines.
-const POOL_SIZE = Math.max(1, Math.min(8, os.cpus().length - 1));
+// process/UI and avoid oversubscribing on modest machines. That's the
+// ceiling free RAM is allowed to pull down from (see resourceLimits.ts) -
+// never raised past it even on a machine with RAM to spare.
+const POOL_SIZE_CPU_CEILING = Math.max(1, Math.min(8, os.cpus().length - 1));
+
+// Resolved lazily at ensurePool() time (not at module load) so it reflects
+// memory conditions when the pool is actually about to start doing work,
+// not whatever was free when the app happened to start.
+const resolvePoolSize = (): number => memoryAwareLimit(POOL_SIZE_CPU_CEILING, TASK_MEMORY_ESTIMATE.pixelHash);
 
 export interface WorkerRequest {
     id: number;
@@ -103,7 +111,7 @@ function createWorkerEntry(): PoolEntry {
 }
 
 const ensurePool = (): PoolEntry[] => {
-    if (!pool) pool = Array.from({ length: POOL_SIZE }, createWorkerEntry);
+    if (!pool) pool = Array.from({ length: resolvePoolSize() }, createWorkerEntry);
     return pool;
 };
 

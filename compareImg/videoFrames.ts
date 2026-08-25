@@ -4,6 +4,7 @@ import { execFile, execFileSync, ExecFileException } from "child_process";
 import { getFramesDir, ensureFramesDir } from "./cache";
 import { hashFor } from "../thumbnails/cache";
 import ffmpegStaticPath from "ffmpeg-static";
+import { memoryAwareLimit, TASK_MEMORY_ESTIMATE } from "../system/resourceLimits";
 
 import type { Semaphore, VideoFrame } from "../types/domain";
 import { get } from "http";
@@ -109,30 +110,45 @@ const extractFramesFFMPEG = (
 });
 
 // indexMediaBackground now processes several media items concurrently
-// (ITEM_CONCURRENCY in mediaIndexer.js), and multiple rebuild calls could
-// also overlap, so cap how many video frame-extraction pipelines (each
-// spawning ffmpeg) run at once; extras queue and start as a slot frees up.
-const FRAME_EXTRACTION_CONCURRENCY = 55;
+// (ITEM_CONCURRENCY_CEILING in mediaIndexer.js), and multiple rebuild calls
+// could also overlap, so cap how many video frame-extraction pipelines
+// (each spawning ffmpeg) run at once; extras queue and start as a slot
+// frees up. This is the ceiling free RAM is allowed to pull down from (see
+// resourceLimits.ts) - 55 concurrent ffmpeg processes is the single biggest
+// contributor to the oversubscription this module's timeouts exist to
+// recover from, so this is the cap most worth making memory-aware.
+const FRAME_EXTRACTION_CONCURRENCY_CEILING = 55;
+const resolveFrameExtractionLimit = (): number =>
+    memoryAwareLimit(FRAME_EXTRACTION_CONCURRENCY_CEILING, TASK_MEMORY_ESTIMATE.ffmpegFrameExtraction);
 
-const createSemaphore = (limit: number): Semaphore => {
+// limit is re-read on every acquire/release (rather than fixed at creation)
+// so a run that starts with headroom and eats into it over time throttles
+// down mid-run - a newly queued waiter honors whatever the cap currently is,
+// though anything already dispatched keeps running (this only ever holds
+// back the START of new work, never preempts work in flight).
+const createSemaphore = (resolveLimit: () => number): Semaphore => {
     let active = 0;
     const queue: Array<() => void> = [];
+    const dispatchQueued = (): void => {
+        if (queue.length === 0 || active >= resolveLimit()) return;
+        active++;
+        (queue.shift() as () => void)();
+    };
     const acquire = (): Promise<void> => {
-        if (active < limit) {
+        if (active < resolveLimit()) {
             active++;
             return Promise.resolve();
         }
-        return new Promise<void>(resolve => queue.push(resolve)).then(() => { active++; });
+        return new Promise<void>(resolve => queue.push(resolve));
     };
     const release = (): void => {
         active--;
-        const next = queue.shift();
-        if (next) next();
+        dispatchQueued();
     };
     return { acquire, release };
 };
 
-const frameExtractionLimiter = createSemaphore(FRAME_EXTRACTION_CONCURRENCY);
+const frameExtractionLimiter = createSemaphore(resolveFrameExtractionLimit);
 
 const existingFramesFor = (input: string): VideoFrame[] => FRAME_POSITIONS
     .map(position => ({ position, path: framePathFor(input, position) }))
