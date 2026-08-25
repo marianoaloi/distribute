@@ -10,6 +10,19 @@ import { get } from "http";
 
 type ExecError = ExecFileException & { stderr?: string };
 
+// Neither runCapture (duration probe, audio-stream probe) nor
+// extractFramesFFMPEG had any bound on how long ffmpeg could run - a
+// malformed/unusual input (e.g. a stream ffmpeg's probe blocks on) could
+// leave the child process running forever with the awaiting promise never
+// settling and nothing logged, silently wedging one of
+// FRAME_EXTRACTION_CONCURRENCY's concurrent slots (and, upstream, one of
+// indexMediaBackground's ITEM_CONCURRENCY workers) with zero visible error.
+// Node's execFile kills the child and calls back with an error once this
+// elapses, so a bad file becomes a loud, specific, recoverable failure
+// instead of a permanent freeze.
+const PROBE_TIMEOUT_MS = 90_000;
+const EXTRACT_TIMEOUT_MS = 180_000;
+
 let ffmpegPath: string | null = null;
 try {
     ffmpegPath = ffmpegStaticPath;
@@ -23,7 +36,7 @@ export const isAvailable = (): boolean => Boolean(ffmpegPath && fs.existsSync(ff
 
 const runCapture = (args: string[]): Promise<{ error: ExecFileException | null; stdout: string; stderr: string }> =>
     new Promise((resolve) => {
-        execFile(ffmpegPath as string, args, { encoding: "utf8" }, (error, stdout, stderr) => {
+        execFile(ffmpegPath as string, args, { encoding: "utf8", timeout: PROBE_TIMEOUT_MS }, (error, stdout, stderr) => {
             resolve({ error, stdout, stderr: stderr || "" });
         });
     });
@@ -92,7 +105,7 @@ const extractFramesFFMPEG = (
     const args = ["-y", "-loglevel", "error", "-i", input, "-filter_complex", filterComplex];
     frames.forEach((f, i) => args.push("-map", `[out${i + 1}]`, "-frames:v", "1", f.path));
 
-    execFile(ffmpegPath as string, args, { encoding: "utf8" }, (error) => error ? reject(error) : resolve());
+    execFile(ffmpegPath as string, args, { encoding: "utf8", timeout: EXTRACT_TIMEOUT_MS }, (error) => error ? reject(error) : resolve());
 });
 
 // indexMediaBackground now processes several media items concurrently

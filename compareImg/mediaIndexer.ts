@@ -28,6 +28,15 @@ const indexUnit = async (
     const existing = compareImgStore.getItem(id);
     if (existing) return;
 
+    // Logged at start, not just on failure: computePool.compute has a
+    // timeout now (see computePool.js), but before this item's own timeout
+    // fires there was previously zero console output for whichever item a
+    // worker was mid-way through - "the pipeline stopped and I can't tell
+    // which file it's stuck on" (see git history around indexRebuildProgress
+    // stalling silently). This line is what makes that file identifiable in
+    // real time instead of only after the fact.
+    console.log(`compareImg: hashing ${pixelSourcePath}`);
+
     // Pixel hashing runs in a worker-thread pool so it doesn't block the
     // Electron main process/UI and multiple items' hashing runs truly in
     // parallel across cores.
@@ -91,6 +100,12 @@ const indexVideo = async (mediaItem: IndexableMediaItem): Promise<void> => {
         }
         return;
     }
+
+    // See indexUnit's matching log line - extractFrames spawns ffmpeg
+    // (now timeout-bounded, see videoFrames.js) and was previously the
+    // other silent place a run could stall on with no indication which
+    // file it was working on.
+    console.log(`compareImg: extracting frames for ${localPath}`);
 
     const frames = await extractFrames(localPath).catch(error => {
         console.error(`compareImg: frame extraction failed for ${localPath}:`, (error as Error).message);
