@@ -1,3 +1,10 @@
+// First import, ahead of everything else: patches console.log/console.error
+// (electron-log's documented console takeover) so every module's existing
+// plain console calls - mediaIndexer.ts, videoFrames.ts, computePool.ts,
+// this file, etc. - land in tmp/logs/app.log from the moment the process
+// starts, not just from wherever this happened to be required.
+import { redirectToActiveFolder } from "./logging/AppLog";
+
 import { app, BrowserWindow, ipcMain, dialog, Menu, protocol, IpcMainEvent, MenuItemConstructorOptions, OpenDialogOptions } from "electron";
 import path from "path";
 import fs from "fs";
@@ -261,6 +268,7 @@ ipcMain.on("open", () => {
         if (!file.canceled) {
             fileGlobal = file.filePaths[0];
             setActiveFolder(fileGlobal);
+            redirectToActiveFolder();
             compareImgStore.closeConnection();
         }
         openfile();
@@ -832,6 +840,7 @@ const loadRecursive = async (): Promise<void> => {
     dialog.showOpenDialog(options).then(file => {
         if (!file.canceled) {
             setActiveFolder(file.filePaths[0]);
+            redirectToActiveFolder();
             fileGlobal = file.filePaths[0]; // path.join(file.filePaths[0], "tmp");
             compareImgStore.closeConnection();
 
