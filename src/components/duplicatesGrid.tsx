@@ -3,7 +3,7 @@ import { useDispatch } from "react-redux"
 import { IconButton, CircularProgress, LinearProgress } from "@mui/material"
 import { ImageSearch, RestartAlt, FolderOpen, FolderCopyTwoTone, VolumeOff, FileDownload, FileUpload, RadioButtonChecked, RadioButtonUnchecked } from "@mui/icons-material"
 import { Media } from "../entity/Media"
-import { ExportDatabase, FindIndexDuplicates, GetDuplicateGroups, GetMediaFrames, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMediaFrames, selectMedias, updateManyArrayItem, useSelector } from "../lib/redux"
+import { ExportDatabase, FindIndexDuplicates, GetDuplicateGroups, GetMediaFrames, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMediaFrames, selectMedias, selectPipelineRunning, updateManyArrayItem, useSelector } from "../lib/redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { MediaIMG } from "./media"
 import { FrameCollageTile } from "./frameCollageTile"
@@ -29,6 +29,9 @@ export const GridDuplicates = (() => {
     const dbImportError = useSelector(selectDbImportError)
     const dbImportMatched = useSelector(selectDbImportMatched)
     const mediaFrames = useSelector(selectMediaFrames)
+    // A loadSuperRecursive run already owns the index/duplicates/onnxDetector
+    // state these buttons would otherwise touch - see app.ts's rejectIfBusy.
+    const pipelineRunning = useSelector(selectPipelineRunning)
 
     // Show whatever the last scan already found as soon as this view mounts,
     // instead of starting empty until the user clicks "scan" - the scan
@@ -210,9 +213,11 @@ export const GridDuplicates = (() => {
     return (
         <div onKeyUp={(ev) => pressedKeyUp(ev)}>
             <DuplicatesResume>
-                <IconButton onClick={scanByHash} title="Scan indexed media for visual duplicates (perceptual hash)"><ImageSearch /></IconButton>
-                <IconButton onClick={rebuildIndex} disabled={indexRebuilding || config.mediaLoading}
-                    title={config.mediaLoading
+                <IconButton onClick={scanByHash} disabled={pipelineRunning} title="Scan indexed media for visual duplicates (perceptual hash)"><ImageSearch /></IconButton>
+                <IconButton onClick={rebuildIndex} disabled={indexRebuilding || config.mediaLoading || pipelineRunning}
+                    title={pipelineRunning
+                        ? "A Load super recursive run is in progress — wait for it to finish"
+                        : config.mediaLoading
                         ? "Still loading media from the folder — wait for it to finish before rebuilding"
                         : "Rebuild the compareImg vector index from the currently loaded media (use this if indexing errors show up in the console, e.g. a corrupted index)"}>
                     {indexRebuilding ? <CircularProgress size={20} /> : <RestartAlt />}
@@ -221,11 +226,11 @@ export const GridDuplicates = (() => {
                     title="Check duplicates for removal in every group, keeping one survivor: a video is preferred over a gif or image (biggest with sound, else biggest muted), otherwise the biggest gif, otherwise the biggest item">
                     <VolumeOff />
                 </IconButton>
-                <IconButton onClick={exportDatabase} disabled={dbExporting}
+                <IconButton onClick={exportDatabase} disabled={dbExporting || pipelineRunning}
                     title="Export the duplicate-detection database to a file, for importing and comparing against another library later">
                     {dbExporting ? <CircularProgress size={20} /> : <FileDownload />}
                 </IconButton>
-                <IconButton onClick={importDatabase} disabled={dbImporting || indexRebuilding}
+                <IconButton onClick={importDatabase} disabled={dbImporting || indexRebuilding || pipelineRunning}
                     title="Import another folder's exported database and find items duplicated across the two folders (requires this folder's index to exist)">
                     {dbImporting ? <CircularProgress size={20} /> : <FileUpload />}
                 </IconButton>
@@ -237,8 +242,8 @@ export const GridDuplicates = (() => {
 
                 <Folders screenMedias={flatList} />
 
-                <IconButton onClick={openDiretory} title="Open folder to choose medias"><FolderOpen /></IconButton>
-                <IconButton onClick={openDiretoryRecursive} title="Open folder recursively to choose medias"><FolderCopyTwoTone /></IconButton>
+                <IconButton onClick={openDiretory} disabled={pipelineRunning} title="Open folder to choose medias"><FolderOpen /></IconButton>
+                <IconButton onClick={openDiretoryRecursive} disabled={pipelineRunning} title="Open folder recursively to choose medias"><FolderCopyTwoTone /></IconButton>
             </DuplicatesResume>
             <div>
 

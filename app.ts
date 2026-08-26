@@ -1,3 +1,10 @@
+// First import, ahead of everything else: patches console.log/console.error
+// (electron-log's documented console takeover) so every module's existing
+// plain console calls - mediaIndexer.ts, videoFrames.ts, pixelHash.ts,
+// this file, etc. - land in tmp/logs/app.log from the moment the process
+// starts, not just from wherever this happened to be required.
+import { redirectToActiveFolder } from "./logging/AppLog";
+
 import { app, BrowserWindow, ipcMain, dialog, Menu, protocol, IpcMainEvent, MenuItemConstructorOptions, OpenDialogOptions } from "electron";
 import path from "path";
 import fs from "fs";
@@ -22,6 +29,7 @@ import { hashFor } from "./thumbnails/cache";
 import * as onnxDetector from "./objectDetection/onnxDetector";
 import * as MediaStore from "./mediaDb/MediaStore";
 import { backfillContentMd5 } from "./mediaDb/backfill";
+import * as pipelineRun from "./pipeline/PipelineRun";
 import * as ThumbnailService from "./thumbnails/ThumbnailService";
 import { framePathFor, frameSetForMedia } from "./compareImg/videoFrames";
 import type { DetectionBox, DetectMediaRef, DetectObjectsPayload, StreamMediaItem } from "./types/domain";
@@ -67,12 +75,27 @@ interface MaloiFile {
 const splitClassNames = (raw: string): string[] =>
     String(raw).split(",").map((s) => s.trim()).filter((s) => s.length > 0);
 
+// Shared guard for every long-running entry point (loadRecursive/
+// loadSuperRecursive, rebuildIndex, detectObjects, exportDatabase,
+// importDatabase, findIndexDuplicates): refuses to start a second one while
+// pipelineRun already has one in flight, rather than letting two compete for
+// the same per-folder index.db/onnxDetector state. Reports back through a
+// dedicated channel (not an alert/dialog) so the renderer decides how to
+// show it - see pipelineRejected in redux/slices/pipeline.
+const rejectIfBusy = (): boolean => {
+    if (!pipelineRun.isRunning()) return false;
+    mainWindow!.webContents.send("pipelineRejected", {
+        message: `Still running "${pipelineRun.currentKind()}" - wait for it to finish before starting another long operation.`,
+    });
+    return true;
+};
+
 const menuTemplate = (): MenuItemConstructorOptions[] => [
     {
         label: 'File',
         submenu: [
-            { label: 'Load recursive', click: loadRecursive },
-            { label: 'Load super recursive', click: loadSuperRecursive },
+            { label: 'Load recursive', enabled: !pipelineRun.isRunning(), click: () => { if (!rejectIfBusy()) loadRecursive(); } },
+            { label: 'Load super recursive', enabled: !pipelineRun.isRunning(), click: loadSuperRecursive },
         ]
     },
     {
@@ -123,6 +146,19 @@ const updateMenu = (): void => {
         console.error("Error setting application menu", error);
     }
 };
+
+// Wires pipelineRun's stage/ETA snapshots and end-of-run result straight to
+// the renderer (pipelineProgress/pipelineFinished - see redux/slices/pipeline)
+// and re-enables the File menu's recursive-load items once a run ends,
+// whether it finished, failed, or was cancelled.
+pipelineRun.configure({
+    onProgress: (snapshot) => { if (mainWindow) mainWindow.webContents.send("pipelineProgress", snapshot); },
+    onDone: (result) => {
+        if (mainWindow) mainWindow.webContents.send("pipelineFinished", result);
+        updateMenu();
+    },
+});
+
 let mainWindow: BrowserWindow | null;
 let fileGlobal: string | undefined;
 function createWindow(): void {
@@ -232,6 +268,7 @@ ipcMain.on("open", () => {
         if (!file.canceled) {
             fileGlobal = file.filePaths[0];
             setActiveFolder(fileGlobal);
+            redirectToActiveFolder();
             compareImgStore.closeConnection();
         }
         openfile();
@@ -248,16 +285,20 @@ ipcMain.on("process", async (event: IpcMainEvent, data: ProcessPayload) => {
     }
 });
 
-const findIndexDuplicates = async (): Promise<void> => {
+// onProgress passthrough lets runSuperExecutionPipeline feed this stage's
+// real per-row progress into pipelineRun's "duplicates" stage - unset (the
+// common case: the standalone "scan for duplicates" button) it's just the
+// plain scan with no extra reporting.
+const findIndexDuplicates = async (onProgress?: (comparedRows: number, totalRows: number) => void): Promise<void> => {
     try {
-        const groups = await duplicateFinder.findIndexDuplicates();
+        const groups = await duplicateFinder.findIndexDuplicates(onProgress);
         mainWindow!.webContents.send("duplicatesFound", groups);
     } catch (error) {
         console.error("findIndexDuplicates failed", error);
         mainWindow!.webContents.send("duplicatesFound", []);
     }
 };
-ipcMain.on("findIndexDuplicates", findIndexDuplicates);
+ipcMain.on("findIndexDuplicates", () => { if (!rejectIfBusy()) findIndexDuplicates(); });
 
 // Reads back whatever the last findIndexDuplicates scan persisted
 // (compareImg/HashStore.js's items_duplicated table) instead of re-running
@@ -345,7 +386,7 @@ const chooseOnnxModelDialog = async (): Promise<boolean> => {
     return onnxDetector.isAvailable();
 };
 
-ipcMain.on("chooseOnnxModel", () => { chooseOnnxModelDialog(); });
+ipcMain.on("chooseOnnxModel", () => { if (!rejectIfBusy()) chooseOnnxModelDialog(); });
 
 // Shared by the standalone "detectObjects" IPC handler below and by
 // loadSuperRecursive's chain - pulls medias/items straight from MediaStore
@@ -368,7 +409,15 @@ const runDetectObjects = async (): Promise<void> => {
 
     detectionStopRequested = false;
 
-    await processMediaToDetections(mainWindow, onnxDetector, classNames, detectionStopRequested).catch(error => {
+    // Forwards progress into pipelineRun's "detect" stage only when this run
+    // is part of the loadSuperRecursive chain - a manual Play-button run
+    // already has its own progress bar (objectDetectionGrid.tsx, driven by
+    // the "detectionProgress" event processMediaToDetections always sends).
+    const onProgress = pipelineRun.isRunning()
+        ? (processed: number, total: number) => pipelineRun.updateStage(processed, total)
+        : undefined;
+
+    await processMediaToDetections(mainWindow, onnxDetector, classNames, detectionStopRequested, onProgress).catch(error => {
         console.error("processMediaToDetections failed", error);
     });
 
@@ -376,6 +425,7 @@ const runDetectObjects = async (): Promise<void> => {
 };
 
 ipcMain.on("detectObjects", async (event: IpcMainEvent, data: DetectObjectsPayload) => {
+    if (rejectIfBusy()) return;
     await runDetectObjects();
 });
 
@@ -508,6 +558,7 @@ const buildIndex = async (): Promise<void> => {
     try {
         const medias = MediaStore.findAllMediaThatExists() || [];
         mainWindow!.webContents.send("indexRebuildProgress", { processed: 0, total: medias.length });
+        if (pipelineRun.isRunning()) pipelineRun.updateStage(0, medias.length);
         await mediaIndexer.indexMediaBackground(medias.map(m => ({
             item: m.localPath,
             mime: m.mime,
@@ -516,6 +567,7 @@ const buildIndex = async (): Promise<void> => {
             id: m.id,
         })), (processed, total) => {
             mainWindow!.webContents.send("indexRebuildProgress", { processed, total });
+            if (pipelineRun.isRunning()) pipelineRun.updateStage(processed, total);
         });
         mainWindow!.webContents.send("indexRebuilt", { success: true, count: medias.length });
     } catch (error) {
@@ -528,7 +580,7 @@ const rebuildIndex = async (): Promise<void> => {
     await findIndexDuplicates();
 };
 
-ipcMain.on("rebuildIndex", rebuildIndex);
+ipcMain.on("rebuildIndex", () => { if (!rejectIfBusy()) rebuildIndex(); });
 
 // Set by loadSuperRecursive right before it opens the recursive-folder
 // dialog; consumed by notifyMediaLoadComplete once that scan actually
@@ -537,35 +589,65 @@ ipcMain.on("rebuildIndex", rebuildIndex);
 // "open recursively" button) never sets this, so it stays a no-op for them.
 let superExecutionInProgress = false;
 
-// Runs after a recursive scan finishes: same pair "Rebuild index" already
-// runs (buildIndex + findIndexDuplicates), then detectObjects - all reading
-// their media/items straight from MediaStore/HashStore (see buildIndex and
-// runDetectObjects above), so nothing needs passing through from the scan
-// itself. Each stage still streams its own progress/result events exactly
-// like it does when triggered individually, so the renderer's existing UI
-// (loading spinner, index rebuild progress, detection progress) reflects it
-// with no changes needed there.
+// pipelineRun's stage list for the loadSuperRecursive chain - order matches
+// the awaits in runSuperExecutionPipeline below. "scan" itself has no
+// tracked progress (the folder walk's file count isn't known upfront, and
+// it's normally the fastest part of the chain) - it exists here only so the
+// overall-ETA fraction (stageIndex/stageCount) accounts for it once "hash"
+// starts.
+const SUPER_STAGES: pipelineRun.StageDef[] = [
+    { key: "scan", label: "Scanning folder" },
+    { key: "hash", label: "Hashing file content" },
+    { key: "index", label: "Building comparison index" },
+    { key: "detect", label: "Detecting objects" },
+    { key: "duplicates", label: "Finding visual duplicates" },
+];
+
+// Runs after a recursive scan finishes: hashes any not-yet-hashed content
+// (see backfillContentMd5's doc below), then the same pair "Rebuild index"
+// already runs (buildIndex + findIndexDuplicates), then detectObjects - all
+// reading their media/items straight from MediaStore/HashStore (see
+// buildIndex and runDetectObjects above), so nothing needs passing through
+// from the scan itself. Each stage still streams its own legacy progress
+// event exactly like it does when triggered individually (indexRebuildProgress,
+// detectionProgress, ...) AND, via pipelineRun, a unified stage/overall
+// progress+ETA - see pipelineProgress in redux/slices/pipeline.
 const runSuperExecutionPipeline = async (): Promise<void> => {
-    // backfillContentMd5 is normally fire-and-forget (see util.js's
-    // transformDataStreaming) so a plain folder open stays fast. But
-    // buildIndex's indexMediaBackground silently skips any media whose
-    // contentMd5 isn't set yet (mediaIndexer.js's indexImage/indexVideo),
-    // and on a freshly-scanned folder every row is still contentMd5-NULL at
-    // this point - without waiting here, buildIndex would run against a
-    // fully-null batch and never populate `items` for this scan at all,
-    // with nothing else left to retry it later. This chain is the one place
-    // where waiting for the hash pass first is worth the extra time.
-    await backfillContentMd5();
-    await buildIndex();
-    await runDetectObjects();
-    await findIndexDuplicates();
-    superExecutionInProgress = false;
+    try {
+        // backfillContentMd5 is normally fire-and-forget (see util.js's
+        // transformDataStreaming) so a plain folder open stays fast. But
+        // buildIndex's indexMediaBackground silently skips any media whose
+        // contentMd5 isn't set yet (mediaIndexer.js's indexImage/indexVideo),
+        // and on a freshly-scanned folder every row is still contentMd5-NULL
+        // at this point - without waiting here, buildIndex would run against
+        // a fully-null batch and never populate `items` for this scan at
+        // all, with nothing else left to retry it later. This chain is the
+        // one place where waiting for the hash pass first is worth the
+        // extra time.
+        pipelineRun.startStage("hash");
+        await backfillContentMd5((processed, total) => pipelineRun.updateStage(processed, total));
+
+        pipelineRun.startStage("index");
+        await buildIndex();
+
+        pipelineRun.startStage("detect");
+        await runDetectObjects();
+
+        pipelineRun.startStage("duplicates");
+        await findIndexDuplicates((processed, total) => pipelineRun.updateStage(processed, total));
+
+        pipelineRun.finish();
+    } catch (error) {
+        console.error("super execution pipeline failed", error);
+        pipelineRun.fail((error as Error).message);
+    }
 };
 
 // Exports a consistent snapshot of the compareImg sqlite index so it can be
 // carried to another machine/folder and later imported for cross-library
 // duplicate comparison (the import/compare side is a follow-up feature).
 ipcMain.on("exportDatabase", async () => {
+    if (rejectIfBusy()) return;
     const options = {
         title: "Export duplicate-detection database",
         defaultPath: path.join(app.getPath("documents"), `index-export-${Date.now()}.db`),
@@ -590,8 +672,10 @@ ipcMain.on("exportDatabase", async () => {
 // the renderer as a transient "imported" fake item, so the duplicates page
 // can show cross-folder groups and the user can decide what to move.
 // Full flow lives in compareImg/dbImport.js.
-ipcMain.on("importDatabase", () =>
-    dbImport.runImportFlow({ dialog, mainWindow: mainWindow!, transformDataStreaming, hashFor }));
+ipcMain.on("importDatabase", () => {
+    if (rejectIfBusy()) return;
+    dbImport.runImportFlow({ dialog, mainWindow: mainWindow!, transformDataStreaming, hashFor });
+});
 
 ipcMain.on("verifyOpen", async () => {
     if (process.env.FixFiles && fs.existsSync(process.env.FixFiles)) {
@@ -745,7 +829,7 @@ const loadFolders = async (): Promise<void> => {
 };
 
 
-ipcMain.on("openRecursive", () => loadRecursive());
+ipcMain.on("openRecursive", () => { if (!rejectIfBusy()) loadRecursive(); });
 const loadRecursive = async (): Promise<void> => {
 
     const options: OpenDialogOptions = {
@@ -756,6 +840,7 @@ const loadRecursive = async (): Promise<void> => {
     dialog.showOpenDialog(options).then(file => {
         if (!file.canceled) {
             setActiveFolder(file.filePaths[0]);
+            redirectToActiveFolder();
             fileGlobal = file.filePaths[0]; // path.join(file.filePaths[0], "tmp");
             compareImgStore.closeConnection();
 
@@ -766,13 +851,14 @@ const loadRecursive = async (): Promise<void> => {
 
         } else {
             // Dialog cancelled: a super execution that already picked its
-            // model has nothing left to scan, so don't leave the flag set
-            // for some later unrelated recursive open to accidentally chain into.
-            superExecutionInProgress = false;
+            // model has nothing left to scan, so don't leave the flag (or
+            // pipelineRun) set for some later unrelated recursive open to
+            // accidentally chain into.
+            cancelSuperExecutionIfPending();
         }
     }).catch(err => {
         console.error(err);
-        superExecutionInProgress = false;
+        cancelSuperExecutionIfPending();
     });
 };
 
@@ -785,13 +871,34 @@ const loadRecursive = async (): Promise<void> => {
 // chain (buildIndex -> findIndexDuplicates -> detectObjects) picks up once
 // the scan itself finishes, see notifyMediaLoadComplete.
 const loadSuperRecursive = async (): Promise<void> => {
+    if (rejectIfBusy()) return;
     const modelAvailable = await chooseOnnxModelDialog();
     if (!modelAvailable) {
         console.log("Super execution cancelled: no ONNX model configured");
         return;
     }
+    // Claims the pipeline slot before the folder-choose dialog even opens,
+    // so rejectIfBusy above already covers "double-click Load super
+    // recursive while the first click's model dialog is still open" - not
+    // just the scan/index/detect/duplicates stages that follow it.
+    if (!pipelineRun.begin("Load super recursive", SUPER_STAGES)) return;
+    pipelineRun.startStage("scan");
+    updateMenu();
     superExecutionInProgress = true;
     await loadRecursive();
+};
+
+// Shared by loadRecursive's cancel/catch branches: undoes loadSuperRecursive's
+// claim on the pipeline slot (and re-enables the menu) when the folder-choose
+// dialog it opened gets cancelled or errors before any real work started -
+// otherwise pipelineRun would stay "running" forever with nothing left to
+// finish it. A no-op for a plain "Load recursive" (superExecutionInProgress
+// is only ever true mid-loadSuperRecursive).
+const cancelSuperExecutionIfPending = (): void => {
+    if (!superExecutionInProgress) return;
+    superExecutionInProgress = false;
+    pipelineRun.cancel("No folder chosen");
+    updateMenu();
 };
 
 let processedFolders: Record<string, boolean> = {};
@@ -818,6 +925,9 @@ const notifyMediaLoadComplete = (): void => {
         MediaStore.saveDetectionClasses(onnxDetector.getClassNames());
         if (onnxDetector.getModelPath()) MediaStore.getOrCreateModelPath(onnxDetector.getModelPath() as string);
         runSuperExecutionPipeline().catch(error => {
+            // runSuperExecutionPipeline already reports failures through
+            // pipelineRun.fail internally - this catch only guards against a
+            // truly unexpected throw escaping that try/catch.
             console.error("super execution pipeline failed", error);
         });
     }

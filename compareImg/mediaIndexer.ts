@@ -1,6 +1,7 @@
 import * as compareImgStore from "./HashStore";
-import * as computePool from "./computePool";
+import { pixelHashFor } from "./pixelHash";
 import { extractFrames, FRAME_POSITIONS } from "./videoFrames";
+import { memoryAwareLimit, TASK_MEMORY_ESTIMATE } from "../system/resourceLimits";
 
 // Shape accepted by indexImage/indexVideo/indexMediaBackground - built by
 // app.js's rebuildIndex handler from MediaStore rows before calling in here.
@@ -28,10 +29,16 @@ const indexUnit = async (
     const existing = compareImgStore.getItem(id);
     if (existing) return;
 
-    // Pixel hashing runs in a worker-thread pool so it doesn't block the
-    // Electron main process/UI and multiple items' hashing runs truly in
-    // parallel across cores.
-    const { baseMd5, grey } = await computePool.compute(pixelSourcePath);
+    // Logged at start, not just on failure: this line is what makes the
+    // file being worked on identifiable in real time rather than only after
+    // the fact (see git history around indexRebuildProgress stalling
+    // silently).
+    console.log(`compareImg: hashing ${pixelSourcePath}`);
+
+    // Runs in a short-lived ffmpeg child process, so the decode never
+    // touches the Electron main thread and its memory is the OS's to
+    // reclaim - see pixelHash.ts for why that replaced a worker pool.
+    const { baseMd5, baseGrey } = await pixelHashFor(pixelSourcePath);
 
     const metadata = {
         framePosition: framePosition || "",
@@ -41,7 +48,7 @@ const indexUnit = async (
         // Raw cropped/greyscale pixel buffer, stored so duplicateFinder.js
         // can do a real similarity comparison (mean pixel difference) instead
         // of hash equality - see HashStore.js's baseGrey column.
-        baseGrey: Buffer.from(grey),
+        baseGrey,
     };
 
     compareImgStore.upsertItem({ id, metadata });
@@ -92,6 +99,12 @@ const indexVideo = async (mediaItem: IndexableMediaItem): Promise<void> => {
         return;
     }
 
+    // See indexUnit's matching log line - extractFrames spawns ffmpeg
+    // (now timeout-bounded, see videoFrames.js) and was previously the
+    // other silent place a run could stall on with no indication which
+    // file it was working on.
+    console.log(`compareImg: extracting frames for ${localPath}`);
+
     const frames = await extractFrames(localPath).catch(error => {
         console.error(`compareImg: frame extraction failed for ${localPath}:`, (error as Error).message);
         return [];
@@ -111,8 +124,13 @@ const indexVideo = async (mediaItem: IndexableMediaItem): Promise<void> => {
 // but independent of each other, so process several concurrently instead of
 // one full item at a time. HashStore.upsertItem is synchronous (no internal
 // await), so concurrent writes can't interleave; isolates per-item failures
-// so one bad file doesn't stop the batch.
-const ITEM_CONCURRENCY = 6;
+// so one bad file doesn't stop the batch. This is the ceiling free RAM is
+// allowed to pull down from (see resourceLimits.ts) - each in-flight item
+// mostly delegates its real memory cost downstream to extractFrames
+// (separately memory-gated; pixelHash costs a few MB in a short-lived
+// child process and needs no gating), but still holds its own slice of
+// state while waiting.
+const ITEM_CONCURRENCY_CEILING = 6;
 
 // onProgress(processed, total), if given, fires after each media item (image,
 // or video with all its frames) finishes — lets a caller surface progress
@@ -144,6 +162,10 @@ export const indexMediaBackground = async (
         }
     };
 
-    const workerCount = Math.min(ITEM_CONCURRENCY, mediaItems.length);
+    // Resolved live for this run rather than once at module load, so a
+    // batch kicked off on a loaded machine starts throttled instead of
+    // discovering the hard way (see videoFrames' timeouts).
+    const itemConcurrency = memoryAwareLimit(ITEM_CONCURRENCY_CEILING, TASK_MEMORY_ESTIMATE.indexingItem);
+    const workerCount = Math.min(itemConcurrency, mediaItems.length);
     await Promise.all(Array.from({ length: workerCount }, runWorker));
 };

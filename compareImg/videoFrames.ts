@@ -3,27 +3,32 @@ import path from "path";
 import { execFile, execFileSync, ExecFileException } from "child_process";
 import { getFramesDir, ensureFramesDir } from "./cache";
 import { hashFor } from "../thumbnails/cache";
-import ffmpegStaticPath from "ffmpeg-static";
+import { ffmpegPath } from "./ffmpegBinary";
+import { memoryAwareLimit, TASK_MEMORY_ESTIMATE } from "../system/resourceLimits";
 
 import type { Semaphore, VideoFrame } from "../types/domain";
 import { get } from "http";
 
 type ExecError = ExecFileException & { stderr?: string };
 
-let ffmpegPath: string | null = null;
-try {
-    ffmpegPath = ffmpegStaticPath;
-    // the binary cannot be executed from inside the asar archive
-    if (ffmpegPath) ffmpegPath = ffmpegPath.replace("app.asar", "app.asar.unpacked");
-} catch {
-    ffmpegPath = null;
-}
+// Neither runCapture (duration probe, audio-stream probe) nor
+// extractFramesFFMPEG had any bound on how long ffmpeg could run - a
+// malformed/unusual input (e.g. a stream ffmpeg's probe blocks on) could
+// leave the child process running forever with the awaiting promise never
+// settling and nothing logged, silently wedging one of
+// FRAME_EXTRACTION_CONCURRENCY's concurrent slots (and, upstream, one of
+// indexMediaBackground's ITEM_CONCURRENCY workers) with zero visible error.
+// Node's execFile kills the child and calls back with an error once this
+// elapses, so a bad file becomes a loud, specific, recoverable failure
+// instead of a permanent freeze.
+const PROBE_TIMEOUT_MS = 90_000;
+const EXTRACT_TIMEOUT_MS = 180_000;
 
-export const isAvailable = (): boolean => Boolean(ffmpegPath && fs.existsSync(ffmpegPath));
+export { isAvailable } from "./ffmpegBinary";
 
 const runCapture = (args: string[]): Promise<{ error: ExecFileException | null; stdout: string; stderr: string }> =>
     new Promise((resolve) => {
-        execFile(ffmpegPath as string, args, { encoding: "utf8" }, (error, stdout, stderr) => {
+        execFile(ffmpegPath as string, args, { encoding: "utf8", timeout: PROBE_TIMEOUT_MS }, (error, stdout, stderr) => {
             resolve({ error, stdout, stderr: stderr || "" });
         });
     });
@@ -92,34 +97,49 @@ const extractFramesFFMPEG = (
     const args = ["-y", "-loglevel", "error", "-i", input, "-filter_complex", filterComplex];
     frames.forEach((f, i) => args.push("-map", `[out${i + 1}]`, "-frames:v", "1", f.path));
 
-    execFile(ffmpegPath as string, args, { encoding: "utf8" }, (error) => error ? reject(error) : resolve());
+    execFile(ffmpegPath as string, args, { encoding: "utf8", timeout: EXTRACT_TIMEOUT_MS }, (error) => error ? reject(error) : resolve());
 });
 
 // indexMediaBackground now processes several media items concurrently
-// (ITEM_CONCURRENCY in mediaIndexer.js), and multiple rebuild calls could
-// also overlap, so cap how many video frame-extraction pipelines (each
-// spawning ffmpeg) run at once; extras queue and start as a slot frees up.
-const FRAME_EXTRACTION_CONCURRENCY = 55;
+// (ITEM_CONCURRENCY_CEILING in mediaIndexer.js), and multiple rebuild calls
+// could also overlap, so cap how many video frame-extraction pipelines
+// (each spawning ffmpeg) run at once; extras queue and start as a slot
+// frees up. This is the ceiling free RAM is allowed to pull down from (see
+// resourceLimits.ts) - 55 concurrent ffmpeg processes is the single biggest
+// contributor to the oversubscription this module's timeouts exist to
+// recover from, so this is the cap most worth making memory-aware.
+const FRAME_EXTRACTION_CONCURRENCY_CEILING = 55;
+const resolveFrameExtractionLimit = (): number =>
+    memoryAwareLimit(FRAME_EXTRACTION_CONCURRENCY_CEILING, TASK_MEMORY_ESTIMATE.ffmpegFrameExtraction);
 
-const createSemaphore = (limit: number): Semaphore => {
+// limit is re-read on every acquire/release (rather than fixed at creation)
+// so a run that starts with headroom and eats into it over time throttles
+// down mid-run - a newly queued waiter honors whatever the cap currently is,
+// though anything already dispatched keeps running (this only ever holds
+// back the START of new work, never preempts work in flight).
+const createSemaphore = (resolveLimit: () => number): Semaphore => {
     let active = 0;
     const queue: Array<() => void> = [];
+    const dispatchQueued = (): void => {
+        if (queue.length === 0 || active >= resolveLimit()) return;
+        active++;
+        (queue.shift() as () => void)();
+    };
     const acquire = (): Promise<void> => {
-        if (active < limit) {
+        if (active < resolveLimit()) {
             active++;
             return Promise.resolve();
         }
-        return new Promise<void>(resolve => queue.push(resolve)).then(() => { active++; });
+        return new Promise<void>(resolve => queue.push(resolve));
     };
     const release = (): void => {
         active--;
-        const next = queue.shift();
-        if (next) next();
+        dispatchQueued();
     };
     return { acquire, release };
 };
 
-const frameExtractionLimiter = createSemaphore(FRAME_EXTRACTION_CONCURRENCY);
+const frameExtractionLimiter = createSemaphore(resolveFrameExtractionLimit);
 
 const existingFramesFor = (input: string): VideoFrame[] => FRAME_POSITIONS
     .map(position => ({ position, path: framePathFor(input, position) }))

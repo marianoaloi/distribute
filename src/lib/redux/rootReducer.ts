@@ -3,6 +3,7 @@ import { FolderReduce } from "./slices/folders";
 import rootReducerMedia from "./slices/media/media.reduce";
 import rootReducerDuplicates from "./slices/duplicates/duplicates.reduce";
 import rootReducerDetections from "./slices/detections/detections.reduce";
+import rootReducerPipeline from "./slices/pipeline/pipeline.reduce";
 
 
 
@@ -13,4 +14,5 @@ export const reducer = {
     configuration: ConfigReduce,
     duplicates: rootReducerDuplicates,
     detections: rootReducerDetections,
+    pipeline: rootReducerPipeline,
 }

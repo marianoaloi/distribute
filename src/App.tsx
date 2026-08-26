@@ -7,6 +7,7 @@ import { configurationsSelector } from './lib/redux/slices/configurations';
 import { GridIMGs } from './components/gridImg';
 import { GridDuplicates } from './components/duplicatesGrid';
 import { GridDetections } from './components/objectDetectionGrid';
+import { PipelineStatus } from './components/pipelineStatus';
 
 function App() {
 
@@ -38,6 +39,8 @@ function App() {
 
   return (
     <div className="App" >
+
+      <PipelineStatus />
 
       <header className="App-header">
         {/* <img src={logo} className="App-logo" alt="logo" /> */}

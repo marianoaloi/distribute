@@ -81,6 +81,9 @@ const ipc = {
             'fileProcessed',
             'mediaFramesFound',
             'detectionSizeLoaded',
+            'pipelineProgress',
+            'pipelineFinished',
+            'pipelineRejected',
         ]
     }
 };
