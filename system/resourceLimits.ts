@@ -19,7 +19,22 @@ export const TASK_MEMORY_ESTIMATE = {
     // in a real library, see the LilyC/*.jpg series from that investigation)
     // decodes to ~96MB before it's cropped down to 48x48, plus decoder
     // overhead. Sized for that, not for this app's own tiny thumbnails.
-    pixelHash: 150 * 1024 * 1024,
+    //
+    // That 96MB figure - which this estimate used to be built on, at
+    // 150MB - counts ONLY the final RGBA bitmap, and undercounted the real
+    // peak by ~4.5x. jpeg-js allocates a lot more than the output buffer:
+    // per-component coefficient blocks, the upsampled component planes, and
+    // the RGBA output all coexist at peak, and resize() then allocates its
+    // own destination on top. Measured on the 3744x5616 (21MP)
+    // the_perfect_bride frames from the 2026-08-25 follow-up: process RSS
+    // rises ~717MB for a SINGLE task (worker isolate + Jimp load included).
+    //
+    // Undercounting here is the whole ballgame - it is what let the pool
+    // size itself to 6 with only ~2.5GB free, needing ~4.2GB. The resulting
+    // swap thrash took a decode that runs in 1.5s standalone to 42s, over
+    // twice SOFT_TIMEOUT_MS, so every attempt on every file timed out in
+    // lockstep and 6 perfectly valid images were dropped.
+    pixelHash: 700 * 1024 * 1024,
     // One full ffmpeg child process per concurrent extraction (filter_complex
     // pulling up to 4 frames at once), each with its own decode buffers and
     // process overhead on top.
