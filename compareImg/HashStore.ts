@@ -125,7 +125,46 @@ const createSchema = (database: Database.Database): void => {
     `);
     database.exec("CREATE INDEX IF NOT EXISTS idx_items_duplicated_mediaId ON items_duplicated(mediaId);");
 
+    dropFingerprintsFromOlderAlgorithm(database);
+
     createMediaSchema(database);
+};
+
+// baseMd5/baseGrey are only meaningful against values produced by the SAME
+// fingerprint algorithm: both the exact-match (baseMd5 equality) and the
+// near-match (mean pixel difference vs MEAN_DIFF_THRESHOLD) comparisons
+// assume every row was computed the same way. Mixing generations does not
+// fail loudly - it silently reports wrong duplicates, which is worse.
+//
+// Bump this whenever anything that changes the produced pixels changes:
+// decoder, scale geometry, resampling filter, greyscale formula.
+//   1 - Jimp: full-resolution RGBA decode, bilinear squash to 48x48,
+//       crop to 40x40, Rec.709 greyscale; baseMd5 over the 40x40 RGBA.
+//   2 - ffmpeg (compareImg/pixelHash.ts): scale=48:48:flags=area, crop to
+//       40x40, format=gray; baseMd5 over the 1600 grey bytes.
+// Measured mean difference between 1 and 2 on identical input is ~48,
+// against a match threshold of 3 - so v1 rows are not merely imprecise
+// here, they are noise, and every one of them has to be recomputed.
+const FINGERPRINT_VERSION = 2;
+
+// Clears fingerprints written by an older algorithm so mediaIndexer's
+// "already have this item, skip it" check re-computes them. Deliberately
+// only touches derived data: items rows are rebuilt from the media files on
+// the next index, and items_duplicated is a full snapshot that
+// replaceDuplicateGroups rewrites wholesale, so nothing the user cannot
+// regenerate is lost. media_item survives untouched - linkItemMedia is
+// idempotent, so re-indexing simply re-establishes the same links.
+const dropFingerprintsFromOlderAlgorithm = (database: Database.Database): void => {
+    const stored = database.pragma("user_version", { simple: true }) as number;
+    if (stored === FINGERPRINT_VERSION) return;
+
+    const stale = (database.prepare("SELECT COUNT(*) AS n FROM items").get() as { n: number }).n;
+    if (stale > 0) {
+        console.log(`compareImg: fingerprint algorithm v${stored} -> v${FINGERPRINT_VERSION}, discarding ${stale} stale item fingerprints for re-indexing`);
+        database.exec("DELETE FROM items;");
+        database.exec("DELETE FROM items_duplicated;");
+    }
+    database.pragma(`user_version = ${FINGERPRINT_VERSION}`);
 };
 
 const openDb = (): Database.Database => {

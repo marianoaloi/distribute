@@ -4,7 +4,7 @@ import log from "electron-log/main";
 import { getTmpRoot } from "../DirectorioCache";
 
 // Every module in this app logs with plain console.log/console.error
-// (mediaIndexer.ts, videoFrames.ts, computePool.ts, app.ts, ...) - rather
+// (mediaIndexer.ts, videoFrames.ts, pixelHash.ts, app.ts, ...) - rather
 // than touching each call site, electron-log's documented console-takeover
 // (see its README's "Take over console.log") routes all of those into its
 // own file+console transports for free. Import this module FIRST, before

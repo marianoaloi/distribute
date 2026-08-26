@@ -1,5 +1,5 @@
 import * as compareImgStore from "./HashStore";
-import * as computePool from "./computePool";
+import { pixelHashFor } from "./pixelHash";
 import { extractFrames, FRAME_POSITIONS } from "./videoFrames";
 import { memoryAwareLimit, TASK_MEMORY_ESTIMATE } from "../system/resourceLimits";
 
@@ -29,19 +29,16 @@ const indexUnit = async (
     const existing = compareImgStore.getItem(id);
     if (existing) return;
 
-    // Logged at start, not just on failure: computePool.compute has a
-    // timeout now (see computePool.js), but before this item's own timeout
-    // fires there was previously zero console output for whichever item a
-    // worker was mid-way through - "the pipeline stopped and I can't tell
-    // which file it's stuck on" (see git history around indexRebuildProgress
-    // stalling silently). This line is what makes that file identifiable in
-    // real time instead of only after the fact.
+    // Logged at start, not just on failure: this line is what makes the
+    // file being worked on identifiable in real time rather than only after
+    // the fact (see git history around indexRebuildProgress stalling
+    // silently).
     console.log(`compareImg: hashing ${pixelSourcePath}`);
 
-    // Pixel hashing runs in a worker-thread pool so it doesn't block the
-    // Electron main process/UI and multiple items' hashing runs truly in
-    // parallel across cores.
-    const { baseMd5, grey } = await computePool.compute(pixelSourcePath);
+    // Runs in a short-lived ffmpeg child process, so the decode never
+    // touches the Electron main thread and its memory is the OS's to
+    // reclaim - see pixelHash.ts for why that replaced a worker pool.
+    const { baseMd5, baseGrey } = await pixelHashFor(pixelSourcePath);
 
     const metadata = {
         framePosition: framePosition || "",
@@ -51,7 +48,7 @@ const indexUnit = async (
         // Raw cropped/greyscale pixel buffer, stored so duplicateFinder.js
         // can do a real similarity comparison (mean pixel difference) instead
         // of hash equality - see HashStore.js's baseGrey column.
-        baseGrey: Buffer.from(grey),
+        baseGrey,
     };
 
     compareImgStore.upsertItem({ id, metadata });
@@ -129,9 +126,10 @@ const indexVideo = async (mediaItem: IndexableMediaItem): Promise<void> => {
 // await), so concurrent writes can't interleave; isolates per-item failures
 // so one bad file doesn't stop the batch. This is the ceiling free RAM is
 // allowed to pull down from (see resourceLimits.ts) - each in-flight item
-// mostly delegates its real memory cost downstream to computePool/
-// extractFrames (both separately memory-gated), but still holds its own
-// slice of state while waiting.
+// mostly delegates its real memory cost downstream to extractFrames
+// (separately memory-gated; pixelHash costs a few MB in a short-lived
+// child process and needs no gating), but still holds its own slice of
+// state while waiting.
 const ITEM_CONCURRENCY_CEILING = 6;
 
 // onProgress(processed, total), if given, fires after each media item (image,
@@ -166,7 +164,7 @@ export const indexMediaBackground = async (
 
     // Resolved live for this run rather than once at module load, so a
     // batch kicked off on a loaded machine starts throttled instead of
-    // discovering the hard way (see computePool/videoFrames' timeouts).
+    // discovering the hard way (see videoFrames' timeouts).
     const itemConcurrency = memoryAwareLimit(ITEM_CONCURRENCY_CEILING, TASK_MEMORY_ESTIMATE.indexingItem);
     const workerCount = Math.min(itemConcurrency, mediaItems.length);
     await Promise.all(Array.from({ length: workerCount }, runWorker));

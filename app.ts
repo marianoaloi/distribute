@@ -1,6 +1,6 @@
 // First import, ahead of everything else: patches console.log/console.error
 // (electron-log's documented console takeover) so every module's existing
-// plain console calls - mediaIndexer.ts, videoFrames.ts, computePool.ts,
+// plain console calls - mediaIndexer.ts, videoFrames.ts, pixelHash.ts,
 // this file, etc. - land in tmp/logs/app.log from the moment the process
 // starts, not just from wherever this happened to be required.
 import { redirectToActiveFolder } from "./logging/AppLog";

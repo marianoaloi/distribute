@@ -3,7 +3,7 @@ import path from "path";
 import { execFile, execFileSync, ExecFileException } from "child_process";
 import { getFramesDir, ensureFramesDir } from "./cache";
 import { hashFor } from "../thumbnails/cache";
-import ffmpegStaticPath from "ffmpeg-static";
+import { ffmpegPath } from "./ffmpegBinary";
 import { memoryAwareLimit, TASK_MEMORY_ESTIMATE } from "../system/resourceLimits";
 
 import type { Semaphore, VideoFrame } from "../types/domain";
@@ -24,16 +24,7 @@ type ExecError = ExecFileException & { stderr?: string };
 const PROBE_TIMEOUT_MS = 90_000;
 const EXTRACT_TIMEOUT_MS = 180_000;
 
-let ffmpegPath: string | null = null;
-try {
-    ffmpegPath = ffmpegStaticPath;
-    // the binary cannot be executed from inside the asar archive
-    if (ffmpegPath) ffmpegPath = ffmpegPath.replace("app.asar", "app.asar.unpacked");
-} catch {
-    ffmpegPath = null;
-}
-
-export const isAvailable = (): boolean => Boolean(ffmpegPath && fs.existsSync(ffmpegPath));
+export { isAvailable } from "./ffmpegBinary";
 
 const runCapture = (args: string[]): Promise<{ error: ExecFileException | null; stdout: string; stderr: string }> =>
     new Promise((resolve) => {

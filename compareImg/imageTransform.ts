@@ -94,31 +94,15 @@ const md5sFor = async (input: string | Buffer): Promise<Md5Result> => {
     return { baseMd5, blurMd5 };
 };
 
-export interface PixelsResult {
-    baseMd5: string;
-    grey: Uint8Array;
-}
-
-// baseMd5 (cheap short-circuit for byte-identical crops) plus the raw
-// greyscale pixel buffer itself, so callers can do a real similarity
-// comparison (mean absolute pixel difference) instead of hash equality.
-// MD5 alone can't express "99% the same" - any single differing pixel value
-// produces a totally unrelated hash - which is why the old blur_1..blur_128
-// hash-equality columns could never reliably catch near-duplicate frames
-// (JPEG re-encode noise, resize rounding) without also producing false
-// positives once the blur radius got large enough to flatten unrelated
-// frames to the same value. See scripts/debugCompareVideos.js for the
-// measurements this is based on.
-const pixelsFor = async (input: string | Buffer): Promise<PixelsResult> => {
-    const base = await toBaseImage(input);
-    const baseMd5 = hashBuffer(Buffer.from(base.bitmap.data));
-    const grey = greyscaleChannel(base);
-    return { baseMd5, grey };
-};
-
+// NOTE: pixelsFor() used to live here and was the production entry point for
+// items.baseMd5/baseGrey. It is gone - compareImg/pixelHash.ts produces both
+// via ffmpeg without decoding the full-resolution image, which is ~20x
+// faster and removed the worker pool that existed to survive Jimp's memory
+// cost. What remains in this file is used only by
+// scripts/debugCompareVideos.ts, which renders the intermediate images and
+// so genuinely does want a real decode it can inspect.
 export {
     md5sFor,
-    pixelsFor,
     BLUR_LEVELS,
     // Exposed for debug tooling (scripts/debugCompareVideos.js) so it can
     // render the actual images being hashed, not just the resulting md5s.
