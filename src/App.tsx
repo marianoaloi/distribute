@@ -40,7 +40,6 @@ function App() {
   return (
     <div className="App" >
 
-      <PipelineStatus />
 
       <header className="App-header">
         {/* <img src={logo} className="App-logo" alt="logo" /> */}
@@ -60,6 +59,7 @@ function App() {
       </header>
       {view === 'grid' ? <GridIMGs /> : view === 'duplicates' ? <GridDuplicates /> : <GridDetections />}
 
+      <PipelineStatus />
     </div>
   );
 }

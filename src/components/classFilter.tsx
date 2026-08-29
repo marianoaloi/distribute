@@ -38,6 +38,12 @@ export const ClassFilter = (() => {
     const classNames = useSelector(selectDetectionClassNames)
     const [open, setOpen] = useState(false)
     const [draft, setDraft] = useState<ClassFilterExpr>([])
+    // The filter that was actually live (applied to the grid) at the moment
+    // the dialog opened. "Try" below applies the draft live so it can be seen
+    // against the grid without closing - Cancel has to put THIS back, not just
+    // close the dialog, or a tried-but-uncommitted filter would silently stay
+    // active.
+    const [preTryFilter, setPreTryFilter] = useState<ClassFilterExpr>([])
     const active = normalizeClassFilter(config.classFilter).length > 0
 
     // index.db is per-folder: both the class list the dropdown offers and the
@@ -50,8 +56,15 @@ export const ClassFilter = (() => {
         }
     }, [config.mediaLoading, dispatch])
 
-    const openDialog = () => { setDraft(config.classFilter); setOpen(true) }
-    const closeDialog = () => setOpen(false)
+    const openDialog = () => { setDraft(config.classFilter); setPreTryFilter(config.classFilter); setOpen(true) }
+    // Discards whatever "Try" applied live and restores what was active
+    // before the dialog opened - Cancel must undo Try's preview, not just
+    // close the dialog on top of it.
+    const closeDialog = () => { dispatch(setClassFilter(normalizeClassFilter(preTryFilter))); setOpen(false) }
+    // Applies the draft to the grid immediately, same as Apply, but leaves
+    // the dialog open so groups/terms can keep being edited against the
+    // live result instead of round-tripping open/close/open to see it.
+    const tryFilter = () => dispatch(setClassFilter(normalizeClassFilter(draft)))
 
     const addGroup = () => setDraft(prev => [...prev, [{ className: '', negate: false }]])
 
@@ -166,6 +179,7 @@ export const ClassFilter = (() => {
                     <Button type="button" startIcon={<RestartAlt />} onClick={reset}>Reset</Button>
                     <div style={{ flex: 1 }} />
                     <Button type="button" onClick={closeDialog}>Cancel</Button>
+                    <Button type="button" onClick={tryFilter}>Try</Button>
                     <Button type="submit">Apply</Button>
                 </DialogActions>
             </Dialog>
