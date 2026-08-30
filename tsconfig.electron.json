@@ -25,6 +25,7 @@
     "mediaDb/**/*.ts",
     "objectDetection/**/*.ts",
     "thumbnails/**/*.ts",
+    "undo/**/*.ts",
     "scripts/debugCompareVideos.ts",
     "types/**/*.ts"
   ]

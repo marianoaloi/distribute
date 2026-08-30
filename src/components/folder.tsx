@@ -1,5 +1,5 @@
 import { Add, CallSplit, Delete } from "@mui/icons-material"
-import { selectMedias, SendSelectedFiles, useDispatch, useSelector } from "../lib/redux"
+import { newMoveBatchId, selectMedias, SendSelectedFiles, useDispatch, useSelector } from "../lib/redux"
 import { addFolder, removeFolder, setSplitMoveCheckedFolder, setSplitMoveUncheckedFolder, splitMoveCheckedFolder, splitMoveUncheckedFolder, workFolder } from "../lib/redux/slices/folders"
 import { AddFolder, ButtonDelete, ButtonFolder, FolderGrid } from "./folder.styled"
 import React from "react"
@@ -83,19 +83,24 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
     // item is only marked deleted once app.js's "fileProcessed" event (see
     // electron.action.ts) confirms the physical move actually succeeded.
     const handleSplitMove = () => {
+        // Both halves share one batch id: this is a single user action, so
+        // undoing it must take a single Ctrl+Z rather than one press per half
+        // (see undo/UndoStack.ts).
+        const batchId = newMoveBatchId()
+
         // moveFile (app.js) only acts on items whose payload `checked` is
         // true, so the unchecked group is sent with checked forced true.
         const uncheckedWire = splitScreenMedias
             .filter(m => !m.checked && !m.deleted && !m.imported)
             .map(m => ({ ...m, checked: true }))
         if (uncheckedWire.length > 0) {
-            SendSelectedFiles(uncheckedDestFolder, false, uncheckedWire)
+            SendSelectedFiles(uncheckedDestFolder, false, uncheckedWire, batchId)
         }
 
         const checkedMedias = splitScreenMedias
             .filter(m => m.checked && !m.deleted && !m.imported)
         if (checkedMedias.length > 0) {
-            SendSelectedFiles(checkedDestFolder, false, checkedMedias)
+            SendSelectedFiles(checkedDestFolder, false, checkedMedias, batchId)
         }
 
         handleCloseSplitMove();

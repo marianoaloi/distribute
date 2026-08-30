@@ -72,6 +72,17 @@ const itemsSlice = createSlice({
                 media => media.id === action.payload.id ? { ...media, deleted: true, checked: false } : media
             )
         }),
+        // The reverse, dispatched once the main process has actually renamed
+        // the file back to where it came from (app.ts's performUndo) - so a
+        // file that could not be restored, because someone moved it out from
+        // under the app, stays hidden rather than reappearing as a tile
+        // pointing at nothing.
+        confirmFileUnmoved: (state, action) => ({
+            ...state,
+            medias: state.medias.map(
+                media => media.id === action.payload.id ? { ...media, deleted: false, checked: false } : media
+            )
+        }),
 
         orderByName:(state) => {
             state.medias.sort((a:Media,b:Media) => a.filename.localeCompare(b.filename))
@@ -107,7 +118,7 @@ export const mediasApi = createApi({
 }); 
 
 
-export const { populateArray, updateArrayItem, updateManyArrayItem, confirmFileMoved, addOnceMedia , addListinActualArray, purgeArray ,orderByName, orderBySize, orderBySizeInverted, orderByFolder} = itemsSlice.actions;
+export const { populateArray, updateArrayItem, updateManyArrayItem, confirmFileMoved, confirmFileUnmoved, addOnceMedia , addListinActualArray, purgeArray ,orderByName, orderBySize, orderBySizeInverted, orderByFolder} = itemsSlice.actions;
 export default itemsSlice.reducer;
 
 // Export hooks for usage in functional components, which are

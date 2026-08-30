@@ -35,6 +35,8 @@ const ipc = {
             'getMediaFrames',
             'saveDetectionSize',
             'getDetectionSize',
+            'requestUndo',
+            'setTextEditingActive',
         ],
         // From main to render.
         'receive': ['directoryOpen',
@@ -84,6 +86,9 @@ const ipc = {
             'pipelineProgress',
             'pipelineFinished',
             'pipelineRejected',
+            'fileUnmoved',
+            'undoAvailable',
+            'undoFinished',
         ]
     }
 };

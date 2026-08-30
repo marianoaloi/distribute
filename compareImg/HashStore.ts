@@ -16,14 +16,13 @@ import { createMediaSchema } from "../mediaDb/mediaSchema";
 // whatever columns actually exist on disk from a previous run's config -
 // exactly the "no such column: blur_2" crash this replaced. A fixed schema
 // can't drift.
-const METADATA_COLUMNS = ["framePosition", "framePositionSeconds", "futurePosition", "baseMd5", "baseGrey"] as const;
+const METADATA_COLUMNS = ["framePosition", "framePositionSeconds", "baseMd5", "baseGrey"] as const;
 
 export interface ItemRow {
     id: string;
     framePosition: string;
     /** Frame's timestamp within the source video/GIF, in seconds (fractional). Null for images. */
     framePositionSeconds: number | null;
-    futurePosition: number;
     baseMd5: string | null;
     baseGrey: Buffer | null;
 }
@@ -38,7 +37,6 @@ export interface UpsertItemInput {
     metadata: {
         framePosition: string;
         framePositionSeconds: number | null;
-        futurePosition: number;
         baseMd5: string;
         baseGrey: Buffer;
     };
@@ -71,6 +69,18 @@ const ensureColumn = (database: Database.Database, table: string, name: string, 
     }
 };
 
+// The mirror of ensureColumn, for a column this schema has since dropped.
+// Actually dropping it (rather than leaving it as a dead column) matters
+// because dbImport.ts compares an exported database's `items` layout against
+// the live one - a leftover column here would make every freshly exported
+// database look structurally different from a rebuilt one.
+const dropColumn = (database: Database.Database, table: string, name: string): void => {
+    const columns = database.pragma(`table_info(${table})`) as Array<{ name: string }>;
+    if (columns.some((c) => c.name === name)) {
+        database.exec(`ALTER TABLE ${table} DROP COLUMN ${name}`);
+    }
+};
+
 const createSchema = (database: Database.Database): void => {
     // Item ids are media.contentMd5 concatenated with media.id (plus a
     // _framePosition suffix for video/GIF frames - see mediaIndexer.js), so
@@ -87,13 +97,16 @@ const createSchema = (database: Database.Database): void => {
             id TEXT PRIMARY KEY,
             framePosition TEXT NOT NULL DEFAULT '',
             framePositionSeconds REAL,
-            futurePosition INTEGER NOT NULL DEFAULT -1,
             baseMd5 TEXT,
             baseGrey BLOB
         );
     `);
     ensureColumn(database, "items", "baseGrey", "BLOB");
     ensureColumn(database, "items", "framePositionSeconds", "REAL");
+    // Moved to media.futurePosition (mediaDb/mediaSchema.ts). Here it was a
+    // permanently -1 INTEGER nothing ever read - the destination of a move
+    // belongs to the media that moved, not to a per-frame content fingerprint.
+    dropColumn(database, "items", "futurePosition");
     database.exec("CREATE INDEX IF NOT EXISTS idx_items_baseMd5 ON items(baseMd5);");
 
     // Logical FKs (no declared REFERENCES), same pattern as
@@ -287,10 +300,9 @@ export const getDuplicateGroups = (): string[][] => {
     return [...groups.values()];
 };
 
-// Column names of the live items table, for validating that an imported
-// (exported-elsewhere) database has the identical structure before comparing.
-export const columnNames = (): string[] =>
-    (db!.pragma("table_info(items)") as Array<{ name: string }>).map((c) => c.name);
+// The fingerprint generation this index's baseMd5/baseGrey values were
+// produced by, for dbImport.ts to refuse comparing across generations.
+export const fingerprintVersion = (): number => FINGERPRINT_VERSION;
 
 export const countItems = (): number => (db!.prepare("SELECT COUNT(*) AS n FROM items").get() as { n: number }).n;
 

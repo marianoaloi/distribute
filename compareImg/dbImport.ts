@@ -17,6 +17,11 @@ export type CompareImportedDatabaseResult =
     | { error: string; matches?: undefined }
     | { matches: ImportMatch[]; error?: undefined };
 
+// The `items` columns the comparison query below actually reads. An imported
+// database may carry extra columns (or lack ones the live schema has since
+// added) and still be perfectly comparable, so only these are required.
+const REQUIRED_ITEM_COLUMNS = ["id", "baseMd5", "baseGrey"];
+
 // Compares another folder's exported index database (see HashStore's
 // exportDatabase) against the live index, WITHOUT merging anything into it:
 // the imported db is opened readonly and closed again, and matches are only
@@ -43,9 +48,26 @@ export const compareImportedDatabase = (importedPath: string): CompareImportedDa
         if (importedCols.length === 0) {
             return { error: "Selected file has no 'items' table — not an exported index database" };
         }
-        const sorted = (cols: string[]) => [...cols].sort().join(",");
-        if (sorted(importedCols) !== sorted(compareImgStore.columnNames())) {
-            return { error: "Database structure differs from the actual index (different columns) — import ignored" };
+        // Only the columns this comparison actually reads have to be present.
+        // This used to demand an identical column SET, which made every schema
+        // change retroactively reject every previously exported database -
+        // dropping items.futurePosition would have orphaned all of them.
+        const missing = REQUIRED_ITEM_COLUMNS.filter((c) => !importedCols.includes(c));
+        if (missing.length > 0) {
+            return { error: `Database is missing the column(s) ${missing.join(", ")} — not a usable index database` };
+        }
+        // The check that actually protects correctness: baseGrey buffers are
+        // only comparable against buffers produced by the SAME fingerprint
+        // algorithm. Across generations the mean difference is ~48 against a
+        // match threshold of 3 (see HashStore's FINGERPRINT_VERSION), so a
+        // mismatch here is not "slightly less accurate", it is noise - and it
+        // fails silently as wrong duplicate groups rather than as an error.
+        const importedVersion = imported.pragma("user_version", { simple: true }) as number;
+        if (importedVersion !== compareImgStore.fingerprintVersion()) {
+            return {
+                error: `Database was built with fingerprint algorithm v${importedVersion}, this index uses v${compareImgStore.fingerprintVersion()}`
+                    + " — re-export it from an up-to-date copy of the app",
+            };
         }
 
         const actualRows = compareImgStore.allBaseGreyRows();

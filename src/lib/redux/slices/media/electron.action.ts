@@ -1,4 +1,4 @@
-import { addListinActualArray, addOnceMedia, confirmFileMoved, orderByFolder, orderByName, orderBySize, orderBySizeInverted, populateArray, purgeArray, updateArrayItem } from './media.reduce';
+import { addListinActualArray, addOnceMedia, confirmFileMoved, confirmFileUnmoved, orderByFolder, orderByName, orderBySize, orderBySizeInverted, populateArray, purgeArray, updateArrayItem } from './media.reduce';
 import { example } from './populateExample';
 import { Media } from '../../../../entity/Media';
 import { addFolder } from '../folders';
@@ -6,6 +6,7 @@ import { mediaLoadComplete, mediaLoadStart, zoomIn, zoomOut } from '../configura
 import { setDuplicateGroups, indexRebuildFinished, setIndexRebuildProgress, databaseExportFinished, databaseImportFinished, setMediaFrames } from '../duplicates';
 import { setDetectionResult, mergeDetections, setDetectionProgress, detectingFinished, setModelPath, setDetectionClasses, setDetectionSize } from '../detections';
 import { setPipelineProgress, pipelineFinished, pipelineRejected, PipelineSnapshot } from '../pipeline';
+import { setUndoAvailable, undoFinished, UndoSkipped } from '../undo';
 import { FileDTO } from '../../../../entity/FileDTO';
 
 
@@ -25,7 +26,7 @@ export const ElectronConnection = () => {
 
     return (dispatch: any) => {
         if (ipcRender) {
-            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete', 'onnxModelChosen', 'databaseExported', 'databaseImported', 'detectionClassesLoaded', 'detectionsLoaded', 'fileProcessed', 'mediaFramesFound', 'detectionSizeLoaded', 'pipelineProgress', 'pipelineFinished', 'pipelineRejected'];
+            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete', 'onnxModelChosen', 'databaseExported', 'databaseImported', 'detectionClassesLoaded', 'detectionsLoaded', 'fileProcessed', 'mediaFramesFound', 'detectionSizeLoaded', 'pipelineProgress', 'pipelineFinished', 'pipelineRejected', 'fileUnmoved', 'undoAvailable', 'undoFinished'];
             channels.forEach(ch => ipcRender.removeAllListeners(ch));
 
             ipcRender.on('directoryOpen', (e: any, args: any) => {
@@ -69,6 +70,19 @@ export const ElectronConnection = () => {
                 } else if (!result.success) {
                     console.error("File operation failed for media", result.id, result.error)
                 }
+            })
+            // app.ts's performUndo reports this per file, only after the
+            // rename back to the original path actually succeeded - a file
+            // that could not be restored (someone moved it out from under the
+            // app) never gets one, so its tile stays hidden.
+            ipcRender.on('fileUnmoved', (e: any, result: { id: string }) => {
+                dispatch(confirmFileUnmoved({ id: result.id }))
+            })
+            ipcRender.on('undoAvailable', (e: any, result: { canUndo: boolean, label: string }) => {
+                dispatch(setUndoAvailable(result))
+            })
+            ipcRender.on('undoFinished', (e: any, result: { restored: number, skipped: UndoSkipped[] }) => {
+                dispatch(undoFinished(result))
             })
             ipcRender.on('zoom', (e: any, zoom: number) => {
 
@@ -187,7 +201,15 @@ export const OpenDirectoryRecursive = () => {
     }
 }
 
-export const SendSelectedFiles = (folder: string, onlyCopy: boolean, data: Media[]) => {
+// One id per user action, so the undo stack can group every "process" message
+// that action produced into a single undoable batch - the split move sends two
+// (checked and unchecked halves), and one click has to stay one Ctrl+Z.
+// Callers that make several calls for one action pass the same id to all of
+// them; a caller that omits it gets a fresh one and is undone on its own.
+export const newMoveBatchId = (): string =>
+    `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+export const SendSelectedFiles = (folder: string, onlyCopy: boolean, data: Media[], batchId?: string) => {
 
 
     if (!isElectronApp) {
@@ -198,7 +220,12 @@ export const SendSelectedFiles = (folder: string, onlyCopy: boolean, data: Media
 
 
     if (ipcRender) {
-        ipcRender.send('process', { folder: folder, onlyCopy: onlyCopy, data: data });
+        ipcRender.send('process', {
+            folder: folder,
+            onlyCopy: onlyCopy,
+            data: data,
+            batchId: batchId ?? newMoveBatchId(),
+        });
     }
 
 

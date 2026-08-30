@@ -31,6 +31,7 @@ import * as MediaStore from "./mediaDb/MediaStore";
 import { backfillContentMd5 } from "./mediaDb/backfill";
 import * as pipelineRun from "./pipeline/PipelineRun";
 import * as ThumbnailService from "./thumbnails/ThumbnailService";
+import * as undoStack from "./undo/UndoStack";
 import { framePathFor, frameSetForMedia } from "./compareImg/videoFrames";
 import type { DetectionBox, DetectMediaRef, DetectObjectsPayload, StreamMediaItem } from "./types/domain";
 import { processMediaToDetections } from "./objectDetection/processImages";
@@ -48,6 +49,10 @@ interface ProcessPayload {
     folder: string;
     onlyCopy: boolean;
     data: MoveFileEntry[];
+    // Groups every "process" message produced by ONE user action, so the split
+    // move's two messages undo together - see undo/UndoStack.ts. Optional so a
+    // renderer that never sends one still moves files, it just isn't undoable.
+    batchId?: string;
 }
 
 
@@ -96,6 +101,22 @@ const menuTemplate = (): MenuItemConstructorOptions[] => [
         submenu: [
             { label: 'Load recursive', enabled: !pipelineRun.isRunning(), click: () => { if (!rejectIfBusy()) loadRecursive(); } },
             { label: 'Load super recursive', enabled: !pipelineRun.isRunning(), click: loadSuperRecursive },
+        ]
+    },
+    {
+        label: 'Edit',
+        submenu: [
+            {
+                label: undoStack.undoLabel(),
+                // Registered as a menu accelerator rather than a renderer key
+                // handler so it fires wherever focus happens to be in the grid.
+                // The cost is that it also fires while a text field is focused,
+                // where Ctrl+Z has to mean "undo my typing" instead - hence the
+                // textEditingActive guard in performUndo.
+                accelerator: 'CommandOrControl+Z',
+                enabled: undoStack.canUndo(),
+                click: performUndo,
+            },
         ]
     },
     {
@@ -270,6 +291,7 @@ ipcMain.on("open", () => {
             setActiveFolder(fileGlobal);
             redirectToActiveFolder();
             compareImgStore.closeConnection();
+            resetUndoForNewFolder();
         }
         openfile();
     }).catch(err => {
@@ -281,9 +303,20 @@ ipcMain.on("open", () => {
 
 ipcMain.on("process", async (event: IpcMainEvent, data: ProcessPayload) => {
     if (data) {
-        moveFile(true, data.folder, data.onlyCopy, data.data);
+        moveFile(true, data.folder, data.onlyCopy, data.data, data.batchId);
     }
 });
+
+// Ctrl+Z is a menu accelerator (see menuTemplate), which fires regardless of
+// DOM focus - including while the user is typing in the Add Folder dialog or
+// the page-number box, where it has to keep meaning "undo my typing". The
+// renderer reports focus in/out of a text field so undo can stand down.
+let textEditingActive = false;
+ipcMain.on("setTextEditingActive", (event: IpcMainEvent, active: boolean) => {
+    textEditingActive = !!active;
+});
+
+ipcMain.on("requestUndo", () => { performUndo(); });
 
 // onProgress passthrough lets runSuperExecutionPipeline feed this stage's
 // real per-row progress into pipelineRun's "duplicates" stage - unset (the
@@ -678,6 +711,12 @@ ipcMain.on("importDatabase", () => {
 });
 
 ipcMain.on("verifyOpen", async () => {
+    // The renderer has just (re)connected its listeners - including after a
+    // View > Reload, which wipes its state while the main-process undo stack
+    // deliberately survives. Re-send it, or the reloaded UI would show nothing
+    // to undo while the Edit menu correctly offers it.
+    notifyUndoAvailable();
+
     if (process.env.FixFiles && fs.existsSync(process.env.FixFiles)) {
         fs.readFile(process.env.FixFiles, 'utf8', (err, data) => {
             let files: unknown = data.split("|").filter(filepath => fs.existsSync(filepath));
@@ -701,17 +740,45 @@ ipcMain.on("verifyOpen", async () => {
 // instead of assuming success the moment the button was clicked (a failed
 // move used to silently vanish the item from the grid while the file stayed
 // put in the source folder).
-const reportFileProcessed = (media: MoveFileEntry, onlyCopy: boolean, error?: NodeJS.ErrnoException | Error | null): void => {
+const reportFileProcessed = (
+    media: MoveFileEntry,
+    onlyCopy: boolean,
+    destination: string,
+    dest: string,
+    batchId: string | undefined,
+    error?: NodeJS.ErrnoException | Error | null,
+): void => {
     if (error) console.error(onlyCopy ? "Copy failed for" : "Move failed for", media.path, "-", error);
+
+    // Only a MOVE records where the media now lives: a copy leaves the source
+    // in place, so the media itself never went anywhere. Written here rather
+    // than when the button was clicked, for the same reason the renderer only
+    // hides the tile here - until the rename returns, nothing has moved.
+    if (!error && !onlyCopy) {
+        try {
+            MediaStore.setFuturePosition(media.id, destination, batchId ?? null);
+        } catch (dbError) {
+            // The file HAS moved at this point; failing to record where would
+            // be worth knowing about, but must not turn a successful move into
+            // a reported failure.
+            console.error("Could not record futurePosition for", media.path, "-", dbError);
+        }
+        if (batchId) {
+            undoStack.recordMove(batchId, dest, { mediaId: media.id, from: media.path, to: destination });
+            scheduleUndoUiRefresh();
+        }
+    }
+
     mainWindow!.webContents.send("fileProcessed", {
         id: media.id,
         onlyCopy,
         success: !error,
+        destination: error ? undefined : destination,
         error: error ? error.message : undefined,
     });
 };
 
-const moveFile = (bol: boolean, dest: string, onlyCopy: boolean, data: MoveFileEntry[]): void => {
+const moveFile = (bol: boolean, dest: string, onlyCopy: boolean, data: MoveFileEntry[], batchId?: string): void => {
     if (process.env.FixFiles) {
         console.log("##MOVEFILE", dest, data.filter(f => f.checked === bol).map(f => f.path).join(","));
 
@@ -726,36 +793,109 @@ const moveFile = (bol: boolean, dest: string, onlyCopy: boolean, data: MoveFileE
         if (!fs.existsSync(completeDestine)) {
             fs.mkdirSync(completeDestine);
         }
+        const destination = path.join(completeDestine, path.basename(media.path));
+        const report = (error?: NodeJS.ErrnoException | Error | null) =>
+            reportFileProcessed(media, onlyCopy, destination, dest, batchId, error);
+
         if (!fs.existsSync(media.path)) {
-            reportFileProcessed(media, onlyCopy, new Error("Source file no longer exists"));
+            report(new Error("Source file no longer exists"));
             return;
         }
-        const destination = path.join(completeDestine, path.basename(media.path));
         if (onlyCopy) {
             fs.copyFile(media.path, destination, (err) => {
-                reportFileProcessed(media, onlyCopy, err);
+                report(err);
             });
         } else {
             fs.rename(media.path, destination, (err) => {
-                if (!err) { reportFileProcessed(media, onlyCopy); return; }
+                if (!err) { report(); return; }
                 if (err.code !== "EXDEV") {
-                    reportFileProcessed(media, onlyCopy, err);
+                    report(err);
                     return;
                 }
                 // rename cannot cross volumes: fall back to copy + delete
                 fs.copyFile(media.path, destination, (copyErr) => {
                     if (copyErr) {
-                        reportFileProcessed(media, onlyCopy, copyErr);
+                        report(copyErr);
                         return;
                     }
                     fs.unlink(media.path, (unlinkErr) => {
-                        reportFileProcessed(media, onlyCopy, unlinkErr);
+                        report(unlinkErr);
                     });
                 });
             });
         }
     });
 };
+
+// Reverses the most recent batch of moves. Every restored file clears its
+// media.futurePosition (it is back at localPath again) and un-hides its tile.
+//
+// A file that is no longer where the move put it cannot be undone - if
+// something outside this app moved, renamed or deleted it, there is nothing
+// here to bring back and its original path stays empty. Those are reported,
+// not silently dropped. See undo/UndoStack.ts for the rest of the rules.
+const performUndo = (): void => {
+    if (textEditingActive) return;
+    if (!mainWindow) return;
+
+    const outcome = undoStack.undoLast((entry) => {
+        try {
+            MediaStore.setFuturePosition(entry.mediaId, null, null);
+        } catch (error) {
+            console.error("Could not clear futurePosition for", entry.from, "-", error);
+        }
+        mainWindow!.webContents.send("fileUnmoved", { id: entry.mediaId });
+    });
+
+    updateMenu();
+    if (!outcome) return;
+
+    if (outcome.skipped.length > 0) {
+        console.error(`Undo could not restore ${outcome.skipped.length} file(s):`);
+        outcome.skipped.forEach(s => console.error(`  ${s.to} -> ${s.from}: ${s.reason}`));
+    }
+    mainWindow.webContents.send("undoFinished", {
+        restored: outcome.restored,
+        skipped: outcome.skipped.map(s => ({ path: s.to, reason: s.reason })),
+    });
+    notifyUndoAvailable();
+};
+
+// Keeps the renderer's copy of "is there anything to undo, and what is it"
+// in step with the main-process stack, for any in-app affordance beyond the
+// menu item itself.
+const notifyUndoAvailable = (): void => {
+    if (!mainWindow) return;
+    mainWindow.webContents.send("undoAvailable", {
+        canUndo: undoStack.canUndo(),
+        label: undoStack.undoLabel(),
+    });
+};
+
+// A move reports one file at a time, and the undo label only ever changes by
+// its count - rebuilding the whole application menu per file would mean
+// hundreds of Menu.setApplicationMenu calls for one click. Collapsing the
+// burst into a single refresh costs at most one frame of staleness on a
+// menu the user cannot be reading mid-move anyway.
+let undoUiRefreshPending: NodeJS.Timeout | null = null;
+const scheduleUndoUiRefresh = (): void => {
+    if (undoUiRefreshPending) return;
+    undoUiRefreshPending = setTimeout(() => {
+        undoUiRefreshPending = null;
+        updateMenu();
+        notifyUndoAvailable();
+    }, 100);
+};
+
+// Entries name media ids and paths from the folder that was open when they
+// were recorded, so they stop meaning anything the moment a different folder
+// is loaded.
+const resetUndoForNewFolder = (): void => {
+    undoStack.clear();
+    updateMenu();
+    notifyUndoAvailable();
+};
+
 const openfile = (): void => {
     mainWindow!.title = `Get Images in ${fileGlobal}`;
 
@@ -843,6 +983,7 @@ const loadRecursive = async (): Promise<void> => {
             redirectToActiveFolder();
             fileGlobal = file.filePaths[0]; // path.join(file.filePaths[0], "tmp");
             compareImgStore.closeConnection();
+            resetUndoForNewFolder();
 
 
             mainWindow!.webContents.send("cleanGrid");

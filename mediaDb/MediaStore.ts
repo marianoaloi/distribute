@@ -9,7 +9,7 @@ export const ensureReady = (): void => HashStore.ensureReady();
 
 const MEDIA_COLUMNS = ["localPath", "filename", "mime", "kind", "size", "mtimeMs", "contentMd5", "hasAudio", "thumbPath", "updatedAt"] as const;
 
-const MEDIA_SELECT_COLUMNS = "id, localPath, contentMd5, size, mtimeMs, hasAudio, thumbPath , mime, kind";
+const MEDIA_SELECT_COLUMNS = "id, localPath, contentMd5, size, mtimeMs, hasAudio, thumbPath , mime, kind, futurePosition";
 
 // Callers (util.js's transformDataStreaming) re-upsert every media row on
 // every folder load without knowing the backfilled contentMd5, so a plain
@@ -52,6 +52,18 @@ export const setContentMd5 = (id: string, contentMd5: string): void => {
 export const setThumbPath = (id: string, thumbPath: string): void => {
     const db = HashStore.getDb();
     db.prepare("UPDATE media SET thumbPath = ?, updatedAt = ? WHERE id = ?").run(thumbPath, Date.now(), id);
+};
+
+// Records where a media ended up after a successful move, or clears it back to
+// null when that move is undone. Deliberately NOT part of MEDIA_COLUMNS above:
+// transformDataStreaming re-upserts every row on every folder load without
+// knowing this value, so an `ON CONFLICT ... futurePosition = excluded.x`
+// assignment would wipe it on the very next open - the same trap the
+// contentMd5 CASE exists to avoid.
+export const setFuturePosition = (id: string, futurePosition: string | null, moveBatchId: string | null): void => {
+    const db = HashStore.getDb();
+    db.prepare("UPDATE media SET futurePosition = ?, movedAt = ?, moveBatchId = ?, updatedAt = ? WHERE id = ?")
+        .run(futurePosition, futurePosition ? Date.now() : null, futurePosition ? moveBatchId : null, Date.now(), id);
 };
 
 // SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 999, so ids are looked up in
