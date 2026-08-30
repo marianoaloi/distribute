@@ -92,11 +92,20 @@ export const GridDuplicates = (() => {
 
     const [open, setOpen] = useState(false);
     const [lastZoom, setLastZoom] = useState<Media>();
+    const [openedIds, setOpenedIds] = useState<Set<string>>(new Set());
     const handleOpenPreview = (media: Media) => {
         setLastZoom(media)
         setOpen(true)
     };
     const handleClose = () => setOpen(false);
+
+    // Marks every media the zoom modal ever lands on - including ones reached
+    // via next/prev navigation, not just the initial click - so the "already
+    // opened" red star persists after the user moves on to another item.
+    useEffect(() => {
+        if (!lastZoom) return;
+        setOpenedIds(prev => prev.has(lastZoom.id) ? prev : new Set(prev).add(lastZoom.id))
+    }, [lastZoom])
 
     const [lastClick, setLastClick] = useState<Media>()
     const lastClickedEvent = ($eventClick: Media) => { setLastClick($eventClick) }
@@ -303,6 +312,7 @@ export const GridDuplicates = (() => {
                                             shiftControlSelect={shiftControlSelect}
                                             handleOpenPreview={handleOpenPreview}
                                             isLastSeen={lastZoom?.id === media.id}
+                                            isOpened={openedIds.has(media.id)}
                                         />
                                         : <MediaIMG key={media.id} media={media}
                                             lastClickedEvent={lastClickedEvent}
@@ -310,6 +320,7 @@ export const GridDuplicates = (() => {
                                             shiftControlSelect={shiftControlSelect}
                                             handleOpenPreview={handleOpenPreview}
                                             isLastSeen={lastZoom?.id === media.id}
+                                            isOpened={openedIds.has(media.id)}
                                         />
                                     return media.imported
                                         ? <ImportedMediaWrap key={media.id}>{tile}</ImportedMediaWrap>

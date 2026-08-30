@@ -81,6 +81,15 @@ export const GridIMGs = (() => {
 
     const [lastClick, setLastClick] = useState<Media>()
     const [lastZoom, setLastZoom] = useState<Media>()
+    const [openedIds, setOpenedIds] = useState<Set<string>>(new Set())
+
+    // Marks every media the zoom modal ever lands on - including ones reached
+    // via next/prev navigation, not just the initial click - so the "already
+    // opened" red star persists after the user moves on to another item.
+    useEffect(() => {
+        if (!lastZoom) return;
+        setOpenedIds(prev => prev.has(lastZoom.id) ? prev : new Set(prev).add(lastZoom.id))
+    }, [lastZoom])
 
     const lastClickedEvent = ($eventClick: Media) => { setLastClick($eventClick) }
     const shiftSelect = ($eventClick: Media) => { processSelection($eventClick, true) }
@@ -389,6 +398,7 @@ export const GridIMGs = (() => {
                         shiftControlSelect={shiftControlSelect}
                         handleOpenPreview={handleOpenPreview}
                         isLastSeen={lastZoom?.id === media.id}
+                        isOpened={openedIds.has(media.id)}
                     />)
                     : <NoMediaFound>No Media</NoMediaFound>
                 }
