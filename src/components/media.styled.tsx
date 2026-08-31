@@ -47,8 +47,8 @@ export const PreviewMedia = styled.div<{ isVideo?: boolean , hasSound?: boolean,
 
 `)
 
-export const LastSeenStar = styled.div`
-  color: white;
+export const LastSeenStar = styled.div<{ opened?: boolean }>((props: any) => `
+  color: ${props.opened ? "red" : "white"};
   -webkit-text-stroke: 1px black;
   font-size: 20px;
   height: 20px;
@@ -60,4 +60,4 @@ export const LastSeenStar = styled.div`
   text-align: center;
   top: 65px;
   width: 20px;
-`
+`)

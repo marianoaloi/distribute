@@ -12,12 +12,14 @@ type TheMediaProps = {
     shiftControlSelect: any
     handleOpenPreview: any
     isLastSeen?: boolean
+    isOpened?: boolean
 }
 export const MediaIMG: React.FC<TheMediaProps> = ({ media, lastClickedEvent,
     shiftSelect,
     shiftControlSelect
     , handleOpenPreview
-    , isLastSeen }) => {
+    , isLastSeen
+    , isOpened }) => {
 
     const dispatch = useDispatch();
 
@@ -61,7 +63,7 @@ export const MediaIMG: React.FC<TheMediaProps> = ({ media, lastClickedEvent,
         <PreviewMedia onClick={openPreview} isGif={media.mime.includes('gif')} isVideo={media.mime.includes('video')} hasSound={media.hasAudio}>
             {media.mime.includes('gif') ? "G" : media.mime.includes('video') ? "V" : "F"}
         </PreviewMedia>
-        {isLastSeen && <LastSeenStar>★</LastSeenStar>}
+        {(isLastSeen || isOpened) && <LastSeenStar opened={!isLastSeen && isOpened}>★</LastSeenStar>}
     </ThePhoto>
 
 }

@@ -10,6 +10,9 @@ import {
     selectPipelineRejectedMessage,
     selectPipelineRunning,
     selectPipelineStage,
+    dismissUndoResult,
+    selectUndoLastRestored,
+    selectUndoLastSkipped,
     useSelector,
 } from "../lib/redux"
 import { EtaGroup, LiveDot, PipelineBar, PipelineTopRow, StageCounter, StageLabel } from "./pipelineStatus.styled"
@@ -42,6 +45,8 @@ export const PipelineStatus = (() => {
     const etaOverallMs = useSelector(selectPipelineEtaOverallMs)
     const error = useSelector(selectPipelineError)
     const rejectedMessage = useSelector(selectPipelineRejectedMessage)
+    const undoRestored = useSelector(selectUndoLastRestored)
+    const undoSkipped = useSelector(selectUndoLastSkipped)
 
     return (
         <>
@@ -75,6 +80,19 @@ export const PipelineStatus = (() => {
             <Snackbar open={!running && !!error} autoHideDuration={8000} onClose={() => dispatch(dismissPipelineError())}>
                 <Alert onClose={() => dispatch(dismissPipelineError())} severity="error" variant="filled">
                     {kind ? `${kind} failed: ${error}` : error}
+                </Alert>
+            </Snackbar>
+
+            {/* An undo that could not put every file back has to say so: a file
+                someone moved out of its destination outside this app cannot be
+                restored, and silently coming up short would leave the user
+                believing the move was reversed when it was not. */}
+            <Snackbar open={undoRestored !== null} autoHideDuration={undoSkipped.length > 0 ? 10000 : 4000}
+                onClose={() => dispatch(dismissUndoResult())}>
+                <Alert onClose={() => dispatch(dismissUndoResult())} variant="filled"
+                    severity={undoSkipped.length > 0 ? "warning" : "success"}>
+                    {`Undo restored ${undoRestored} file${undoRestored === 1 ? "" : "s"}`}
+                    {undoSkipped.length > 0 && ` — ${undoSkipped.length} could not be put back (${undoSkipped[0].reason})`}
                 </Alert>
             </Snackbar>
         </>

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { IconButton } from '@mui/material';
 import { GridView, Difference, Radar } from '@mui/icons-material';
 import './App.css';
-import { ElectronConnection, selectMedias, useDispatch, useSelector } from './lib/redux';
+import { ElectronConnection, selectMedias, SetTextEditingActive, useDispatch, useSelector } from './lib/redux';
 import { configurationsSelector } from './lib/redux/slices/configurations';
 import { GridIMGs } from './components/gridImg';
 import { GridDuplicates } from './components/duplicatesGrid';
@@ -32,6 +32,38 @@ function App() {
     if (!itemsReady && view !== 'grid') setView('grid');
   }, [itemsReady, view])
 
+  // Undo is an Electron menu accelerator (Ctrl+Z), which fires regardless of
+  // where DOM focus is - so inside a text field it would undo a file move
+  // instead of the user's typing. One delegated pair of focus listeners covers
+  // every input in the app (the Add Folder dialog, the page-number box, any
+  // future one) rather than each having to remember to opt in. focusin/focusout
+  // bubble, unlike focus/blur.
+  useEffect(() => {
+    // Only inputs that actually hold editable text count. The grid's
+    // selection checkboxes are <input> too, and they take focus on every
+    // click - treating those as text entry would leave undo permanently
+    // disabled after the first tile the user ticks.
+    const TEXT_INPUT_TYPES = ['text', 'search', 'url', 'tel', 'email', 'password', 'number', 'folder'];
+    const isTextEntry = (target: EventTarget | null): boolean => {
+      const el = target as HTMLElement | null;
+      if (!el || !el.tagName) return false;
+      if (el.tagName === 'TEXTAREA' || el.isContentEditable) return true;
+      if (el.tagName !== 'INPUT') return false;
+      // An <input> with no type attribute is a text field.
+      const type = ((el as HTMLInputElement).getAttribute('type') || 'text').toLowerCase();
+      return TEXT_INPUT_TYPES.includes(type);
+    };
+    const onFocusIn = (ev: FocusEvent) => { if (isTextEntry(ev.target)) SetTextEditingActive(true) };
+    const onFocusOut = (ev: FocusEvent) => { if (isTextEntry(ev.target)) SetTextEditingActive(false) };
+    document.addEventListener('focusin', onFocusIn);
+    document.addEventListener('focusout', onFocusOut);
+    return () => {
+      document.removeEventListener('focusin', onFocusIn);
+      document.removeEventListener('focusout', onFocusOut);
+      SetTextEditingActive(false);
+    };
+  }, [])
+
 
 
 
@@ -40,7 +72,6 @@ function App() {
   return (
     <div className="App" >
 
-      <PipelineStatus />
 
       <header className="App-header">
         {/* <img src={logo} className="App-logo" alt="logo" /> */}
@@ -60,6 +91,7 @@ function App() {
       </header>
       {view === 'grid' ? <GridIMGs /> : view === 'duplicates' ? <GridDuplicates /> : <GridDetections />}
 
+      <PipelineStatus />
     </div>
   );
 }

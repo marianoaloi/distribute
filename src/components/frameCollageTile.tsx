@@ -14,6 +14,7 @@ type FrameCollageTileProps = {
     shiftControlSelect: any
     handleOpenPreview: any
     isLastSeen?: boolean
+    isOpened?: boolean
 }
 
 // Duplicates grid's thumbnail for a video/GIF whose 4 frames (start10s,
@@ -26,7 +27,8 @@ export const FrameCollageTile: React.FC<FrameCollageTileProps> = ({ media, frame
     shiftSelect,
     shiftControlSelect,
     handleOpenPreview,
-    isLastSeen }) => {
+    isLastSeen,
+    isOpened }) => {
 
     const dispatch = useDispatch();
     const config = useSelector(configurationsSelector)
@@ -65,6 +67,6 @@ export const FrameCollageTile: React.FC<FrameCollageTileProps> = ({ media, frame
         <PreviewMedia onClick={openPreview} isGif={media.mime.includes('gif')} isVideo={media.mime.includes('video')} hasSound={media.hasAudio}>
             {media.mime.includes('gif') ? "G" : "V"}
         </PreviewMedia>
-        {isLastSeen && <LastSeenStar>★</LastSeenStar>}
+        {(isLastSeen || isOpened) && <LastSeenStar opened={!isLastSeen && isOpened}>★</LastSeenStar>}
     </ThePhoto>
 }

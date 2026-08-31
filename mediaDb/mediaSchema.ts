@@ -11,23 +11,48 @@ const ensureColumn = (database: Database.Database, table: string, name: string, 
 };
 
 export const createMediaSchema = (database: Database.Database): void => {
+    // futurePosition is where the file ended up after the user filed it into a
+    // destination folder - the absolute path it was MOVED to, written only once
+    // the rename actually succeeded on disk (app.ts's reportFileProcessed).
+    // It lived on compareImg's `items` table before, as a permanently -1
+    // INTEGER that nothing ever read: a "final location" is a path, and it
+    // belongs to the media (the thing that moves), not to an item (a
+    // content fingerprint of one frame, which several media can share).
+    //
+    // The pair with localPath is the invariant everything else relies on:
+    //   futurePosition IS NULL     -> the file is at localPath
+    //   futurePosition IS NOT NULL -> the file is at futurePosition,
+    //                                 and came from localPath
+    // localPath is deliberately never rewritten by a move, so the origin
+    // survives to be moved back to. movedAt/moveBatchId record when, and as
+    // part of which single user action (one click can move two groups - see
+    // folder.tsx's split move), purely so a future "revert that batch" can be
+    // a plain query; the live undo stack is in-memory (undo/UndoStack.ts).
     database.exec(`
         CREATE TABLE IF NOT EXISTS media (
-            id          TEXT PRIMARY KEY,
-            localPath   TEXT NOT NULL,
-            filename    TEXT NOT NULL,
-            mime        TEXT,
-            kind        TEXT NOT NULL,
-            size        INTEGER NOT NULL DEFAULT 0,
-            mtimeMs     REAL    NOT NULL DEFAULT 0,
-            contentMd5  TEXT,
-            hasAudio    INTEGER NOT NULL DEFAULT 0,
-            thumbPath   TEXT,
-            updatedAt   INTEGER NOT NULL DEFAULT 0
+            id             TEXT PRIMARY KEY,
+            localPath      TEXT NOT NULL,
+            filename       TEXT NOT NULL,
+            mime           TEXT,
+            kind           TEXT NOT NULL,
+            size           INTEGER NOT NULL DEFAULT 0,
+            mtimeMs        REAL    NOT NULL DEFAULT 0,
+            contentMd5     TEXT,
+            hasAudio       INTEGER NOT NULL DEFAULT 0,
+            thumbPath      TEXT,
+            futurePosition TEXT,
+            movedAt        INTEGER,
+            moveBatchId    TEXT,
+            updatedAt      INTEGER NOT NULL DEFAULT 0
         );
     `);
     database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_media_localPath ON media(localPath);");
     database.exec("CREATE INDEX IF NOT EXISTS idx_media_contentMd5 ON media(contentMd5);");
+    // CREATE TABLE IF NOT EXISTS is a no-op on a table that predates these
+    // three columns, so an existing index.db only picks them up here.
+    ensureColumn(database, "media", "futurePosition", "TEXT");
+    ensureColumn(database, "media", "movedAt", "INTEGER");
+    ensureColumn(database, "media", "moveBatchId", "TEXT");
 
     database.exec(`
         CREATE TABLE IF NOT EXISTS detection_class (

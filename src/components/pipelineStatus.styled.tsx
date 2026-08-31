@@ -7,11 +7,11 @@ const pulse = keyframes`
 `;
 
 export const PipelineBar = styled.div`
-    position: sticky;
-    top: 0px;
+    position: absolute;
+    bottom: 0px;
     left: 0px;
     right: 0px;
-    width: 100%;
+    width: calc(100% - 130px);
     box-sizing: border-box;
     background: rgba(20, 24, 32, 0.97);
     backdrop-filter: blur(8px);
@@ -20,7 +20,7 @@ export const PipelineBar = styled.div`
     flex-direction: column;
     padding: 6px 16px 8px;
     gap: 4px;
-    z-index: 10;
+    z-index: 11;
     color: #e0e0e0;
 `
 

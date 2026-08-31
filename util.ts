@@ -164,6 +164,7 @@ export const transformDataStreaming = async (
     extraFields: Partial<StreamMediaItem> = {},
 ): Promise<void> => {
     const allPaths = folderOpened ? data.map(item => path.join(folderOpened, item)) : data;
+    console.log("transformDataStreaming: processing", allPaths.length, "items in", folderOpened || "absolute paths");
 
     // Batched indexed lookup against the media table so a video/gif whose
     // thumbnail is already cached can skip the slow per-item ffmpeg loop in
@@ -178,16 +179,17 @@ export const transformDataStreaming = async (
                 map.set(row.id, row);
                 return map;
             }, new Map<string, MediaRow>());
+
+        for (let i = 0; i < allPaths.length; i += PATH_SLICE_SIZE) {
+            console.log("transformDataStreaming: processing slice", i / PATH_SLICE_SIZE + 1 , "of", Math.ceil(allPaths.length / PATH_SLICE_SIZE));
+            await processPathsSlice(allPaths.slice(i, i + PATH_SLICE_SIZE), cached, onReadyGo, extraFields);
+        }
     } catch (error) {
         console.error("transformDataStreaming: media DB lookup failed, falling back to slow path:", (error as Error).message);
         cached = new Map();
+    } finally {
+        if (onDone) onDone();
     }
-
-    for (let i = 0; i < allPaths.length; i += PATH_SLICE_SIZE) {
-        await processPathsSlice(allPaths.slice(i, i + PATH_SLICE_SIZE), cached, onReadyGo, extraFields);
-    }
-
-    if (onDone) onDone();
 
     // Never blocks the load path: content hashing happens off to the side so
     // subsequent loads can read the memoised contentMd5 instead of touching

@@ -4,6 +4,7 @@ import rootReducerMedia from "./slices/media/media.reduce";
 import rootReducerDuplicates from "./slices/duplicates/duplicates.reduce";
 import rootReducerDetections from "./slices/detections/detections.reduce";
 import rootReducerPipeline from "./slices/pipeline/pipeline.reduce";
+import rootReducerUndo from "./slices/undo/undo.reduce";
 
 
 
@@ -15,4 +16,5 @@ export const reducer = {
     duplicates: rootReducerDuplicates,
     detections: rootReducerDetections,
     pipeline: rootReducerPipeline,
+    undo: rootReducerUndo,
 }

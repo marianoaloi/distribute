@@ -16,6 +16,13 @@ export interface MediaRow {
     thumbPath: string | null;
     mime: string | null;
     kind: MediaKind;
+    /**
+     * Absolute path the file was MOVED to once the move succeeded on disk,
+     * or null while it still sits at localPath. localPath always stays the
+     * origin, so the two together say where the file is now and where it came
+     * from - see mediaDb/mediaSchema.ts.
+     */
+    futurePosition: string | null;
 }
 
 /** Input to MediaStore.upsertMedia - one media file's metadata. */

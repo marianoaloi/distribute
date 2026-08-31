@@ -43,7 +43,6 @@ const indexUnit = async (
     const metadata = {
         framePosition: framePosition || "",
         framePositionSeconds,
-        futurePosition: -1,
         baseMd5,
         // Raw cropped/greyscale pixel buffer, stored so duplicateFinder.js
         // can do a real similarity comparison (mean pixel difference) instead

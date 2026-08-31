@@ -3,7 +3,7 @@ import { useDispatch } from "react-redux"
 import { IconButton, CircularProgress, LinearProgress } from "@mui/material"
 import { ImageSearch, RestartAlt, FolderOpen, FolderCopyTwoTone, VolumeOff, FileDownload, FileUpload, RadioButtonChecked, RadioButtonUnchecked } from "@mui/icons-material"
 import { Media } from "../entity/Media"
-import { ExportDatabase, FindIndexDuplicates, GetDuplicateGroups, GetMediaFrames, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMediaFrames, selectMedias, selectPipelineRunning, updateManyArrayItem, useSelector } from "../lib/redux"
+import { ExportDatabase, FindIndexDuplicates, GetDuplicateGroups, GetMediaFrames, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDetections, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMediaFrames, selectMedias, selectPipelineRunning, updateManyArrayItem, useSelector } from "../lib/redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { MediaIMG } from "./media"
 import { FrameCollageTile } from "./frameCollageTile"
@@ -11,6 +11,7 @@ import ModalZoom from "./modalZoom"
 import { CounterImgIndex, DuplicateGroupCard, DuplicateGroupRow, DuplicatesList, DuplicatesResume, EmptyState, GroupLabel, ImportedMediaWrap, RebuildIndexInfo } from "./duplicatesGrid.styled"
 import { Folders } from "./folder"
 import { MediaTypeFilter, matchesMediaType } from "./mediaTypeFilter"
+import { ClassFilter, matchesClassFilter, normalizeClassFilter } from "./classFilter"
 
 export const GridDuplicates = (() => {
 
@@ -19,6 +20,8 @@ export const GridDuplicates = (() => {
     const config = useSelector(configurationsSelector)
     const medias = useSelector(selectMedias).filter(m => !m.deleted)
         .filter(m => matchesMediaType(m.mime, config.mediaType))
+    const detections = useSelector(selectDetections)
+    const classFilterGroups = normalizeClassFilter(config.classFilter)
     const groupIds = useSelector(selectDuplicateGroups)
     const indexRebuilding = useSelector(selectIndexRebuilding)
     const indexRebuildError = useSelector(selectIndexRebuildError)
@@ -49,6 +52,19 @@ export const GridDuplicates = (() => {
     const groups: Media[][] = groupIds
         .map(ids => ids.map(id => mediaById.get(id)).filter((m): m is Media => !!m))
         .filter(group => group.length > 1)
+        // Class filter applies to the GROUP, not to each member: keep the whole
+        // group when ANY member matches. gridImg can filter media individually
+        // because there each tile stands alone, but here a group only means
+        // anything intact - dropping members would collapse a 2-file group to
+        // one and then hide it entirely at the length > 1 check above, so a
+        // real duplicate would disappear rather than be filtered.
+        //
+        // Members legitimately differ in their detections even though the
+        // pixels match: detection may simply not have been run on one copy
+        // yet, and imported items (another folder's exported DB) have no local
+        // detections at all. Per-member filtering would silently drop exactly
+        // the cross-folder matches the import feature exists to surface.
+        .filter(group => group.some(m => matchesClassFilter(detections[m.id]?.classes, classFilterGroups)))
         .map(group => [...group].sort((a, b) => b.size - a.size))
         .map(group => group.map(m => ({ ...m, screenIndex: counterIndex++ })))
 
@@ -76,11 +92,20 @@ export const GridDuplicates = (() => {
 
     const [open, setOpen] = useState(false);
     const [lastZoom, setLastZoom] = useState<Media>();
+    const [openedIds, setOpenedIds] = useState<Set<string>>(new Set());
     const handleOpenPreview = (media: Media) => {
         setLastZoom(media)
         setOpen(true)
     };
     const handleClose = () => setOpen(false);
+
+    // Marks every media the zoom modal ever lands on - including ones reached
+    // via next/prev navigation, not just the initial click - so the "already
+    // opened" red star persists after the user moves on to another item.
+    useEffect(() => {
+        if (!lastZoom) return;
+        setOpenedIds(prev => prev.has(lastZoom.id) ? prev : new Set(prev).add(lastZoom.id))
+    }, [lastZoom])
 
     const [lastClick, setLastClick] = useState<Media>()
     const lastClickedEvent = ($eventClick: Media) => { setLastClick($eventClick) }
@@ -287,6 +312,7 @@ export const GridDuplicates = (() => {
                                             shiftControlSelect={shiftControlSelect}
                                             handleOpenPreview={handleOpenPreview}
                                             isLastSeen={lastZoom?.id === media.id}
+                                            isOpened={openedIds.has(media.id)}
                                         />
                                         : <MediaIMG key={media.id} media={media}
                                             lastClickedEvent={lastClickedEvent}
@@ -294,6 +320,7 @@ export const GridDuplicates = (() => {
                                             shiftControlSelect={shiftControlSelect}
                                             handleOpenPreview={handleOpenPreview}
                                             isLastSeen={lastZoom?.id === media.id}
+                                            isOpened={openedIds.has(media.id)}
                                         />
                                     return media.imported
                                         ? <ImportedMediaWrap key={media.id}>{tile}</ImportedMediaWrap>
@@ -307,6 +334,7 @@ export const GridDuplicates = (() => {
             }
 
             <MediaTypeFilter />
+            <ClassFilter />
 
             {lastZoom &&
                 <ModalZoom mediaWithPreview={lastZoom} handleExternalClose={handleClose} openModal={open} ref={modalZoomRefMethods}
