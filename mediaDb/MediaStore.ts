@@ -2,7 +2,7 @@ import * as HashStore from "../compareImg/HashStore";
 import fs from "fs";
 import path from "path";
 
-import type { MediaRow, UpsertMediaInput, MediaMissingMd5Row, DetectionBox, DetectionRow, DetectMediaRef, ItemDetectionState } from "../types/domain";
+import type { MediaRow, UpsertMediaInput, MediaMissingMd5Row, MediaAwaitingSortRow, DetectionBox, DetectionRow, DetectMediaRef, ItemDetectionState } from "../types/domain";
 import { getCacheDir } from "../thumbnails/cache";
 
 export const ensureReady = (): void => HashStore.ensureReady();
@@ -64,6 +64,20 @@ export const setFuturePosition = (id: string, futurePosition: string | null, mov
     const db = HashStore.getDb();
     db.prepare("UPDATE media SET futurePosition = ?, movedAt = ?, moveBatchId = ?, updatedAt = ? WHERE id = ?")
         .run(futurePosition, futurePosition ? Date.now() : null, futurePosition ? moveBatchId : null, Date.now(), id);
+};
+
+// Every media that has been filed into a destination folder and is still
+// there, for organize/sortMediaByKind.ts to send back into per-kind folders.
+// Deliberately its own narrow row shape rather than widening the shared
+// MediaRow: this is the only caller that needs filename and hasAudio together,
+// and MediaRow is selected on much hotter paths.
+export const findMediaWithFuturePosition = (): MediaAwaitingSortRow[] => {
+    const db = HashStore.getDb();
+    return db.prepare(`
+        SELECT id, localPath, filename, kind, hasAudio, futurePosition
+        FROM media
+        WHERE futurePosition IS NOT NULL
+    `).all() as MediaAwaitingSortRow[];
 };
 
 // SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 999, so ids are looked up in

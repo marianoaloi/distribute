@@ -31,6 +31,13 @@ export const MediaPresentation = styled.div`
     transform: translate(-50%, -50%);
     overflow: auto;
 
+    span {
+        color: black;
+        -webkit-text-stroke: 2px white;
+        paint-order: stroke fill;
+        font-weight: bolder;
+    }
+
 `
 
 export const VideoPresentation = styled.video`

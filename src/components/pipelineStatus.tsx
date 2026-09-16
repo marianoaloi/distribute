@@ -11,6 +11,8 @@ import {
     selectPipelineRunning,
     selectPipelineStage,
     dismissUndoResult,
+    dismissSortResult,
+    selectSortResult,
     selectUndoLastRestored,
     selectUndoLastSkipped,
     useSelector,
@@ -47,6 +49,13 @@ export const PipelineStatus = (() => {
     const rejectedMessage = useSelector(selectPipelineRejectedMessage)
     const undoRestored = useSelector(selectUndoLastRestored)
     const undoSkipped = useSelector(selectUndoLastSkipped)
+    const sortResult = useSelector(selectSortResult)
+
+    // Everything the sort could not move, so a run that quietly did less than
+    // expected still says why rather than just reporting a smaller number.
+    const sortUnhandled = sortResult
+        ? sortResult.missing + sortResult.blocked + sortResult.failed.length
+        : 0
 
     return (
         <>
@@ -93,6 +102,23 @@ export const PipelineStatus = (() => {
                     severity={undoSkipped.length > 0 ? "warning" : "success"}>
                     {`Undo restored ${undoRestored} file${undoRestored === 1 ? "" : "s"}`}
                     {undoSkipped.length > 0 && ` — ${undoSkipped.length} could not be put back (${undoSkipped[0].reason})`}
+                </Alert>
+            </Snackbar>
+
+            {/* Result of sending filed media back into per-kind folders. The
+                counts that are not "moved" matter most: they are the files the
+                run deliberately left alone. */}
+            <Snackbar open={sortResult !== null} autoHideDuration={sortUnhandled > 0 ? 10000 : 5000}
+                onClose={() => dispatch(dismissSortResult())}>
+                <Alert onClose={() => dispatch(dismissSortResult())} variant="filled"
+                    severity={sortResult && sortResult.failed.length > 0 ? "warning" : "success"}>
+                    {sortResult && <>
+                        {`Sorted ${sortResult.moved} file${sortResult.moved === 1 ? "" : "s"} into kind folders`}
+                        {sortResult.alreadyInPlace > 0 && ` · ${sortResult.alreadyInPlace} already in place`}
+                        {sortResult.missing > 0 && ` · ${sortResult.missing} not found`}
+                        {sortResult.blocked > 0 && ` · ${sortResult.blocked} blocked by a same-named file`}
+                        {sortResult.failed.length > 0 && ` · ${sortResult.failed.length} failed`}
+                    </>}
                 </Alert>
             </Snackbar>
         </>

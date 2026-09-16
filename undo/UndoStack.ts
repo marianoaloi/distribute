@@ -1,4 +1,5 @@
 import fs from "fs";
+import { moveSync } from "../fileOps/moveSync";
 
 // Undo for file moves, kept in the main process rather than in renderer redux
 // because everything it has to put back is main-process state: the files on
@@ -12,10 +13,22 @@ import fs from "fs";
 
 export interface MoveEntry {
     mediaId: string;
-    /** Where the file was before the move - localPath, and where undo puts it back. */
+    /** Where the file was before the move, and where undo puts it back. */
     from: string;
     /** Where the move put it - media.futurePosition, and where undo reads it from. */
     to: string;
+    /**
+     * The media.futurePosition value that was correct BEFORE this move, and so
+     * the one undo has to put back. null when the file was still at its
+     * localPath origin (a first move out of the source folder); otherwise the
+     * path it had already been moved to, for a media being moved a second time
+     * (organize/sortMediaByKind.ts).
+     *
+     * Without this, undoing a second move would clear futurePosition to null
+     * and claim the file is back at localPath when it is really sitting in the
+     * folder the first move put it in.
+     */
+    previousFuturePosition: string | null;
 }
 
 // One user action. A single click can produce two separate "process" IPC
@@ -117,21 +130,10 @@ export const undoLast = (onRestored: (entry: MoveEntry) => void): UndoOutcome | 
         }
 
         try {
-            fs.renameSync(entry.to, entry.from);
+            moveSync(entry.to, entry.from);
         } catch (error) {
-            // rename cannot cross volumes - same copy+delete fallback the
-            // forward move uses in app.ts.
-            if ((error as NodeJS.ErrnoException).code !== "EXDEV") {
-                skip((error as Error).message);
-                continue;
-            }
-            try {
-                fs.copyFileSync(entry.to, entry.from);
-                fs.unlinkSync(entry.to);
-            } catch (fallbackError) {
-                skip((fallbackError as Error).message);
-                continue;
-            }
+            skip((error as Error).message);
+            continue;
         }
 
         outcome.restored++;

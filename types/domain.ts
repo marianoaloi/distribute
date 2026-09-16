@@ -44,6 +44,20 @@ export interface MediaMissingMd5Row {
     kind: MediaKind;
 }
 
+/**
+ * A media that has been filed into a destination folder (futurePosition is
+ * set) and can be sent back into a per-kind folder beside its origin - see
+ * organize/sortMediaByKind.ts.
+ */
+export interface MediaAwaitingSortRow {
+    id: string;
+    localPath: string;
+    filename: string;
+    kind: MediaKind;
+    hasAudio: number; // stored as 0/1 in sqlite
+    futurePosition: string;
+}
+
 /** A single ONNX detection box, normalized 0-1 against the source image. */
 export interface DetectionBox {
     classId: number;

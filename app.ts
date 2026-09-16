@@ -32,6 +32,7 @@ import { backfillContentMd5 } from "./mediaDb/backfill";
 import * as pipelineRun from "./pipeline/PipelineRun";
 import * as ThumbnailService from "./thumbnails/ThumbnailService";
 import * as undoStack from "./undo/UndoStack";
+import * as sortMediaByKind from "./organize/sortMediaByKind";
 import { framePathFor, frameSetForMedia } from "./compareImg/videoFrames";
 import type { DetectionBox, DetectMediaRef, DetectObjectsPayload, StreamMediaItem } from "./types/domain";
 import { processMediaToDetections } from "./objectDetection/processImages";
@@ -142,6 +143,11 @@ const menuTemplate = (): MenuItemConstructorOptions[] => [
                 accelerator: "numsub"
             },
             { label: 'Clean', click: cleanGrid },
+            {
+                label: 'Send filed media back into kind folders…',
+                enabled: !pipelineRun.isRunning(),
+                click: () => { if (!rejectIfBusy()) runSortMediaByKind(); },
+            },
         ]
     },
     {
@@ -317,6 +323,23 @@ ipcMain.on("setTextEditingActive", (event: IpcMainEvent, active: boolean) => {
 });
 
 ipcMain.on("requestUndo", () => { performUndo(); });
+
+// Sends media already filed into a destination folder back beside its origin,
+// sorted into per-kind subfolders - the source is media.futurePosition, so
+// nothing has to be hunted for on disk. Full flow in organize/sortMediaByKind.
+const runSortMediaByKind = (): void => {
+    sortMediaByKind.runSortFlow({
+        dialog,
+        mainWindow: mainWindow!,
+        defaultPath: fileGlobal,
+        onMovesRecorded: scheduleUndoUiRefresh,
+    });
+};
+
+ipcMain.on("sortMediaByKind", () => {
+    if (rejectIfBusy()) return;
+    runSortMediaByKind();
+});
 
 // onProgress passthrough lets runSuperExecutionPipeline feed this stage's
 // real per-row progress into pipelineRun's "duplicates" stage - unset (the
@@ -764,7 +787,15 @@ const reportFileProcessed = (
             console.error("Could not record futurePosition for", media.path, "-", dbError);
         }
         if (batchId) {
-            undoStack.recordMove(batchId, dest, { mediaId: media.id, from: media.path, to: destination });
+            // previousFuturePosition is null here: this path only ever moves a
+            // media out of its localPath origin, so undoing it returns the file
+            // to localPath and clears futurePosition entirely.
+            undoStack.recordMove(batchId, dest, {
+                mediaId: media.id,
+                from: media.path,
+                to: destination,
+                previousFuturePosition: null,
+            });
             scheduleUndoUiRefresh();
         }
     }
@@ -840,11 +871,17 @@ const performUndo = (): void => {
 
     const outcome = undoStack.undoLast((entry) => {
         try {
-            MediaStore.setFuturePosition(entry.mediaId, null, null);
+            MediaStore.setFuturePosition(entry.mediaId, entry.previousFuturePosition, null);
         } catch (error) {
-            console.error("Could not clear futurePosition for", entry.from, "-", error);
+            console.error("Could not restore futurePosition for", entry.from, "-", error);
         }
-        mainWindow!.webContents.send("fileUnmoved", { id: entry.mediaId });
+        // Only a media that has landed back at its localPath origin becomes
+        // visible again. Undoing a second move (the kind-folder sort) puts the
+        // file back in the folder it had already been filed into - still filed
+        // away, so its tile has to stay hidden.
+        if (entry.previousFuturePosition === null) {
+            mainWindow!.webContents.send("fileUnmoved", { id: entry.mediaId });
+        }
     });
 
     updateMenu();
