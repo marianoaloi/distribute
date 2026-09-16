@@ -1,6 +1,7 @@
 import { Jimp } from "jimp";
 import type { JimpInstance } from "jimp";
 import crypto from "crypto";
+import { boxBlur } from "./pixelHash";
 
 // Spec: 68x68 square, crop a 4px border off every side down to 60x60, greyscale
 const SQUARE_SIZE = 48;
@@ -26,55 +27,6 @@ const greyscaleChannel = (image: JimpInstance): Uint8Array => {
     const out = new Uint8Array(width * height);
     for (let i = 0; i < out.length; i++) out[i] = data[i * 4];
     return out;
-};
-
-// Sliding-window box blur pass: O(length) regardless of radius, since each
-// step adjusts the running sum instead of re-summing the whole window.
-// Edge pixels clamp to the nearest valid index (replicate at the border).
-const boxBlur1D = (
-    src: Uint8Array,
-    outerCount: number,
-    innerCount: number,
-    radius: number,
-    indexFor: (outer: number, inner: number) => number,
-): Uint8Array => {
-    const out = new Uint8Array(src.length);
-    const windowSize = radius * 2 + 1;
-    for (let outer = 0; outer < outerCount; outer++) {
-        let sum = 0;
-        for (let d = -radius; d <= radius; d++) {
-            const inner = Math.min(innerCount - 1, Math.max(0, d));
-            sum += src[indexFor(outer, inner)];
-        }
-        for (let inner = 0; inner < innerCount; inner++) {
-            out[indexFor(outer, inner)] = Math.round(sum / windowSize);
-            const addInner = Math.min(innerCount - 1, inner + radius + 1);
-            const subInner = Math.max(0, inner - radius);
-            sum += src[indexFor(outer, addInner)] - src[indexFor(outer, subInner)];
-        }
-    }
-    return out;
-};
-
-const boxBlurHorizontal = (src: Uint8Array, width: number, height: number, radius: number): Uint8Array =>
-    boxBlur1D(src, height, width, radius, (y, x) => y * width + x);
-
-const boxBlurVertical = (src: Uint8Array, width: number, height: number, radius: number): Uint8Array =>
-    boxBlur1D(src, width, height, radius, (x, y) => y * width + x);
-
-// Cheap Gaussian approximation (3 box-blur passes, a standard technique) at
-// O(width*height) regardless of radius. Jimp's own .gaussian(radius) is a
-// naive convolution that cost 12+ seconds total across our 5 blur levels on
-// a 60x60 image (6.5s alone at radius 50); this is sub-millisecond. The
-// exact kernel shape doesn't matter - these blur levels are only ever used
-// as consistent internal fingerprints, never rendered to the user.
-const boxBlur = (src: Uint8Array, width: number, height: number, radius: number): Uint8Array => {
-    let buf = src;
-    for (let pass = 0; pass < 3; pass++) {
-        buf = boxBlurHorizontal(buf, width, height, radius);
-        buf = boxBlurVertical(buf, width, height, radius);
-    }
-    return buf;
 };
 
 export interface Md5Result {
@@ -108,6 +60,8 @@ export {
     // render the actual images being hashed, not just the resulting md5s.
     toBaseImage,
     greyscaleChannel,
+    // Lives in pixelHash.ts now (it produces items.baseMd5Blur there);
+    // re-exported so this debug tooling blurs exactly the way production does.
     boxBlur,
     hashBuffer,
     SQUARE_SIZE,

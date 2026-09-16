@@ -3,6 +3,7 @@ import crypto from "crypto";
 import Database from "better-sqlite3";
 import { getDbDir, getDbPath } from "./cache";
 import { createMediaSchema } from "../mediaDb/mediaSchema";
+import { blurMd5For } from "./pixelHash";
 
 // baseGrey (the raw cropped/greyscale pixel buffer) has no index:
 // duplicateFinder.js compares it by pixel distance, not SQL equality, so
@@ -16,7 +17,7 @@ import { createMediaSchema } from "../mediaDb/mediaSchema";
 // whatever columns actually exist on disk from a previous run's config -
 // exactly the "no such column: blur_2" crash this replaced. A fixed schema
 // can't drift.
-const METADATA_COLUMNS = ["framePosition", "framePositionSeconds", "baseMd5", "baseGrey"] as const;
+const METADATA_COLUMNS = ["framePosition", "framePositionSeconds", "baseMd5", "baseGrey", "baseMd5Blur"] as const;
 
 export interface ItemRow {
     id: string;
@@ -25,6 +26,8 @@ export interface ItemRow {
     framePositionSeconds: number | null;
     baseMd5: string | null;
     baseGrey: Buffer | null;
+    /** Coarse bucketing key derived from baseGrey - see pixelHash.ts's blurMd5For. */
+    baseMd5Blur: string | null;
 }
 
 export interface MediaItemRow {
@@ -39,6 +42,7 @@ export interface UpsertItemInput {
         framePositionSeconds: number | null;
         baseMd5: string;
         baseGrey: Buffer;
+        baseMd5Blur: string;
     };
 }
 
@@ -48,6 +52,7 @@ export interface BaseGreyRow {
     localPath: string;
     contentMd5: string | null;
     baseMd5: string | null;
+    baseMd5Blur: string | null;
 }
 
 interface SavedDetectionClass {
@@ -98,16 +103,19 @@ const createSchema = (database: Database.Database): void => {
             framePosition TEXT NOT NULL DEFAULT '',
             framePositionSeconds REAL,
             baseMd5 TEXT,
-            baseGrey BLOB
+            baseGrey BLOB,
+            baseMd5Blur TEXT
         );
     `);
     ensureColumn(database, "items", "baseGrey", "BLOB");
     ensureColumn(database, "items", "framePositionSeconds", "REAL");
+    ensureColumn(database, "items", "baseMd5Blur", "TEXT");
     // Moved to media.futurePosition (mediaDb/mediaSchema.ts). Here it was a
     // permanently -1 INTEGER nothing ever read - the destination of a move
     // belongs to the media that moved, not to a per-frame content fingerprint.
     dropColumn(database, "items", "futurePosition");
     database.exec("CREATE INDEX IF NOT EXISTS idx_items_baseMd5 ON items(baseMd5);");
+    database.exec("CREATE INDEX IF NOT EXISTS idx_items_baseMd5Blur ON items(baseMd5Blur);");
 
     // Logical FKs (no declared REFERENCES), same pattern as
     // media_detection.mediaId in mediaSchema.js.
@@ -139,8 +147,38 @@ const createSchema = (database: Database.Database): void => {
     database.exec("CREATE INDEX IF NOT EXISTS idx_items_duplicated_mediaId ON items_duplicated(mediaId);");
 
     dropFingerprintsFromOlderAlgorithm(database);
+    backfillBlurKeys(database);
 
     createMediaSchema(database);
+};
+
+// items.baseMd5Blur is pure derived data (a function of baseGrey alone), so
+// rows indexed before the column existed do not need the media re-decoded
+// through ffmpeg - just the sub-millisecond blur/quantise step over the
+// pixels already stored. Without this, mediaIndexer's "already have this
+// item, skip it" check would leave every pre-existing row NULL forever and
+// duplicateFinder would silently exclude them from the grouped scan.
+// Idempotent: only NULL rows are touched, so a healthy index costs one
+// SELECT that returns nothing.
+const backfillBlurKeys = (database: Database.Database): void => {
+    const rows = database
+        .prepare("SELECT id, baseGrey FROM items WHERE baseMd5Blur IS NULL AND baseGrey IS NOT NULL")
+        .all() as Array<{ id: string; baseGrey: Buffer }>;
+    if (rows.length === 0) return;
+    console.log(`compareImg: computing baseMd5Blur for ${rows.length} existing item fingerprints`);
+    const update = database.prepare("UPDATE items SET baseMd5Blur = ? WHERE id = ?");
+    database.transaction((rows: Array<{ id: string; baseGrey: Buffer }>): void => {
+        for (const row of rows) {
+            try {
+                update.run(blurMd5For(row.baseGrey), row.id);
+            } catch (error) {
+                // A baseGrey of the wrong length is a row from an older
+                // geometry that dropFingerprintsFromOlderAlgorithm should
+                // already have cleared; leave it NULL rather than abort.
+                console.error(`compareImg: cannot derive baseMd5Blur for item ${row.id}:`, (error as Error).message);
+            }
+        }
+    })(rows);
 };
 
 // baseMd5/baseGrey are only meaningful against values produced by the SAME
@@ -245,7 +283,7 @@ export const linkItemMedia = (itemId: string, mediaId: string): void => {
 export const allBaseGreyRows = (): BaseGreyRow[] => db!
     .prepare(`
         SELECT media_item.mediaId AS mediaId, items.baseGrey AS baseGrey, media.localPath AS localPath 
-        , media.contentMd5 AS contentMd5 , items.baseMd5 AS baseMd5
+        , media.contentMd5 AS contentMd5 , items.baseMd5 AS baseMd5 , items.baseMd5Blur AS baseMd5Blur
         FROM media_item
         JOIN items ON items.id = media_item.itemId
         JOIN media ON media.id = media_item.mediaId
