@@ -1,0 +1,61 @@
+name: Release Ubuntu
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install --force
+
+      - name: Build Ubuntu executable
+        run: npm run execUbuntu
+        env:
+          CI: false
+
+      - name: Get package version
+        id: pkg
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: Stage release artifacts
+        id: artifact
+        run: |
+          outDir="$(realpath "${{ github.workspace }}/../distribute-dist")"
+          appimage=$(find "$outDir" -maxdepth 1 -name "*.AppImage" | head -n 1)
+          deb=$(find "$outDir" -maxdepth 1 -name "*.deb" | head -n 1)
+          if [ -z "$appimage" ]; then echo "No .AppImage found in $outDir"; exit 1; fi
+          cp "$appimage" "${{ github.workspace }}/$(basename "$appimage")"
+          echo "appimage_path=${{ github.workspace }}/$(basename "$appimage")" >> $GITHUB_OUTPUT
+          if [ -n "$deb" ]; then
+            cp "$deb" "${{ github.workspace }}/$(basename "$deb")"
+            echo "deb_path=${{ github.workspace }}/$(basename "$deb")" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.pkg.outputs.version }}-${{ github.run_number }}
+          name: v${{ steps.pkg.outputs.version }} (build ${{ github.run_number }})
+          body: |
+            Automated Ubuntu release from merge to master.
+            Commit: ${{ github.sha }}
+          files: |
+            ${{ steps.artifact.outputs.appimage_path }}
+            ${{ steps.artifact.outputs.deb_path }}
+          fail_on_unmatched_files: true
