@@ -1,0 +1,93 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            script: execWindows
+          - os: ubuntu-latest
+            script: execUbuntu
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install --force
+
+      - name: Build executable
+        run: npm run ${{ matrix.script }}
+        env:
+          CI: false
+
+      - name: Stage release artifacts
+        shell: bash
+        run: |
+          mkdir -p release-artifacts
+          find ../distribute-dist -maxdepth 1 -type f \
+            \( -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' \) \
+            -exec cp {} release-artifacts/ \;
+          if [ -z "$(ls -A release-artifacts)" ]; then
+            echo "No installable artifact produced by ${{ matrix.script }}"
+            exit 1
+          fi
+          ls -lh release-artifacts
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: release-artifacts/
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get package version
+        id: pkg
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: release-artifacts
+
+      - name: List collected artifacts
+        run: ls -lh release-artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.pkg.outputs.version }}-${{ github.run_number }}
+          name: v${{ steps.pkg.outputs.version }} (build ${{ github.run_number }})
+          body: |
+            Automated Windows and Ubuntu release from merge to master.
+            Commit: ${{ github.sha }}
+          files: release-artifacts/*
+          fail_on_unmatched_files: true
