@@ -48,53 +48,83 @@ export const meanAbsDiff = (a: Buffer, b: Buffer): number => {
 // unrelated frames land far higher. See scripts/debugCompareVideos.js.
 export const MEAN_DIFF_THRESHOLD = 3;
 
-// Pairwise-compares every indexed frame's pixel buffer against every other
-// (skipping frames belonging to the same media item) and unions any pair
-// under MEAN_DIFF_THRESHOLD. This replaces the old per-column exact-hash
-// grouping: MD5 equality can't express "almost identical", so near-duplicate
-// frames (JPEG re-encode noise, slightly different crop/scale) never matched
-// no matter how much blur was applied - and pushing blur radius high enough
-// to smooth that noise away just made unrelated frames collide instead.
+// Two-stage scan, coarse then fine:
 //
-// O(n^2) over indexed frames, since pixel distance has no SQL-expressible
-// index the way hash equality did. Fine for a personal library's worth of
-// media; if this gets slow on a much larger library, bucket rows by a cheap
-// coarse feature (e.g. average brightness) before doing the full comparison,
-// or switch to a Hamming-distance perceptual hash with an LSH/bucket index.
-// onProgress (comparedRows, totalRows) - fires once per outer-loop row
-// (cheap relative to the O(n^2) body itself), so pipeline/PipelineRun.js's
-// "duplicates" stage can show a real percentage/ETA instead of just
-// spinning for however long this scan takes on a real library.
+//   1. Group every indexed frame by its baseMd5Blur (pixelHash.ts: blurred,
+//      downsampled, quantised key) - a Map lookup, O(n). Frames whose key
+//      differs are never compared at all.
+//   2. Inside each group, pairwise-compare pixel buffers exactly as before
+//      (contentMd5 / baseMd5 equality, then mean pixel difference vs
+//      MEAN_DIFF_THRESHOLD) and union matches into duplicate clusters.
+//
+// This replaces a single flat O(n^2) pass over every frame in the library.
+// That was fine for a few hundred files but with ~2000 images + ~1000
+// videos/gifs at up to 4 frames each (~6000 rows -> ~18M buffer
+// comparisons) it became the stage the pipeline stalled on. The fine
+// comparison is unchanged; it just runs on candidate groups instead of on
+// everything. The cost is now sum(k_i^2) over group sizes, which for a
+// library where most frames are unique is close to linear.
+//
+// What the coarse key cannot do: two frames the fine filter would accept
+// can still hash into different groups when a blurred cell sits right at a
+// brightness-band edge (see pixelHash.ts for the parameters that trade this
+// off against group size). Exact-content duplicates never split, since an
+// identical baseGrey always yields an identical baseMd5Blur.
+//
+// Rows with no key (a baseGrey whose length no longer matches the current
+// geometry, so HashStore's backfill could not derive one) form one group of
+// their own - meanAbsDiff already treats such buffers as infinitely far
+// from everything, so nothing is lost by not comparing them further afield.
+//
+// onProgress (comparedRows, totalRows) - fires once per row after its
+// group's comparisons for that row are done, so pipeline/PipelineRun.js's
+// "duplicates" stage can show a real percentage/ETA.
 export const findIndexDuplicates = async (onProgress?: (comparedRows: number, totalRows: number) => void): Promise<string[][]> => {
     compareImgStore.ensureReady();
 
     const { find, union } = makeDisjointSet();
     const matchedIds = new Set<string>();
+    const markMatch = (a: string, b: string): void => {
+        matchedIds.add(a);
+        matchedIds.add(b);
+        union(a, b);
+    };
 
     const rows = compareImgStore.allBaseGreyRows();
     if (onProgress) onProgress(0, rows.length);
-    for (let i = 0; i < rows.length; i++) {
-        for (let j = i + 1; j < rows.length; j++) {
-            const a = rows[i];
-            const b = rows[j];
-            if (a.mediaId === b.mediaId) continue;
-            if (a.contentMd5 && b.contentMd5 && a.contentMd5 === b.contentMd5) {
-                matchedIds.add(a.mediaId);
-                matchedIds.add(b.mediaId);
-                union(a.mediaId, b.mediaId);
-            } else
-            if (a.baseMd5 && b.baseMd5 && a.baseMd5 === b.baseMd5) {
-                matchedIds.add(a.mediaId);
-                matchedIds.add(b.mediaId);
-                union(a.mediaId, b.mediaId);
-            } else
-            if (meanAbsDiff(a.baseGrey, b.baseGrey) <= MEAN_DIFF_THRESHOLD) {
-                matchedIds.add(a.mediaId);
-                matchedIds.add(b.mediaId);
-                union(a.mediaId, b.mediaId);
+
+    // Stage 1: coarse grouping by baseMd5Blur.
+    const NO_KEY = "";
+    const buckets = new Map<string, compareImgStore.BaseGreyRow[]>();
+    for (const row of rows) {
+        const key = row.baseMd5Blur ?? NO_KEY;
+        const bucket = buckets.get(key);
+        if (bucket) bucket.push(row);
+        else buckets.set(key, [row]);
+    }
+    let largest = 0;
+    for (const bucket of buckets.values()) largest = Math.max(largest, bucket.length);
+    console.log(`compareImg: ${rows.length} frames in ${buckets.size} baseMd5Blur groups (largest ${largest})`);
+
+    // Stage 2: the fine comparison, only within a group.
+    let compared = 0;
+    for (const bucket of buckets.values()) {
+        for (let i = 0; i < bucket.length; i++) {
+            const a = bucket[i];
+            for (let j = i + 1; j < bucket.length; j++) {
+                const b = bucket[j];
+                if (a.mediaId === b.mediaId) continue;
+                if (a.contentMd5 && b.contentMd5 && a.contentMd5 === b.contentMd5) {
+                    markMatch(a.mediaId, b.mediaId);
+                } else if (a.baseMd5 && b.baseMd5 && a.baseMd5 === b.baseMd5) {
+                    markMatch(a.mediaId, b.mediaId);
+                } else if (meanAbsDiff(a.baseGrey, b.baseGrey) <= MEAN_DIFF_THRESHOLD) {
+                    markMatch(a.mediaId, b.mediaId);
+                }
             }
+            compared++;
+            if (onProgress) onProgress(compared, rows.length);
         }
-        if (onProgress) onProgress(i + 1, rows.length);
     }
 
     const groups = new Map<string, string[]>();
@@ -105,9 +135,8 @@ export const findIndexDuplicates = async (onProgress?: (comparedRows: number, to
     }
 
     const result = [...groups.values()].filter(group => group.length > 1);
-    // This scan is O(n^2) and can take a while on a real library - persist
-    // the result (items_duplicated table) so it survives an app restart
-    // instead of only living in this function's return value.
+    // Persist the result (items_duplicated table) so it survives an app
+    // restart instead of only living in this function's return value.
     compareImgStore.replaceDuplicateGroups(result);
     return result;
 };

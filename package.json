@@ -1,6 +1,6 @@
 {
   "name": "distribute",
-  "version": "3.0.7",
+  "version": "3.0.13",
   "private": true,
   "main": "electron-dist/app.js",
   "homepage": "./",
@@ -69,6 +69,14 @@
     "icon": "public/logo512.png",
     "win": {
       "target": "portable"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility",
+      "maintainer": "maloi"
     }
   },
   "scripts": {
@@ -86,7 +94,8 @@
     "eject": "react-scripts eject",
     "buildele": "npm run build && npm run build:electron && ./ExecutableLinux.sh",
     "deb64": "electron-installer-debian --src dist_resume/getimage-linux-x64/ --dest dist_resume/installers/ --arch amd64",
-    "execWindows": "react-scripts build && npm run build:electron && electron-builder --win --x64 --publish never"
+    "execWindows": "react-scripts build && npm run build:electron && electron-builder --win --x64 --publish never",
+    "execUbuntu": "react-scripts build && npm run build:electron && electron-builder --linux --x64 --publish never"
   },
   "eslintConfig": {
     "extends": [

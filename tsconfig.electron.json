@@ -26,6 +26,8 @@
     "objectDetection/**/*.ts",
     "thumbnails/**/*.ts",
     "undo/**/*.ts",
+    "organize/**/*.ts",
+    "fileOps/**/*.ts",
     "scripts/debugCompareVideos.ts",
     "types/**/*.ts"
   ]

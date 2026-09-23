@@ -6,7 +6,7 @@ import { mediaLoadComplete, mediaLoadStart, zoomIn, zoomOut } from '../configura
 import { setDuplicateGroups, indexRebuildFinished, setIndexRebuildProgress, databaseExportFinished, databaseImportFinished, setMediaFrames } from '../duplicates';
 import { setDetectionResult, mergeDetections, setDetectionProgress, detectingFinished, setModelPath, setDetectionClasses, setDetectionSize } from '../detections';
 import { setPipelineProgress, pipelineFinished, pipelineRejected, PipelineSnapshot } from '../pipeline';
-import { setUndoAvailable, undoFinished, UndoSkipped } from '../undo';
+import { setUndoAvailable, undoFinished, sortByKindFinished, UndoSkipped, SortByKindResult } from '../undo';
 import { FileDTO } from '../../../../entity/FileDTO';
 
 
@@ -26,7 +26,7 @@ export const ElectronConnection = () => {
 
     return (dispatch: any) => {
         if (ipcRender) {
-            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete', 'onnxModelChosen', 'databaseExported', 'databaseImported', 'detectionClassesLoaded', 'detectionsLoaded', 'fileProcessed', 'mediaFramesFound', 'detectionSizeLoaded', 'pipelineProgress', 'pipelineFinished', 'pipelineRejected', 'fileUnmoved', 'undoAvailable', 'undoFinished'];
+            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete', 'onnxModelChosen', 'databaseExported', 'databaseImported', 'detectionClassesLoaded', 'detectionsLoaded', 'fileProcessed', 'mediaFramesFound', 'detectionSizeLoaded', 'pipelineProgress', 'pipelineFinished', 'pipelineRejected', 'fileUnmoved', 'undoAvailable', 'undoFinished', 'sortByKindFinished'];
             channels.forEach(ch => ipcRender.removeAllListeners(ch));
 
             ipcRender.on('directoryOpen', (e: any, args: any) => {
@@ -83,6 +83,16 @@ export const ElectronConnection = () => {
             })
             ipcRender.on('undoFinished', (e: any, result: { restored: number, skipped: UndoSkipped[] }) => {
                 dispatch(undoFinished(result))
+            })
+            // A cancelled picker/confirmation reports success:false with
+            // canceled:true - nothing happened, so there is nothing to show.
+            ipcRender.on('sortByKindFinished', (e: any, result: SortByKindResult & { success: boolean, canceled?: boolean, error?: string }) => {
+                if (result.canceled) return
+                if (!result.success) {
+                    console.error("Sort media by kind failed", result.error)
+                    return
+                }
+                dispatch(sortByKindFinished(result))
             })
             ipcRender.on('zoom', (e: any, zoom: number) => {
 

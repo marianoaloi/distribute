@@ -38,7 +38,7 @@ const indexUnit = async (
     // Runs in a short-lived ffmpeg child process, so the decode never
     // touches the Electron main thread and its memory is the OS's to
     // reclaim - see pixelHash.ts for why that replaced a worker pool.
-    const { baseMd5, baseGrey } = await pixelHashFor(pixelSourcePath);
+    const { baseMd5, baseGrey, baseMd5Blur } = await pixelHashFor(pixelSourcePath);
 
     const metadata = {
         framePosition: framePosition || "",
@@ -48,6 +48,9 @@ const indexUnit = async (
         // can do a real similarity comparison (mean pixel difference) instead
         // of hash equality - see HashStore.js's baseGrey column.
         baseGrey,
+        // Coarse bucketing key so duplicateFinder.js only runs that
+        // comparison inside groups of candidates - see pixelHash.ts.
+        baseMd5Blur,
     };
 
     compareImgStore.upsertItem({ id, metadata });

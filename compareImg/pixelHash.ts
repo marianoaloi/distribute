@@ -63,7 +63,121 @@ export interface PixelHash {
     // items.baseGrey so duplicateFinder.ts can do a real mean-pixel-
     // difference comparison rather than hash equality.
     baseGrey: Buffer;
+    // Coarse bucketing key derived from baseGrey - see blurMd5For.
+    baseMd5Blur: string;
 }
+
+// ---------------------------------------------------------------------------
+// baseMd5Blur: the coarse "is it even worth comparing these two?" key.
+//
+// duplicateFinder.ts used to compare every frame against every other frame
+// (O(n^2) over baseGrey). With ~2000 images + ~1000 videos/gifs at 4 frames
+// each that is ~6000 rows -> ~18M mean-pixel-difference calls of 1600 bytes,
+// which is the stage that stopped scaling. baseMd5Blur lets it group rows
+// by an exact-equality key first (a Map lookup, O(n)) and only run the fine
+// pixel comparison inside each group.
+//
+// Why not just md5 the blurred 40x40? An md5 changes completely when a
+// single pixel moves by one level, and a JPEG re-encode or re-scaled
+// re-upload moves nearly every pixel by a little. Blur alone never made two
+// near-duplicates hash equal - that is exactly what the pairwise pixel
+// comparison replaced (see duplicateFinder.ts). For the hash to be "common"
+// across near-duplicates it has to throw away nearly all of the precision:
+//   1. Gaussian-approximate blur (3 box passes, radius BLUR_RADIUS) so
+//      per-pixel noise averages out;
+//   2. area-average down to a BLUR_GRID x BLUR_GRID grid of cells;
+//   3. quantise each cell to BLUR_LEVELS brightness bands.
+// The md5 is taken over those BLUR_GRID^2 band indices. Two frames that the
+// fine filter would accept (mean difference <= MEAN_DIFF_THRESHOLD) end up
+// with cells that differ by roughly that much, so they land in the same
+// band unless a cell happens to sit within a few levels of a band edge -
+// the only way a real duplicate can be missed by this stage. Wider bands
+// and fewer cells make that rarer at the cost of larger groups (more work
+// for the fine filter); 4x4 cells in 4 bands is the balance chosen.
+//
+// Bump HashStore's FINGERPRINT_VERSION if anything here changes the
+// produced key (it is derived data, but a mix of old and new keys across
+// rows would silently split real duplicate groups).
+const BLUR_RADIUS = 4;
+const BLUR_GRID = 4;
+const BLUR_LEVELS = 4;
+
+// Sliding-window box blur pass: O(length) regardless of radius, since each
+// step adjusts the running sum instead of re-summing the whole window.
+// Edge pixels clamp to the nearest valid index (replicate at the border).
+const boxBlur1D = (
+    src: Uint8Array,
+    outerCount: number,
+    innerCount: number,
+    radius: number,
+    indexFor: (outer: number, inner: number) => number,
+): Uint8Array => {
+    const out = new Uint8Array(src.length);
+    const windowSize = radius * 2 + 1;
+    for (let outer = 0; outer < outerCount; outer++) {
+        let sum = 0;
+        for (let d = -radius; d <= radius; d++) {
+            const inner = Math.min(innerCount - 1, Math.max(0, d));
+            sum += src[indexFor(outer, inner)];
+        }
+        for (let inner = 0; inner < innerCount; inner++) {
+            out[indexFor(outer, inner)] = Math.round(sum / windowSize);
+            const addInner = Math.min(innerCount - 1, inner + radius + 1);
+            const subInner = Math.max(0, inner - radius);
+            sum += src[indexFor(outer, addInner)] - src[indexFor(outer, subInner)];
+        }
+    }
+    return out;
+};
+
+const boxBlurHorizontal = (src: Uint8Array, width: number, height: number, radius: number): Uint8Array =>
+    boxBlur1D(src, height, width, radius, (y, x) => y * width + x);
+
+const boxBlurVertical = (src: Uint8Array, width: number, height: number, radius: number): Uint8Array =>
+    boxBlur1D(src, width, height, radius, (x, y) => y * width + x);
+
+// Cheap Gaussian approximation (3 box-blur passes, a standard technique) at
+// O(width*height) regardless of radius - sub-millisecond on a 40x40 frame.
+// The exact kernel shape doesn't matter: the result is only ever used as a
+// consistent internal fingerprint, never rendered to the user. Also used by
+// imageTransform.ts (debug tooling) so both blur the same way.
+export const boxBlur = (src: Uint8Array, width: number, height: number, radius: number): Uint8Array => {
+    let buf = src;
+    for (let pass = 0; pass < 3; pass++) {
+        buf = boxBlurHorizontal(buf, width, height, radius);
+        buf = boxBlurVertical(buf, width, height, radius);
+    }
+    return buf;
+};
+
+// grey: a single-channel square frame of side `side` (baseGrey, 40x40).
+// Returns the md5 of its blurred, downsampled, quantised form - see the
+// comment block above for why each step is there.
+export const blurMd5For = (grey: Uint8Array, side: number = GREY_SIDE): string => {
+    if (grey.length !== side * side) {
+        throw new Error(`blurMd5For: expected ${side * side} bytes for a ${side}x${side} frame, got ${grey.length}`);
+    }
+    const blurred = boxBlur(grey, side, side, BLUR_RADIUS);
+    const cells = new Uint8Array(BLUR_GRID * BLUR_GRID);
+    const bandWidth = 256 / BLUR_LEVELS;
+    for (let cy = 0; cy < BLUR_GRID; cy++) {
+        // Integer cell bounds so every source pixel lands in exactly one
+        // cell even when side isn't a multiple of BLUR_GRID.
+        const y0 = Math.floor((cy * side) / BLUR_GRID);
+        const y1 = Math.floor(((cy + 1) * side) / BLUR_GRID);
+        for (let cx = 0; cx < BLUR_GRID; cx++) {
+            const x0 = Math.floor((cx * side) / BLUR_GRID);
+            const x1 = Math.floor(((cx + 1) * side) / BLUR_GRID);
+            let sum = 0;
+            for (let y = y0; y < y1; y++) {
+                for (let x = x0; x < x1; x++) sum += blurred[y * side + x];
+            }
+            const mean = sum / ((y1 - y0) * (x1 - x0));
+            cells[cy * BLUR_GRID + cx] = Math.min(BLUR_LEVELS - 1, Math.floor(mean / bandWidth));
+        }
+    }
+    return crypto.createHash("md5").update(cells).digest("hex");
+};
 
 // input: path to a still image (for video, the already-extracted frame file).
 export const pixelHashFor = (input: string): Promise<PixelHash> => new Promise((resolve, reject) => {
@@ -71,6 +185,7 @@ export const pixelHashFor = (input: string): Promise<PixelHash> => new Promise((
         reject(new Error(`Cannot fingerprint ${input}: ffmpeg binary unavailable`));
         return;
     }
+    console.log(`compareImg: fingerprinting ${input}`);
     execFile(
         ffmpegPath,
         [
@@ -100,7 +215,11 @@ export const pixelHashFor = (input: string): Promise<PixelHash> => new Promise((
                 reject(new Error(`Fingerprinting failed for ${input}: expected ${GREY_BYTES} bytes, got ${stdout.length}`));
                 return;
             }
-            resolve({ baseMd5: crypto.createHash("md5").update(stdout).digest("hex"), baseGrey: stdout });
+            resolve({
+                baseMd5: crypto.createHash("md5").update(stdout).digest("hex"),
+                baseGrey: stdout,
+                baseMd5Blur: blurMd5For(stdout),
+            });
         },
     );
 });

@@ -20,6 +20,20 @@ interface UndoState {
     // than being left to assume everything came back.
     lastRestored: number | null
     lastSkipped: UndoSkipped[]
+    // Outcome of the last "send filed media back into kind folders" run
+    // (organize/sortMediaByKind.ts), shown as a transient toast. Lives here
+    // rather than in its own slice because it is the same kind of thing: the
+    // result of a bulk file move the user needs to see reported.
+    sortResult: SortByKindResult | null
+}
+
+/** Report from one sortMediaByKind run - see organize/sortMediaByKind.ts. */
+export interface SortByKindResult {
+    moved: number
+    alreadyInPlace: number
+    missing: number
+    blocked: number
+    failed: Array<{ from: string, reason: string }>
 }
 
 const initialState: UndoState = {
@@ -27,6 +41,7 @@ const initialState: UndoState = {
     label: "Undo",
     lastRestored: null,
     lastSkipped: [],
+    sortResult: null,
 }
 
 const undoSlice = createSlice({
@@ -48,8 +63,16 @@ const undoSlice = createSlice({
             lastRestored: null,
             lastSkipped: [],
         }),
+        sortByKindFinished: (state, action: { payload: SortByKindResult }) => ({
+            ...state,
+            sortResult: action.payload,
+        }),
+        dismissSortResult: (state) => ({
+            ...state,
+            sortResult: null,
+        }),
     }
 })
 
-export const { setUndoAvailable, undoFinished, dismissUndoResult } = undoSlice.actions;
+export const { setUndoAvailable, undoFinished, dismissUndoResult, sortByKindFinished, dismissSortResult } = undoSlice.actions;
 export default undoSlice.reducer;

@@ -37,6 +37,7 @@ const ipc = {
             'getDetectionSize',
             'requestUndo',
             'setTextEditingActive',
+            'sortMediaByKind',
         ],
         // From main to render.
         'receive': ['directoryOpen',
@@ -89,6 +90,7 @@ const ipc = {
             'fileUnmoved',
             'undoAvailable',
             'undoFinished',
+            'sortByKindFinished',
         ]
     }
 };

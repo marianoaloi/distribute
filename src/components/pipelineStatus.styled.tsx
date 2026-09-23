@@ -7,7 +7,7 @@ const pulse = keyframes`
 `;
 
 export const PipelineBar = styled.div`
-    position: absolute;
+    position: fixed;
     bottom: 0px;
     left: 0px;
     right: 0px;

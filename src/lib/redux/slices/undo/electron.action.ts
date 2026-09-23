@@ -17,6 +17,22 @@ export const RequestUndo = () => {
     }
 }
 
+// Opens the folder picker for "send filed media back into kind folders" - the
+// same thing the Work menu item triggers. The whole flow (picker, plan,
+// confirmation, moves) runs in the main process; see organize/sortMediaByKind.
+export const SortMediaByKind = () => {
+
+    if (!isElectronApp) {
+        return (dispatch: any) => { }
+    }
+
+    return (dispatch: any) => {
+        if (ipcRender) {
+            ipcRender.send('sortMediaByKind', undefined);
+        }
+    }
+}
+
 // Ctrl+Z is registered as an Electron menu accelerator, which fires no matter
 // where DOM focus is - including inside a text field, where it has to keep
 // meaning "undo my typing". Focus handlers call this so the main process can
