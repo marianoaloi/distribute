@@ -66,7 +66,14 @@ export const buildPlan = (searchRoot: string, rows: MediaAwaitingSortRow[]): Sor
         // where it is - this is a per-folder tidy-up, not a library-wide one.
         if (!isInside(searchRoot, row.futurePosition)) continue;
 
-        const targetDir = path.join(path.dirname(row.localPath), kindFolderName(row.kind, row.hasAudio !== 0));
+        const kindFolder = kindFolderName(row.kind, row.hasAudio !== 0);
+        const dirNameOfFile = path.dirname(row.localPath);
+        let targetDir: string;
+        if (path.basename(dirNameOfFile) !== kindFolder) {
+            targetDir = path.join(dirNameOfFile, kindFolder);
+        } else {
+            targetDir = dirNameOfFile;
+        }
         const to = path.join(targetDir, row.filename);
 
         if (!fs.existsSync(row.futurePosition)) {
