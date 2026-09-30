@@ -131,7 +131,7 @@ export const ElectronConnection = () => {
             ipcRender.on('mediaLoadComplete', () => {
                 dispatch(mediaLoadComplete())
             })
-            ipcRender.on('detectionFound', (e: any, result: { id: string, boxes: any[], classes: string[] }) => {
+            ipcRender.on('detectionFound', (e: any, result: { id: string, boxes: any[], classes: string[], classScores?: Record<string, { min: number; max: number }> }) => {
                 dispatch(setDetectionResult(result))
             })
             ipcRender.on('detectionProgress', (e: any, progress: { processed: number, total: number }) => {
@@ -150,7 +150,7 @@ export const ElectronConnection = () => {
             ipcRender.on('detectionSizeLoaded', (e: any, result: { size: number }) => {
                 dispatch(setDetectionSize(result.size))
             })
-            ipcRender.on('detectionsLoaded', (e: any, result: { items: { id: string, boxes: any[], classes: string[] }[] }) => {
+            ipcRender.on('detectionsLoaded', (e: any, result: { items: { id: string, boxes: any[], classes: string[], classScores?: Record<string, { min: number; max: number }> }[] }) => {
                 dispatch(mergeDetections(result))
             })
             ipcRender.on('databaseExported', (e: any, result: { success: boolean, path?: string, error?: string, canceled?: boolean }) => {

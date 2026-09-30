@@ -571,11 +571,19 @@ ipcMain.on("loadDetections", () => {
             (classesById.get(row.mediaId) as string[]).push(row.className);
         }
 
+        const scoreRows = MediaStore.getDetectionClassScoresByMedia();
+        const scoresById = new Map<string, Record<string, { min: number; max: number }>>();
+        for (const row of scoreRows) {
+            if (!scoresById.has(row.mediaId)) scoresById.set(row.mediaId, {});
+            (scoresById.get(row.mediaId) as Record<string, { min: number; max: number }>)[row.className] = { min: row.minScore, max: row.maxScore };
+        }
+
         const mediaIds = new Set([...boxesById.keys(), ...classesById.keys()]);
         const items = [...mediaIds].map((id) => ({
             id,
             boxes: boxesById.get(id) || [],
             classes: classesById.get(id) || [],
+            classScores: scoresById.get(id) || {},
         }));
         mainWindow!.webContents.send("detectionsLoaded", { items });
     } catch (error) {

@@ -64,7 +64,7 @@ export const GridDuplicates = (() => {
         // yet, and imported items (another folder's exported DB) have no local
         // detections at all. Per-member filtering would silently drop exactly
         // the cross-folder matches the import feature exists to surface.
-        .filter(group => group.some(m => matchesClassFilter(detections[m.id]?.classes, classFilterGroups)))
+        .filter(group => group.some(m => matchesClassFilter(detections[m.id], classFilterGroups)))
         .map(group => [...group].sort((a, b) => b.size - a.size))
         .map(group => group.map(m => ({ ...m, screenIndex: counterIndex++ })))
 

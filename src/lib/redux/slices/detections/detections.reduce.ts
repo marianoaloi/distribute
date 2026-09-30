@@ -21,9 +21,14 @@ interface DetectionProgress {
 // thumbnail. classes: the union of classes across EVERY item linked to the
 // media (all 4 video/GIF frames), for classFilter/gridImg's "does this media
 // contain X anywhere" filtering - a superset of boxes' classNames.
+// classScores: per class, the min/max detection score across those same items,
+// for the class filter's per-term score threshold.
+export type ClassScoreRange = { min: number; max: number }
+
 export interface MediaDetections {
     boxes: DetectionBox[]
     classes: string[]
+    classScores: Record<string, ClassScoreRange>
 }
 
 interface DetectionsState {
@@ -67,7 +72,7 @@ const detectionsSlice = createSlice({
             ...state,
             byId: {
                 ...state.byId,
-                [action.payload.id]: { boxes: action.payload.boxes, classes: action.payload.classes || [] },
+                [action.payload.id]: { boxes: action.payload.boxes, classes: action.payload.classes || [], classScores: action.payload.classScores || {} },
             },
             lastProcessedId: action.payload.id,
         }),
@@ -78,8 +83,8 @@ const detectionsSlice = createSlice({
             byId: {
                 ...state.byId,
                 ...Object.fromEntries(
-                    action.payload.items.map((item: { id: string, boxes: DetectionBox[], classes: string[] }) =>
-                        [item.id, { boxes: item.boxes, classes: item.classes || [] }])
+                    action.payload.items.map((item: { id: string, boxes: DetectionBox[], classes: string[], classScores?: Record<string, ClassScoreRange> }) =>
+                        [item.id, { boxes: item.boxes, classes: item.classes || [], classScores: item.classScores || {} }])
                 ),
             },
         }),

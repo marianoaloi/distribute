@@ -79,7 +79,7 @@ export const processMediaToDetections = async (mainWindow: any, onnxDetector: an
         try {
             const items = medias || [];
             if (items.length === 0) {
-                mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: [], classes: [] });
+                mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: [], classes: [], classScores: {} });
             } else {
                 const perItem: { item: DetectMediaRef; boxes: DetectionBox[] }[] = [];
                 for (const item of items) {
@@ -97,12 +97,21 @@ export const processMediaToDetections = async (mainWindow: any, onnxDetector: an
 
                 const displayItem = perItem.find((d) => isDisplayFrame(d.item.framePosition)) || perItem[0];
                 const classes = [...new Set(perItem.flatMap((d) => d.boxes.map((b) => b.className)))];
-                mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: displayItem.boxes, classes });
+                const classScores: Record<string, { min: number; max: number }> = {};
+                for (const box of perItem.flatMap((d) => d.boxes)) {
+                    const range = classScores[box.className];
+                    if (!range) classScores[box.className] = { min: box.score, max: box.score };
+                    else {
+                        range.min = Math.min(range.min, box.score);
+                        range.max = Math.max(range.max, box.score);
+                    }
+                }
+                mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: displayItem.boxes, classes, classScores });
             }
         } catch (error) {
             MediaStore.replaceItemDetections(media.itemId, [], modelPathId);
             console.error("detectObjects failed for", media.media, error);
-            mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: [], classes: [], error: (error as Error).message });
+            mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: [], classes: [], classScores: {}, error: (error as Error).message });
         } finally {
             processed++;
             mainWindow!.webContents.send("detectionProgress", { processed, total });

@@ -299,3 +299,19 @@ export const getDetectionClassesByMedia = (): Array<{ mediaId: string; className
         WHERE detection_class.name IS NOT NULL
     `).all() as Array<{ mediaId: string; className: string }>;
 };
+
+// Same union-across-items semantics as getDetectionClassesByMedia, plus the
+// lowest/highest detection score per (media, class) for the classFilter's
+// per-term score threshold ("at least one detection of X with score >= t").
+export const getDetectionClassScoresByMedia = (): Array<{ mediaId: string; className: string; minScore: number; maxScore: number }> => {
+    const db = HashStore.getDb();
+    return db.prepare(`
+        SELECT media_item.mediaId AS mediaId, detection_class.name AS className,
+               MIN(item_detection.score) AS minScore, MAX(item_detection.score) AS maxScore
+        FROM media_item
+        JOIN item_detection ON item_detection.itemId = media_item.itemId
+        LEFT JOIN detection_class ON detection_class.classId = item_detection.classId
+        WHERE detection_class.name IS NOT NULL
+        GROUP BY media_item.mediaId, detection_class.name
+    `).all() as Array<{ mediaId: string; className: string; minScore: number; maxScore: number }>;
+};
