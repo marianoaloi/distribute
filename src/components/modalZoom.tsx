@@ -1,4 +1,4 @@
-import { forwardRef, SyntheticEvent, useImperativeHandle, useRef, useState } from "react"
+import { forwardRef, SyntheticEvent, useEffect, useImperativeHandle, useRef, useState } from "react"
 import { Media } from "../entity/Media"
 import { prettifySizeF } from "./media"
 import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, ImgWrapper, MediaControllersCSS, FoldersZoom, MuteIcon, InfoBox, ZoomHeader, VideoProgress } from "./modalZoom.styled"
@@ -39,6 +39,11 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         const [showDetections, setShowDetections] = useState(false);
         const toggleDetections = () => setShowDetections(v => !v)
         const [pathCopied, setPathCopied] = useState(false)
+        // Scale factor for the video, applied as a transform (origin top-left)
+        // so MediaPresentation's overflow:auto scrolls over the enlarged frame.
+        // Reset per media so the next video doesn't open already zoomed in.
+        const [videoZoom, setVideoZoom] = useState(1)
+        useEffect(() => setVideoZoom(1), [mediaWithPreview.id])
 
         const copyPathToClipboard = (): void => {
             navigator.clipboard.writeText(mediaWithPreview.path).then(() => {
@@ -215,6 +220,16 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                     <>
                         <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
                         <input style={{ zoom: 2 }} type="checkbox" onClick={changeCheckbox} id="selectMedia" defaultChecked={mediaWithPreview.checked} />
+                        <Slider
+                            aria-label="Video zoom"
+                            value={videoZoom}
+                            valueLabelDisplay="auto"
+                            shiftStep={0.5}
+                            step={0.1}
+                            min={1}
+                            max={10}
+                            onChange={(event: Event, newValue: number | number[]) => setVideoZoom(newValue as number)}
+                        />
                     </>
                     :
                     <>
@@ -310,6 +325,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                         onWheel={controlVolumeByAltPresed}
                                         onVolumeChange={saveVideoVolume}
                                         onTimeUpdate={updateVideoTime}
+                                        style={{ transform: `scale(${videoZoom})`, transformOrigin: 'top left' }}
                                         autoPlay title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></VideoPresentation>
                                     <InfoBox>
                                         {!mediaWithPreview.hasAudio ? <MuteIcon color="error" /> : <span>{`${(volumeLevel * 100).toFixed(2)}%`}</span>}
@@ -342,7 +358,9 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                 </>
                         }
                     </MediaPresentation>
-                    <MediaControllers />
+                    {/* Called, not mounted as <MediaControllers />: it's redefined every
+                        render, so onTimeUpdate's re-renders would remount the sliders mid-drag. */}
+                    {MediaControllers()}
                 </ModalBox>
 
             </Modal>

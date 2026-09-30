@@ -48,7 +48,7 @@ export const VideoPresentation = styled.video`
     text-align: center;
       overflow: auto;
       max-height: 100%;
-      width: 100%;
+    //  width: 100%;
 `
 
 export const ImgWrapper = styled.div`
@@ -151,8 +151,9 @@ export const FoldersZoom = styled(Folders)`
     }
 `
 export const InfoBox = styled.div`
-    position: fixed;
+    position: sticky;
     top: 10px;
+    float: right;
     right: 10px;
     z-index: 3;
     display: flex;
