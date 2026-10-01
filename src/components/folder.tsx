@@ -65,6 +65,10 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
     const checkedCount = splitScreenMedias.filter(m => m.checked && !m.deleted && !m.imported).length
 
     const handleClickOpenSplitMove = (ev: React.MouseEvent) => {
+        // The moved tiles vanish from the grid, so leave the user at the top
+        // of what remains rather than mid-page. gridImg's debounced scroll
+        // listener persists the new 0 position on its own.
+        window.scrollTo({ top: 0, behavior: 'auto' });
         if (ev.ctrlKey && uncheckedDestFolder && checkedDestFolder) {
             handleSplitMove();
             return;
