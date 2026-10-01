@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 
 import type { MediaRow, UpsertMediaInput, MediaMissingMd5Row, MediaAwaitingSortRow, DetectionBox, DetectionRow, DetectMediaRef, ItemDetectionState } from "../types/domain";
-import { getCacheDir } from "../thumbnails/cache";
+import { getCacheDir, hashFor } from "../thumbnails/cache";
 
 export const ensureReady = (): void => HashStore.ensureReady();
 
@@ -64,6 +64,30 @@ export const setFuturePosition = (id: string, futurePosition: string | null, mov
     const db = HashStore.getDb();
     db.prepare("UPDATE media SET futurePosition = ?, movedAt = ?, moveBatchId = ?, updatedAt = ? WHERE id = ?")
         .run(futurePosition, futurePosition ? Date.now() : null, futurePosition ? moveBatchId : null, Date.now(), id);
+};
+
+// Makes newLocalPath the file's home: used after organize/sortMediaByKind.ts
+// moves a filed media, so the invariant "futurePosition IS NULL -> the file is
+// at localPath" holds again. media.id is md5(localPath) (util.ts), so the id
+// changes with the path - otherwise the next folder load would compute a new
+// id for this file and collide with this row on the UNIQUE localPath index.
+// media_item and items_duplicated hold media ids too and are re-keyed in the
+// same transaction; `items` is not (an item id is a content key, and the
+// thumbnail cache is just re-made for the new path). Returns the new id, or
+// null when a stale row already holds that id/path - the caller logs and moves on.
+export const relocateMedia = (id: string, newLocalPath: string): string | null => {
+    const db = HashStore.getDb();
+    const newId = hashFor(newLocalPath);
+    const relocate = db.transaction(() => {
+        const taken = db.prepare("SELECT 1 FROM media WHERE (id = ? OR localPath = ?) AND id <> ?").get(newId, newLocalPath, id);
+        if (taken) return null;
+        db.prepare(`UPDATE media SET id = ?, localPath = ?, filename = ?, futurePosition = NULL, movedAt = NULL, moveBatchId = NULL, updatedAt = ?
+                    WHERE id = ?`).run(newId, newLocalPath, path.basename(newLocalPath), Date.now(), id);
+        db.prepare("UPDATE media_item SET mediaId = ? WHERE mediaId = ?").run(newId, id);
+        db.prepare("UPDATE items_duplicated SET mediaId = ? WHERE mediaId = ?").run(newId, id);
+        return newId;
+    });
+    return relocate();
 };
 
 // Every media that has been filed into a destination folder and is still

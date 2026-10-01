@@ -4,7 +4,7 @@ import { Media } from '../../../../entity/Media';
 import { addFolder } from '../folders';
 import { mediaLoadComplete, mediaLoadStart, zoomIn, zoomOut } from '../configurations';
 import { setDuplicateGroups, indexRebuildFinished, setIndexRebuildProgress, databaseExportFinished, databaseImportFinished, setMediaFrames } from '../duplicates';
-import { setDetectionResult, mergeDetections, setDetectionProgress, detectingFinished, setModelPath, setDetectionClasses, setDetectionSize } from '../detections';
+import { setDetectionResult, mergeDetections, rekeyDetections, setDetectionProgress, detectingFinished, setModelPath, setDetectionClasses, setDetectionSize } from '../detections';
 import { setPipelineProgress, pipelineFinished, pipelineRejected, PipelineSnapshot } from '../pipeline';
 import { setUndoAvailable, undoFinished, sortByKindFinished, UndoSkipped, SortByKindResult } from '../undo';
 import { FileDTO } from '../../../../entity/FileDTO';
@@ -75,8 +75,9 @@ export const ElectronConnection = () => {
             // rename back to the original path actually succeeded - a file
             // that could not be restored (someone moved it out from under the
             // app) never gets one, so its tile stays hidden.
-            ipcRender.on('fileUnmoved', (e: any, result: { id: string }) => {
-                dispatch(confirmFileUnmoved({ id: result.id }))
+            ipcRender.on('fileUnmoved', (e: any, result: { id: string, newId?: string, path?: string }) => {
+                dispatch(confirmFileUnmoved(result))
+                if (result.newId) dispatch(rekeyDetections({ id: result.id, newId: result.newId }))
             })
             ipcRender.on('undoAvailable', (e: any, result: { canUndo: boolean, label: string }) => {
                 dispatch(setUndoAvailable(result))

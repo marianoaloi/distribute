@@ -88,6 +88,14 @@ const detectionsSlice = createSlice({
                 ),
             },
         }),
+        // A media whose id changed (organize/sortMediaByKind.ts relocates it
+        // and media ids are md5(path)) keeps its overlay under the new id.
+        rekeyDetections: (state, action) => {
+            const { id, newId } = action.payload
+            if (!(id in state.byId)) return state
+            const { [id]: moved, ...rest } = state.byId
+            return { ...state, byId: { ...rest, [newId]: moved } }
+        },
         setDetectionProgress: (state, action) => ({
             ...state,
             progress: action.payload,
@@ -118,5 +126,5 @@ const detectionsSlice = createSlice({
     }
 })
 
-export const { startDetecting, setDetectionResult, mergeDetections, setDetectionProgress, detectingFinished, clearDetections, setModelPath, setDetectionClasses, setDetectionSize } = detectionsSlice.actions;
+export const { startDetecting, setDetectionResult, mergeDetections, rekeyDetections, setDetectionProgress, detectingFinished, clearDetections, setModelPath, setDetectionClasses, setDetectionSize } = detectionsSlice.actions;
 export default detectionsSlice.reducer;

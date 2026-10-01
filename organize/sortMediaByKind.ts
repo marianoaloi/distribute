@@ -1,9 +1,7 @@
 import fs from "fs";
 import path from "path";
-import crypto from "crypto";
 
 import * as MediaStore from "../mediaDb/MediaStore";
-import * as undoStack from "../undo/UndoStack";
 import { moveSync } from "../fileOps/moveSync";
 
 import type { Dialog, BrowserWindow } from "electron";
@@ -105,10 +103,19 @@ export interface SortResult {
     failed: Array<{ from: string; reason: string }>;
 }
 
-// Carries out the plan. Each successful move updates futurePosition to the new
-// location (the file really is there now) and is recorded as part of one undo
-// batch, so the whole reorganisation is a single Ctrl+Z.
-export const applyPlan = (plan: SortPlan, batchId: string): SortResult => {
+// What the renderer needs to re-point a tile at a relocated media: the id
+// changes with the path (see MediaStore.relocateMedia).
+export interface Relocated {
+    id: string;
+    newId: string;
+    path: string;
+}
+
+// Carries out the plan. Each successful move makes the new location the
+// media's home (localPath, futurePosition cleared) and is reported through
+// onRelocated. Not recorded for undo: the media is no longer "filed away", so
+// there is no origin left to send it back to.
+export const applyPlan = (plan: SortPlan, onRelocated: (moved: Relocated) => void): SortResult => {
     const result: SortResult = {
         moved: 0,
         alreadyInPlace: plan.alreadyInPlace,
@@ -138,20 +145,25 @@ export const applyPlan = (plan: SortPlan, batchId: string): SortResult => {
         }
 
         try {
-            MediaStore.setFuturePosition(move.mediaId, move.to, batchId);
+            const newId = MediaStore.relocateMedia(move.mediaId, move.to);
+            if (newId) {
+                onRelocated({ id: move.mediaId, newId, path: move.to });
+            } else {
+                // A stale row already holds the new id/path. Keep the record
+                // truthful about where the file is, and leave the tile hidden.
+                console.error("Sorted", move.from, "but a row already exists for", move.to, "- recording it as futurePosition instead");
+                MediaStore.setFuturePosition(move.mediaId, move.to, null);
+            }
         } catch (error) {
-            console.error("Sorted", move.from, "but could not record its new position -", error);
+            console.error("Sorted", move.from, "but could not relocate its row -", error);
+            // The transaction rolled back, so the row still names the old
+            // futurePosition, which is now empty. Point it at the file.
+            try {
+                MediaStore.setFuturePosition(move.mediaId, move.to, null);
+            } catch (fallbackError) {
+                console.error("Could not record the new position of", move.to, "either -", fallbackError);
+            }
         }
-
-        // previousFuturePosition is where the file came from, NOT null: this is
-        // a media's second move, so undoing it returns it to the folder it was
-        // filed into rather than claiming it is back at its localPath origin.
-        undoStack.recordMove(batchId, "kind folders", {
-            mediaId: move.mediaId,
-            from: move.from,
-            to: move.to,
-            previousFuturePosition: move.from,
-        });
 
         result.moved++;
     }
@@ -164,8 +176,6 @@ export interface RunSortFlowDeps {
     mainWindow: BrowserWindow;
     /** Folder the picker opens on - the currently loaded folder, when there is one. */
     defaultPath?: string;
-    /** Called after a run that moved anything, so the Edit > Undo item refreshes. */
-    onMovesRecorded: () => void;
 }
 
 const describe = (plan: SortPlan): string => {
@@ -179,7 +189,7 @@ const describe = (plan: SortPlan): string => {
 // The whole ipc flow behind app.ts's "sortMediaByKind" handler, with the
 // electron pieces injected so app.ts stays a thin dispatcher (and this module
 // stays loadable without electron). Reports through "sortByKindFinished".
-export const runSortFlow = async ({ dialog, mainWindow, defaultPath, onMovesRecorded }: RunSortFlowDeps): Promise<void> => {
+export const runSortFlow = async ({ dialog, mainWindow, defaultPath }: RunSortFlowDeps): Promise<void> => {
     const report = (payload: Record<string, unknown>) => mainWindow.webContents.send("sortByKindFinished", payload);
 
     try {
@@ -216,8 +226,8 @@ export const runSortFlow = async ({ dialog, mainWindow, defaultPath, onMovesReco
         }
 
         // A bulk move is worth confirming with a real count first - the Python
-        // script defaulted to a dry run for the same reason. Undo covers a
-        // mistake afterwards; this catches the wrong folder beforehand.
+        // script defaulted to a dry run for the same reason. There is no undo for
+        // this move, so this is the only chance to catch the wrong folder.
         const confirmed = await dialog.showMessageBox(mainWindow, {
             type: "question",
             buttons: ["Move", "Cancel"],
@@ -232,9 +242,8 @@ export const runSortFlow = async ({ dialog, mainWindow, defaultPath, onMovesReco
             return;
         }
 
-        const batchId = crypto.randomUUID();
-        const result = applyPlan(plan, batchId);
-        if (result.moved > 0) onMovesRecorded();
+        // Tell the renderer each tile is back, under its new id and path.
+        const result = applyPlan(plan, (moved) => mainWindow.webContents.send("fileUnmoved", moved));
 
         report({ success: true, ...result });
     } catch (error) {

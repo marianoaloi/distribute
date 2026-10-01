@@ -21,8 +21,9 @@ export interface MoveEntry {
      * The media.futurePosition value that was correct BEFORE this move, and so
      * the one undo has to put back. null when the file was still at its
      * localPath origin (a first move out of the source folder); otherwise the
-     * path it had already been moved to, for a media being moved a second time
-     * (organize/sortMediaByKind.ts).
+     * path it had already been moved to, for a media being moved a second time.
+     * Nothing records a second move today (the kind-folder sort is not
+     * undoable), but the field is kept so undo stays correct if something does.
      *
      * Without this, undoing a second move would clear futurePosition to null
      * and claim the file is back at localPath when it is really sitting in the

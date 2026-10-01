@@ -332,7 +332,6 @@ const runSortMediaByKind = (): void => {
         dialog,
         mainWindow: mainWindow!,
         defaultPath: fileGlobal,
-        onMovesRecorded: scheduleUndoUiRefresh,
     });
 };
 
@@ -884,9 +883,9 @@ const performUndo = (): void => {
             console.error("Could not restore futurePosition for", entry.from, "-", error);
         }
         // Only a media that has landed back at its localPath origin becomes
-        // visible again. Undoing a second move (the kind-folder sort) puts the
-        // file back in the folder it had already been filed into - still filed
-        // away, so its tile has to stay hidden.
+        // visible again. Undoing a second move would put the file back in the
+        // folder it had already been filed into - still filed away, so its
+        // tile has to stay hidden.
         if (entry.previousFuturePosition === null) {
             mainWindow!.webContents.send("fileUnmoved", { id: entry.mediaId });
         }
