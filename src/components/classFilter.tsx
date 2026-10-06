@@ -4,7 +4,7 @@ import {
     IconButton, Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions,
     Button, Select, MenuItem, ToggleButton, Stack, Divider, TextField
 } from "@mui/material"
-import { FilterAlt, Add, Delete, RestartAlt } from "@mui/icons-material"
+import { FilterAlt, FilterAltOffOutlined, Add, Delete, RestartAlt } from "@mui/icons-material"
 import { LoadDetectionClasses, LoadDetections, selectDetectionClassNames, useSelector } from "../lib/redux"
 import { configurationsSelector, setClassFilter } from "../lib/redux/slices/configurations"
 import { ClassFilterBar } from "./classFilter.styled"
@@ -140,7 +140,7 @@ export const ClassFilter = (() => {
                     color={active ? "primary" : "default"}
                     title={active ? "Class filter active - click to edit" : "Filter by detected class"}
                 >
-                    <FilterAlt fontSize="medium" />
+                    {active ? <FilterAlt fontSize="medium" /> : <FilterAltOffOutlined fontSize="medium" />}
                 </IconButton>
             </ClassFilterBar>
 
