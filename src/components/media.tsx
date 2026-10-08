@@ -42,7 +42,7 @@ export const MediaIMG: React.FC<TheMediaProps> = ({ media, lastClickedEvent,
     }
 
     const mouseMoveOpen = (event: React.MouseEvent<HTMLDivElement, MouseEvent>) => {
-        if (event.ctrlKey)
+        if (event.ctrlKey && !event.shiftKey)
             openPreview()
     }
 

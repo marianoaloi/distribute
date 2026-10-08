@@ -125,7 +125,7 @@ const processPathsSlice = async (
     }
     onReadyGo(ready);
 
-    const groupSize = 30;
+    const groupSize = 10;
     for (let i = 0; i < pending.length; i += groupSize) {
         const group = pending.slice(i, i + groupSize);
         for (const item of group) {
