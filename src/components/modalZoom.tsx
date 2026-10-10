@@ -1,11 +1,11 @@
 import { forwardRef, SyntheticEvent, useEffect, useImperativeHandle, useRef, useState } from "react"
 import { Media } from "../entity/Media"
 import { prettifySizeF } from "./media"
-import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, ImgWrapper, MediaControllersCSS, FoldersZoom, MuteIcon, InfoBox, ZoomHeader, VideoProgress } from "./modalZoom.styled"
+import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, ImgWrapper, MediaControllersCSS, FoldersZoom, MuteIcon, InfoBox, ZoomHeader, VideoProgress, FramesPanel, FrameTile } from "./modalZoom.styled"
 import { IconButton, Slider, Modal } from "@mui/material"
 import { toMediaUrl } from "../lib/mediaUrl"
-import { ArrowBackIos, ArrowForwardIos, CleaningServices, Label, ContentCopy, Check } from "@mui/icons-material"
-import { updateArrayItem, useDispatch, useSelector, selectDetections } from "../lib/redux"
+import { ArrowBackIos, ArrowForwardIos, CleaningServices, Label, ContentCopy, Check, Image } from "@mui/icons-material"
+import { updateArrayItem, useDispatch, useSelector, selectDetections, selectMediaFrames, GetMediaFrames } from "../lib/redux"
 import { configurationsSelector, setVideoVolume } from "../lib/redux/slices/configurations"
 import { DetectionBoxOutline, DetectionBoxLabel } from "./objectDetectionGrid.styled"
 
@@ -38,6 +38,18 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         const [duration, setDuration] = useState(0);
         const [showDetections, setShowDetections] = useState(false);
         const toggleDetections = () => setShowDetections(v => !v)
+        // Video/GIF detection runs on the 4 extracted frames (start10s, end10s,
+        // pct50, pct10 - compareImg/videoFrames.ts). This shows them in a column
+        // beside the media; boxes are only stored for the end10s frame (see
+        // detections.reduce.ts), so only that one gets an overlay.
+        const isAnimated = mediaWithPreview.mime.includes('video') || mediaWithPreview.mime.includes('gif')
+        const mediaFrames = useSelector(selectMediaFrames)
+        const frames = mediaFrames[mediaWithPreview.id] || []
+        const [showDetectionFrames, setShowDetectionFrames] = useState(false)
+        const showFramesPanel = showDetectionFrames && isAnimated
+        useEffect(() => {
+            if (showFramesPanel) dispatch(GetMediaFrames([mediaWithPreview]) as any)
+        }, [showFramesPanel, mediaWithPreview.id, dispatch])
         const [pathCopied, setPathCopied] = useState(false)
         // Scale factor for the video, applied as a transform (origin top-left)
         // so MediaPresentation's overflow:auto scrolls over the enlarged frame.
@@ -309,12 +321,32 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                             title={detectedObjects.length > 0 ? `${showDetections ? "Hide" : "Show"} ${detectedObjects.length} detected object(s)` : "No objects detected for this media"}>
                             <Label />
                         </IconButton>
+                        {isAnimated &&
+                            <IconButton onClick={() => setShowDetectionFrames(v => !v)}
+                                color={showDetectionFrames ? "primary" : "default"}
+                                title={showDetectionFrames ? "Hide the detection frames" : "Show the frames used for object detection"}>
+                                <Image />
+                            </IconButton>}
                         <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
                     </ZoomHeader>
                     {mediaWithPreview.mime.includes('video') &&
                         <VideoProgress variant="determinate" value={duration > 0 ? (currentTime / duration) * 100 : 0} />
                     }
-                    <MediaPresentation>
+                    {showFramesPanel &&
+                        <FramesPanel>
+                            {frames.length === 0 && <span>No extracted frames for this media</span>}
+                            {frames.map(frame => (
+                                <FrameTile key={frame} title={frame}>
+                                    <img src={toMediaUrl(frame)} alt={frame} draggable={false} />
+                                    {/_end10s\.jpg$/.test(frame) && detectedObjects.map((box, idx) => (
+                                        <DetectionBoxOutline key={idx} x={box.x} y={box.y} w={box.w} h={box.h}>
+                                            <DetectionBoxLabel>{box.className} {(box.score * 100).toFixed(0)}%</DetectionBoxLabel>
+                                        </DetectionBoxOutline>
+                                    ))}
+                                </FrameTile>
+                            ))}
+                        </FramesPanel>}
+                    <MediaPresentation style={showFramesPanel ? { width: '80%', left: '40%' } : undefined}>
                         {
                             mediaWithPreview.mime.includes('video')
                                 ?
