@@ -21,7 +21,7 @@ export const isScrollToLastSeenKey = (ev: KeyboardEvent): boolean => {
     if (ev.key !== "t" || ev.ctrlKey || ev.altKey || ev.metaKey) return false
     const target = ev.target as HTMLElement | null
     if (target?.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])")) return false
-    return !document.querySelector('[role="dialog"]')
+    return !document.querySelector('[role="dialog"], .MuiModal-root')
 }
 
 export const scrollToMedia = (id: string): boolean => {
