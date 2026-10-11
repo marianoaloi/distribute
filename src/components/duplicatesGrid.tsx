@@ -5,7 +5,7 @@ import { ImageSearch, RestartAlt, FolderOpen, FolderCopyTwoTone, VolumeOff, File
 import { Media } from "../entity/Media"
 import { ExportDatabase, FindIndexDuplicates, GetDuplicateGroups, GetMediaFrames, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDetections, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMediaFrames, selectMedias, selectPipelineRunning, updateManyArrayItem, useSelector } from "../lib/redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
-import { MediaIMG } from "./media"
+import { MediaIMG, isScrollToLastSeenKey, scrollToMedia } from "./media"
 import { FrameCollageTile } from "./frameCollageTile"
 import ModalZoom from "./modalZoom"
 import { CounterImgIndex, DuplicateGroupCard, DuplicateGroupRow, DuplicatesList, DuplicatesResume, EmptyState, GroupLabel, ImportedMediaWrap, RebuildIndexInfo } from "./duplicatesGrid.styled"
@@ -106,6 +106,19 @@ export const GridDuplicates = (() => {
         if (!lastZoom) return;
         setOpenedIds(prev => prev.has(lastZoom.id) ? prev : new Set(prev).add(lastZoom.id))
     }, [lastZoom])
+
+    // "t": bring the last-seen tile into view. This grid renders every group
+    // (no pagination), so the tile is in the DOM whenever it is in flatList.
+    // The ref keeps the window listener on the latest render.
+    const scrollToLastSeenRef = useRef<() => void>(() => {})
+    scrollToLastSeenRef.current = () => { if (lastZoom) scrollToMedia(lastZoom.id) }
+    useEffect(() => {
+        const onKeyUp = (ev: globalThis.KeyboardEvent) => {
+            if (isScrollToLastSeenKey(ev)) scrollToLastSeenRef.current()
+        }
+        window.addEventListener('keyup', onKeyUp)
+        return () => window.removeEventListener('keyup', onKeyUp)
+    }, [])
 
     const [lastClick, setLastClick] = useState<Media>()
     const lastClickedEvent = ($eventClick: Media) => { setLastClick($eventClick) }

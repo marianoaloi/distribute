@@ -14,6 +14,22 @@ type TheMediaProps = {
     isLastSeen?: boolean
     isOpened?: boolean
 }
+// "t" jumps the grid to the last-seen (white star) tile. Shared by both grids
+// so they agree on when the key must be left alone: typing in a field, a
+// modifier chord, or an open dialog (the zoom modal is a MUI Modal).
+export const isScrollToLastSeenKey = (ev: KeyboardEvent): boolean => {
+    if (ev.key !== "t" || ev.ctrlKey || ev.altKey || ev.metaKey) return false
+    const target = ev.target as HTMLElement | null
+    if (target?.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])")) return false
+    return !document.querySelector('[role="dialog"]')
+}
+
+export const scrollToMedia = (id: string): boolean => {
+    const el = document.getElementById(`media-${id}`)
+    el?.scrollIntoView({ block: "center", behavior: "auto" })
+    return !!el
+}
+
 export const MediaIMG: React.FC<TheMediaProps> = ({ media, lastClickedEvent,
     shiftSelect,
     shiftControlSelect
@@ -50,7 +66,7 @@ export const MediaIMG: React.FC<TheMediaProps> = ({ media, lastClickedEvent,
         handleOpenPreview(media)
     }
     const config = useSelector(configurationsSelector)
-    return <ThePhoto onMouseMove={mouseMoveOpen}>
+    return <ThePhoto id={`media-${media.id}`} onMouseMove={mouseMoveOpen}>
         {/* <img src={media.media} /> */}
         <ImageMaloi 
                 size={config.pxzoom} 

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { OpenDirectory, OpenDirectoryRecursive, selectDetections, selectMedias, selectPipelineRunning, updateManyArrayItem, useSelector } from "../lib/redux"
 import { ImgGrid, NoMediaFound, Qtd, Resume } from "./gridImg.styled"
-import { MediaIMG } from "./media"
+import { MediaIMG, isScrollToLastSeenKey, scrollToMedia } from "./media"
 import { Media } from "../entity/Media"
 import { useDispatch } from "react-redux"
 import { IconButton } from "@mui/material"
@@ -90,6 +90,33 @@ export const GridIMGs = (() => {
         if (!lastZoom) return;
         setOpenedIds(prev => prev.has(lastZoom.id) ? prev : new Set(prev).add(lastZoom.id))
     }, [lastZoom])
+
+    // "t": bring the last-seen tile into view. The tile may sit on another
+    // page, so switch page first and let the effect below scroll once that
+    // page has rendered. The ref keeps the window listener on the latest render.
+    const pendingScrollId = useRef<string | null>(null)
+    const scrollToLastSeen = () => {
+        if (!lastZoom) return;
+        const absIdx = medias.findIndex(m => m.id === lastZoom.id)
+        if (absIdx === -1) return;
+        const page = Math.floor(absIdx / postsPerPage)
+        if (page === currentPage) { scrollToMedia(lastZoom.id); return; }
+        pendingScrollId.current = lastZoom.id
+        setCurrentPage(page)
+    }
+    const scrollToLastSeenRef = useRef(scrollToLastSeen)
+    scrollToLastSeenRef.current = scrollToLastSeen
+    useEffect(() => {
+        const onKeyUp = (ev: KeyboardEvent) => {
+            if (isScrollToLastSeenKey(ev)) scrollToLastSeenRef.current()
+        }
+        window.addEventListener('keyup', onKeyUp)
+        return () => window.removeEventListener('keyup', onKeyUp)
+    }, [])
+    useEffect(() => {
+        if (pendingScrollId.current === null) return;
+        if (scrollToMedia(pendingScrollId.current)) pendingScrollId.current = null
+    }, [currentPage, mediaSliced.length])
 
     const lastClickedEvent = ($eventClick: Media) => { setLastClick($eventClick) }
     const shiftSelect = ($eventClick: Media) => { processSelection($eventClick, true) }
