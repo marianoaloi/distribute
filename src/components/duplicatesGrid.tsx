@@ -72,10 +72,11 @@ export const GridDuplicates = (() => {
     const flatList = groups.flat()
 
     // Paged by GROUP, not by media, so a group is never split across pages.
-    // Select-all/unselect/auto-select still act on every group, not just the page.
+    // Select-all/unselect/auto-select and the split move act on this page only.
     const [page, setPage] = useState(0)
     const [groupsPerPage, setGroupsPerPage] = useState(20)
     const pagedGroups = groups.slice(page * groupsPerPage, (page + 1) * groupsPerPage)
+    const pagedMedias = pagedGroups.flat()
     const totalPages = totalPagesFor(groups.length, groupsPerPage)
     const groupIndexById = new Map(groups.flatMap((group, gi) => group.map(m => [m.id, gi] as const)))
     const pageOf = (mediaId: string): number | undefined => {
@@ -171,9 +172,9 @@ export const GridDuplicates = (() => {
     }
 
     // Select-all skips imported fake items — they can never be moved, so a
-    // check mark on them would only be noise. Unselect clears everything.
-    const selectAll = () => processChoice(flatList.filter(m => !m.imported), true)
-    const unselectAll = () => processChoice(flatList, false)
+    // check mark on them would only be noise. Unselect clears the whole page.
+    const selectAll = () => processChoice(pagedMedias.filter(m => !m.imported), true)
+    const unselectAll = () => processChoice(pagedMedias, false)
 
     // Within each group: checks every item for removal except one survivor,
     // chosen by type/audio priority — a video is always preferred over a gif
@@ -183,7 +184,7 @@ export const GridDuplicates = (() => {
     // tier is non-empty.
     const selectDuplicatesToRemove = () => {
         const decided: Media[] = []
-        for (const group of groups) {
+        for (const group of pagedGroups) {
             // Only actual-folder items get checked/spared: imported fake items
             // (database import) are other folders' files — not movable, and
             // they must not count as a group's surviving copy either.
@@ -296,8 +297,8 @@ export const GridDuplicates = (() => {
                         : "Rebuild the compareImg vector index from the currently loaded media (use this if indexing errors show up in the console, e.g. a corrupted index)"}>
                     {indexRebuilding ? <CircularProgress size={20} /> : <RestartAlt />}
                 </IconButton>
-                <IconButton onClick={selectDuplicatesToRemove} disabled={groups.length === 0}
-                    title="Check duplicates for removal in every group, keeping one survivor: a video is preferred over a gif or image (biggest with sound, else biggest muted), otherwise the biggest gif, otherwise the biggest item">
+                <IconButton onClick={selectDuplicatesToRemove} disabled={pagedGroups.length === 0}
+                    title="Check duplicates for removal in every group on this page, keeping one survivor: a video is preferred over a gif or image (biggest with sound, else biggest muted), otherwise the biggest gif, otherwise the biggest item">
                     <VolumeOff />
                 </IconButton>
                 <IconButton onClick={exportDatabase} disabled={dbExporting || pipelineRunning}
@@ -308,8 +309,8 @@ export const GridDuplicates = (() => {
                     title="Import another folder's exported database and find items duplicated across the two folders (requires this folder's index to exist)">
                     {dbImporting ? <CircularProgress size={20} /> : <FileUpload />}
                 </IconButton>
-                <IconButton onClick={selectAll} disabled={groups.length === 0} title="Select all items in the duplicate groups"><RadioButtonChecked /></IconButton>
-                <IconButton onClick={unselectAll} disabled={groups.length === 0} title="Unselect all items in the duplicate groups"><RadioButtonUnchecked /></IconButton>
+                <IconButton onClick={selectAll} disabled={pagedGroups.length === 0} title="Select all items in the duplicate groups on this page"><RadioButtonChecked /></IconButton>
+                <IconButton onClick={unselectAll} disabled={pagedGroups.length === 0} title="Unselect all items in the duplicate groups on this page"><RadioButtonUnchecked /></IconButton>
                 <span>{groups.length} duplicate group{groups.length === 1 ? "" : "s"}</span>
                 <Pagination page={page} setPage={setPage}
                     perPage={groupsPerPage} setPerPage={setGroupsPerPage} total={groups.length}
@@ -317,7 +318,7 @@ export const GridDuplicates = (() => {
 
                 <div className="spacer" />
 
-                <Folders screenMedias={flatList} />
+                <Folders screenMedias={pagedMedias} />
 
                 <IconButton onClick={openDiretory} disabled={pipelineRunning} title="Open folder to choose medias"><FolderOpen /></IconButton>
                 <IconButton onClick={openDiretoryRecursive} disabled={pipelineRunning} title="Open folder recursively to choose medias"><FolderCopyTwoTone /></IconButton>

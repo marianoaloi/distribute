@@ -57,7 +57,7 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
     };
 
     // Scoped to exactly what the caller has on screen (e.g. gridImg's
-    // current page, or duplicatesGrid's flat list) - NOT the whole redux
+    // current page, or duplicatesGrid's current page) - NOT the whole redux
     // store. "Unchecked" is the default state, so acting on the global store
     // would sweep in every other page/screen's untouched media too.
     const splitScreenMedias = screenMedias ?? []
