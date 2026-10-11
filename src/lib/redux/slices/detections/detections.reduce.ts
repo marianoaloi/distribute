@@ -10,6 +10,14 @@ export interface DetectionBox {
     className: string
 }
 
+// A predefined class-filter group from the folder's .maloi. classes are raw
+// class ids (negative = NOT), resolved to names against classNames at use.
+export interface DetectionGroup {
+    name: string
+    classes: number[]
+    join: 'OR' | 'AND'
+}
+
 interface DetectionProgress {
     processed: number
     total: number
@@ -38,6 +46,7 @@ interface DetectionsState {
     progress: DetectionProgress | null
     modelPath: string | null
     classNames: string[]
+    groups: DetectionGroup[]
     lastProcessedId: string | null
     // Letterbox/tensor input resolution actually in effect (see
     // objectDetection/onnxDetector.js's getSize): the .maloi "reshape"
@@ -53,6 +62,7 @@ const initialState: DetectionsState = {
     progress: null,
     modelPath: null,
     classNames: [],
+    groups: [],
     lastProcessedId: null,
     detectionSize: null,
 }
@@ -117,7 +127,8 @@ const detectionsSlice = createSlice({
         }),
         setDetectionClasses: (state, action) => ({
             ...state,
-            classNames: action.payload,
+            classNames: action.payload.names,
+            groups: action.payload.groups ?? [],
         }),
         setDetectionSize: (state, action) => ({
             ...state,

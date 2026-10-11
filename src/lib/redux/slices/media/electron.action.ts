@@ -4,7 +4,7 @@ import { Media } from '../../../../entity/Media';
 import { addFolder } from '../folders';
 import { mediaLoadComplete, mediaLoadStart, zoomIn, zoomOut } from '../configurations';
 import { setDuplicateGroups, indexRebuildFinished, setIndexRebuildProgress, databaseExportFinished, databaseImportFinished, setMediaFrames } from '../duplicates';
-import { setDetectionResult, mergeDetections, rekeyDetections, setDetectionProgress, detectingFinished, setModelPath, setDetectionClasses, setDetectionSize } from '../detections';
+import { setDetectionResult, mergeDetections, rekeyDetections, setDetectionProgress, detectingFinished, setModelPath, setDetectionClasses, setDetectionSize, DetectionGroup } from '../detections';
 import { setPipelineProgress, pipelineFinished, pipelineRejected, PipelineSnapshot } from '../pipeline';
 import { setUndoAvailable, undoFinished, sortByKindFinished, UndoSkipped, SortByKindResult } from '../undo';
 import { FileDTO } from '../../../../entity/FileDTO';
@@ -145,8 +145,8 @@ export const ElectronConnection = () => {
                 dispatch(setModelPath(result.path))
                 dispatch(setDetectionSize(result.size))
             })
-            ipcRender.on('detectionClassesLoaded', (e: any, result: { names: string[] }) => {
-                dispatch(setDetectionClasses(result.names))
+            ipcRender.on('detectionClassesLoaded', (e: any, result: { names: string[], groups?: DetectionGroup[] }) => {
+                dispatch(setDetectionClasses(result))
             })
             ipcRender.on('detectionSizeLoaded', (e: any, result: { size: number }) => {
                 dispatch(setDetectionSize(result.size))

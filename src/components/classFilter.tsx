@@ -2,14 +2,14 @@ import { useEffect, useState } from "react"
 import { useDispatch } from "react-redux"
 import {
     IconButton, Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions,
-    Button, Select, MenuItem, ToggleButton, Stack, Divider, TextField
+    Button, Select, MenuItem, ListSubheader, ToggleButton, Stack, Divider, TextField
 } from "@mui/material"
 import { FilterAlt, FilterAltOffOutlined, Add, Delete, RestartAlt } from "@mui/icons-material"
-import { LoadDetectionClasses, LoadDetections, selectDetectionClassNames, useSelector } from "../lib/redux"
+import { LoadDetectionClasses, LoadDetections, selectDetectionClassNames, selectDetectionGroups, useSelector } from "../lib/redux"
 import { configurationsSelector, setClassFilter } from "../lib/redux/slices/configurations"
 import { ClassFilterBar } from "./classFilter.styled"
 import { ClassFilter as ClassFilterExpr, ClassFilterGroup, ClassFilterTerm } from "../entity/FilterMedia"
-import { MediaDetections } from "../lib/redux/slices/detections/detections.reduce"
+import { DetectionGroup, MediaDetections } from "../lib/redux/slices/detections/detections.reduce"
 
 // Drops half-built terms (no class picked yet) and any group left empty by
 // that - a row mid-edit must never silently hide the whole grid.
@@ -43,6 +43,25 @@ export function matchesClassFilter(detection: MediaDetections | undefined, group
     return groups.some(group => group.every(term => termHolds(term, detection) !== term.negate))
 }
 
+// Select values starting with this are group picks, never class names.
+const GROUP_PREFIX = '▸group:'
+
+const blankTerm = (): ClassFilterTerm => ({ className: '', negate: false, score: null })
+
+// The dialog always shows at least one row, so the class Select (which also
+// lists the groups) is reachable even when the filter is empty.
+const withBlankRow = (filter: ClassFilterExpr): ClassFilterExpr => filter.length > 0 ? filter : [[blankTerm()]]
+
+// Group -> filter expression: OR = one single-term group per class (groups are
+// ORed), AND = one group holding every term. Negative id = NOT that class.
+// Null when an id no longer fits the class list (e.g. classes were edited
+// after the .maloi was picked), so a stale group is hidden, not misapplied.
+function groupToFilter(group: DetectionGroup, classNames: string[]): ClassFilterExpr | null {
+    if (group.classes.some(id => Math.abs(id) >= classNames.length)) return null
+    const terms = group.classes.map((id): ClassFilterTerm => ({ className: classNames[Math.abs(id)], negate: id < 0, score: null }))
+    return group.join === 'AND' ? [terms] : terms.map(term => [term])
+}
+
 // Empty -> null (ignore score); anything that isn't an integer in -100..100
 // is rejected (undefined) so the field keeps its previous value.
 function parseScore(text: string): number | null | undefined {
@@ -56,6 +75,7 @@ export const ClassFilter = (() => {
     const dispatch = useDispatch<any>()
     const config = useSelector(configurationsSelector)
     const classNames = useSelector(selectDetectionClassNames)
+    const detectionGroups = useSelector(selectDetectionGroups)
     const [open, setOpen] = useState(false)
     const [draft, setDraft] = useState<ClassFilterExpr>([])
     // The filter that was actually live (applied to the grid) at the moment
@@ -65,6 +85,9 @@ export const ClassFilter = (() => {
     // active.
     const [preTryFilter, setPreTryFilter] = useState<ClassFilterExpr>([])
     const active = normalizeClassFilter(config.classFilter).length > 0
+    const groupFilters = detectionGroups
+        .map((group, index) => ({ index, name: group.name, filter: groupToFilter(group, classNames) }))
+        .filter(g => g.filter !== null)
 
     // index.db is per-folder: both the class list the dropdown offers and the
     // persisted detections the filter matches against must be re-fetched every
@@ -76,7 +99,7 @@ export const ClassFilter = (() => {
         }
     }, [config.mediaLoading, dispatch])
 
-    const openDialog = () => { setDraft(config.classFilter); setPreTryFilter(config.classFilter); setOpen(true) }
+    const openDialog = () => { setDraft(withBlankRow(config.classFilter)); setPreTryFilter(config.classFilter); setOpen(true) }
     // Discards whatever "Try" applied live and restores what was active
     // before the dialog opened - Cancel must undo Try's preview, not just
     // close the dialog on top of it.
@@ -86,10 +109,10 @@ export const ClassFilter = (() => {
     // live result instead of round-tripping open/close/open to see it.
     const tryFilter = () => dispatch(setClassFilter(normalizeClassFilter(draft)))
 
-    const addGroup = () => setDraft(prev => [...prev, [{ className: '', negate: false, score: null }]])
+    const addGroup = () => setDraft(prev => [...prev, [blankTerm()]])
 
     const addTerm = (groupIndex: number) => setDraft(prev =>
-        prev.map((group, gi) => gi === groupIndex ? [...group, { className: '', negate: false, score: null }] : group)
+        prev.map((group, gi) => gi === groupIndex ? [...group, blankTerm()] : group)
     )
 
     const setScore = (groupIndex: number, termIndex: number, text: string) => {
@@ -102,11 +125,24 @@ export const ClassFilter = (() => {
         )
     }
 
-    const setClassName = (groupIndex: number, termIndex: number, className: string) => setDraft(prev =>
+    // Picking a group replaces the whole filter with its expression and applies
+    // it right away (dialog stays open for tweaking); it is never stored as a
+    // term's className.
+    const applyGroup = (index: number) => {
+        const filter = groupFilters.find(g => g.index === index)?.filter
+        if (!filter) return
+        setDraft(filter)
+        dispatch(setClassFilter(normalizeClassFilter(filter)))
+    }
+
+    const setClassName = (groupIndex: number, termIndex: number, className: string) => {
+        if (className.startsWith(GROUP_PREFIX)) return applyGroup(Number(className.slice(GROUP_PREFIX.length)))
+        setDraft(prev =>
         prev.map((group, gi) => gi === groupIndex
             ? group.map((term, ti) => ti === termIndex ? { ...term, className } : term)
             : group)
-    )
+        )
+    }
 
     const toggleNegate = (groupIndex: number, termIndex: number) => setDraft(prev =>
         prev.map((group, gi) => gi === groupIndex
@@ -115,16 +151,16 @@ export const ClassFilter = (() => {
     )
 
     const removeTerm = (groupIndex: number, termIndex: number) => setDraft(prev =>
-        prev
+        withBlankRow(prev
             .map((group, gi) => gi === groupIndex ? group.filter((_, ti) => ti !== termIndex) : group)
-            .filter(group => group.length > 0)
+            .filter(group => group.length > 0))
     )
 
-    const removeGroup = (groupIndex: number) => setDraft(prev => prev.filter((_, gi) => gi !== groupIndex))
+    const removeGroup = (groupIndex: number) => setDraft(prev => withBlankRow(prev.filter((_, gi) => gi !== groupIndex)))
 
     // Reset takes effect immediately and leaves the dialog open, so the user sees
     // the unfiltered grid and can start a new filter without reopening.
-    const reset = () => { setDraft([]); dispatch(setClassFilter([])) }
+    const reset = () => { setDraft(withBlankRow([])); dispatch(setClassFilter([])) }
 
     const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault()
@@ -188,6 +224,8 @@ export const ClassFilter = (() => {
                                     >
                                         <MenuItem value=""><em>Choose a class</em></MenuItem>
                                         {classNames.map(n => <MenuItem key={n} value={n}>{n}</MenuItem>)}
+                                        {groupFilters.length > 0 && <ListSubheader>Groups</ListSubheader>}
+                                        {groupFilters.map(g => <MenuItem key={GROUP_PREFIX + g.index} value={GROUP_PREFIX + g.index}>{'▸ ' + g.name}</MenuItem>)}
                                     </Select>
                                     <TextField
                                         size="small"

@@ -208,6 +208,30 @@ export const saveDetectionClasses = (names: string[]): void => {
     run(names);
 };
 
+export interface DetectionGroup {
+    name: string;
+    classes: number[];
+    join: "OR" | "AND";
+}
+
+export const getDetectionGroups = (): DetectionGroup[] => {
+    const db = HashStore.getDb();
+    const rows = db.prepare("SELECT name, classes, joinType FROM detection_group ORDER BY position ASC").all() as Array<{ name: string; classes: string; joinType: string }>;
+    return rows.map((r) => ({ name: r.name, classes: JSON.parse(r.classes) as number[], join: r.joinType as "OR" | "AND" }));
+};
+
+// Replaces all saved groups (an empty list clears them).
+export const saveDetectionGroups = (groups: DetectionGroup[]): void => {
+    const db = HashStore.getDb();
+    const del = db.prepare("DELETE FROM detection_group");
+    const insert = db.prepare("INSERT INTO detection_group (position, name, classes, joinType) VALUES (?, ?, ?, ?)");
+    const run = db.transaction((list: DetectionGroup[]) => {
+        del.run();
+        list.forEach((g, position) => insert.run(position, g.name, JSON.stringify(g.classes), g.join));
+    });
+    run(groups);
+};
+
 // Mirrors setDetectionState above, one level down: records the class-name
 // snapshot THIS item (not the whole media) was just detected against - see
 // mediaSchema.js's item_detection_state table.

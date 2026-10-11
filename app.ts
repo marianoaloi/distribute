@@ -76,10 +76,31 @@ interface MaloiFile {
     // bakes a Reshape op sized for a specific input resolution other than
     // the 640 default.
     reshape?: number;
+    // Predefined class-filter groups, untrusted until parseMaloiGroups. classes
+    // are 0-based positions in the "classes" list, negative = NOT that class.
+    group?: unknown;
 }
 
 const splitClassNames = (raw: string): string[] =>
     String(raw).split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+
+// Boundary validation for a .maloi's "group" array: a malformed entry is
+// skipped (never throws) so a bad group can't break model loading.
+const parseMaloiGroups = (raw: unknown, classCount: number): MediaStore.DetectionGroup[] => {
+    if (!Array.isArray(raw)) return [];
+    const groups: MediaStore.DetectionGroup[] = [];
+    for (const entry of raw) {
+        const name = typeof entry?.name === "string" ? entry.name.trim() : "";
+        const join = typeof entry?.join === "string" ? entry.join.trim().toUpperCase() : "";
+        const classes = entry?.classes;
+        const validIds = Array.isArray(classes) && classes.length > 0
+            && classes.every((id: unknown) => Number.isInteger(id) && Math.abs(id as number) < classCount);
+        if (name && validIds && (join === "OR" || join === "AND")) {
+            groups.push({ name, classes: classes.map((id: number) => id || 0), join });
+        }
+    }
+    return groups;
+};
 
 // Shared guard for every long-running entry point (loadRecursive/
 // loadSuperRecursive, rebuildIndex, detectObjects, exportDatabase,
@@ -417,8 +438,10 @@ const chooseOnnxModelDialog = async (): Promise<boolean> => {
                 MediaStore.getOrCreateModelPath(onnxPath);
                 const names = splitClassNames(maloi.classes || "");
                 MediaStore.saveDetectionClasses(names);
+                // Replaces the saved groups; no "group" in the file clears them.
+                MediaStore.saveDetectionGroups(parseMaloiGroups(maloi.group, names.length));
                 onnxDetector.setClassNames(names);
-                mainWindow!.webContents.send("detectionClassesLoaded", { names });
+                mainWindow!.webContents.send("detectionClassesLoaded", { names, groups: MediaStore.getDetectionGroups() });
                 // Always set (even to null/absent) rather than only when
                 // present - otherwise a .maloi with no "reshape" field would
                 // silently inherit whatever override an earlier .maloi pick
@@ -496,10 +519,10 @@ ipcMain.on("saveDetectionClasses", (event: IpcMainEvent, data: SaveDetectionClas
         MediaStore.ensureReady();
         MediaStore.saveDetectionClasses(names);
         onnxDetector.setClassNames(names);
-        mainWindow!.webContents.send("detectionClassesLoaded", { names });
+        mainWindow!.webContents.send("detectionClassesLoaded", { names, groups: MediaStore.getDetectionGroups() });
     } catch (error) {
         console.error("saveDetectionClasses failed", error);
-        mainWindow!.webContents.send("detectionClassesLoaded", { names: [], error: (error as Error).message });
+        mainWindow!.webContents.send("detectionClassesLoaded", { names: [], groups: [], error: (error as Error).message });
     }
 });
 
@@ -508,10 +531,10 @@ ipcMain.on("loadDetectionClasses", () => {
         MediaStore.ensureReady();
         const names = MediaStore.getDetectionClasses();
         onnxDetector.setClassNames(names);
-        mainWindow!.webContents.send("detectionClassesLoaded", { names });
+        mainWindow!.webContents.send("detectionClassesLoaded", { names, groups: MediaStore.getDetectionGroups() });
     } catch (error) {
         console.error("loadDetectionClasses failed", error);
-        mainWindow!.webContents.send("detectionClassesLoaded", { names: [], error: (error as Error).message });
+        mainWindow!.webContents.send("detectionClassesLoaded", { names: [], groups: [], error: (error as Error).message });
     }
 });
 

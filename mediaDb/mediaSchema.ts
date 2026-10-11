@@ -65,6 +65,19 @@ export const createMediaSchema = (database: Database.Database): void => {
         );
     `);
 
+    // Predefined class-filter groups from the picked .maloi, one row per
+    // group in file order. classes is a JSON array of raw class ids (negative
+    // = NOT) rather than names, so renaming a class doesn't break a group -
+    // the renderer resolves ids to names against the current class list.
+    database.exec(`
+        CREATE TABLE IF NOT EXISTS detection_group (
+            position INTEGER PRIMARY KEY,
+            name     TEXT NOT NULL,
+            classes  TEXT NOT NULL,
+            joinType TEXT NOT NULL
+        );
+    `);
+
     // Filled every time the user picks a model in chooseOnnxModel - one row
     // per distinct path ever chosen, so item_detection.modelPathId can point
     // at *which* model produced a result without repeating the path text on
