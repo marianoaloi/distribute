@@ -138,9 +138,9 @@ export const ClassFilter = (() => {
     const setClassName = (groupIndex: number, termIndex: number, className: string) => {
         if (className.startsWith(GROUP_PREFIX)) return applyGroup(Number(className.slice(GROUP_PREFIX.length)))
         setDraft(prev =>
-        prev.map((group, gi) => gi === groupIndex
-            ? group.map((term, ti) => ti === termIndex ? { ...term, className } : term)
-            : group)
+            prev.map((group, gi) => gi === groupIndex
+                ? group.map((term, ti) => ti === termIndex ? { ...term, className } : term)
+                : group)
         )
     }
 
