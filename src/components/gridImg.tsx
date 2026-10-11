@@ -6,7 +6,8 @@ import { Media } from "../entity/Media"
 import { useDispatch } from "react-redux"
 import { IconButton } from "@mui/material"
 import { Folders } from "./folder"
-import { KeyboardArrowLeft, KeyboardArrowRight, KeyboardDoubleArrowLeft, KeyboardDoubleArrowRight, RadioButtonChecked, RadioButtonUnchecked } from "@mui/icons-material"
+import { RadioButtonChecked, RadioButtonUnchecked } from "@mui/icons-material"
+import { Pagination } from "./pagination"
 import ModalZoom from "./modalZoom"
 import { configurationsSelector, setPage, setPostsPerPage, setScrollPosition } from "../lib/redux/slices/configurations"
 import { MediaTypeFilter, matchesMediaType } from "./mediaTypeFilter"
@@ -40,10 +41,6 @@ export const GridIMGs = (() => {
 
     const [speed, setSpeed] = useState(4);
     const [play, setPlay] = useState(true)
-    // null = showing the page as plain text; a string = the jump-to-page field
-    // is open holding that draft. One nullable value rather than a separate
-    // "editing" boolean so the two can never disagree.
-    const [pageDraft, setPageDraft] = useState<string | null>(null)
     const [scrollIntervalId, setScrollIntervalId] = useState<string | number | NodeJS.Timer | undefined>(undefined);
 
     const stepSpeed = 1500
@@ -162,26 +159,6 @@ export const GridIMGs = (() => {
 
     const hasRest = !((medias.length % postsPerPage) === 0)
     const qtdPages = Math.trunc(medias.length / postsPerPage)
-    // The denominator actually shown next to the page number - what "the last
-    // page" means to someone reading the toolbar, so what a typed page clamps to.
-    const totalPages = qtdPages + (hasRest ? 1 : 0)
-
-    const openPageEditor = () => setPageDraft(String(currentPage + 1))
-    const closePageEditor = () => setPageDraft(null)
-
-    const commitPage = () => {
-        const typed = parseInt(pageDraft ?? '', 10)
-        // An empty or unparseable field just closes, leaving the page alone.
-        if (!isNaN(typed)) {
-            // Typed pages are 1-based, currentPage is 0-based. Out-of-range
-            // snaps to the nearest end instead of being rejected. Guard the
-            // upper bound at 1 so an empty folder (totalPages 0) still lands
-            // on page 0 rather than -1.
-            const clamped = Math.min(Math.max(typed, 1), Math.max(totalPages, 1))
-            setCurrentPage(clamped - 1)
-        }
-        closePageEditor()
-    }
 
 
     try {
@@ -193,11 +170,6 @@ export const GridIMGs = (() => {
         console.error(error)
     }
 
-
-    // The field exists only to CHANGE the page, never to display it - so any
-    // other route to a new page (the arrow buttons, first/last, or the zoom
-    // modal paging through into another page) puts the plain text back.
-    useEffect(() => { setPageDraft(null) }, [currentPage])
 
     useEffect(() => {
         const inputElement = inputRef.current;
@@ -356,51 +328,8 @@ export const GridIMGs = (() => {
             <Resume>
                 <Qtd title="Total items not deleted">{medias.length}</Qtd>
                 {config.mediaLoading && <span title="Videos are still being added one at a time in the background">Loading media…</span>}
-                <select value={postsPerPage} title="How many items for page" onChange={(val) => setPostsPerPageValue(parseInt(val.currentTarget.value))}>
-                    <option value="20">20</option>
-                    <option value="50">50</option>
-                    <option value="100">100</option>
-                    <option value="200">200</option>
-                    <option value="500">500</option>
-                    <option value="1000">1000</option>
-                </select>
-                <IconButton onClick={() => setCurrentPage(0)} ><KeyboardDoubleArrowLeft fontSize="small" /></IconButton>
-                <IconButton onClick={() => setCurrentPage(currentPage - 1)} disabled={currentPage === 0} ><KeyboardArrowLeft fontSize="small" /></IconButton>
-                <Qtd>
-                    {pageDraft === null
-                        ? <span
-                            onClick={openPageEditor}
-                            style={{ cursor: 'pointer' }}
-                            title="Click to jump to a page"
-                        >{currentPage + 1}</span>
-                        : <input
-                            type="text"
-                            inputMode="numeric"
-                            autoFocus
-                            size={3}
-                            value={pageDraft}
-                            title={`Type a page between 1 and ${Math.max(totalPages, 1)}, then press Enter`}
-                            // Digits only: strip anything else as it is typed,
-                            // rather than validating at commit, so the field can
-                            // never show a value it would not accept.
-                            onChange={ev => setPageDraft(ev.currentTarget.value.replace(/\D/g, ''))}
-                            onFocus={ev => ev.currentTarget.select()}
-                            // Clicking away abandons the jump - only Enter commits.
-                            onBlur={closePageEditor}
-                            // The wrapping div's onKeyUp is the grid's shortcut
-                            // handler ("1" toggles video controls, "q" selects
-                            // all, "v"/"b" change volume...). Without this, typing
-                            // a page number would fire them.
-                            onKeyUp={ev => ev.stopPropagation()}
-                            onKeyDown={ev => {
-                                if (ev.key === 'Enter') { ev.preventDefault(); commitPage() }
-                                if (ev.key === 'Escape') { ev.preventDefault(); closePageEditor() }
-                            }}
-                        />}
-                    /{totalPages}
-                </Qtd>
-                <IconButton onClick={() => setCurrentPage(currentPage + 1)} ><KeyboardArrowRight fontSize="small" /></IconButton>
-                <IconButton onClick={() => setCurrentPage(qtdPages)} ><KeyboardDoubleArrowRight fontSize="small" /></IconButton>
+                <Pagination page={currentPage} setPage={setCurrentPage}
+                    perPage={postsPerPage} setPerPage={setPostsPerPageValue} total={medias.length} />
 
                 <div className="spacer" />
 

@@ -12,6 +12,7 @@ import { CounterImgIndex, DuplicateGroupCard, DuplicateGroupRow, DuplicatesList,
 import { Folders } from "./folder"
 import { MediaTypeFilter, matchesMediaType } from "./mediaTypeFilter"
 import { ClassFilter, matchesClassFilter, normalizeClassFilter } from "./classFilter"
+import { Pagination, totalPagesFor } from "./pagination"
 
 export const GridDuplicates = (() => {
 
@@ -70,6 +71,23 @@ export const GridDuplicates = (() => {
 
     const flatList = groups.flat()
 
+    // Paged by GROUP, not by media, so a group is never split across pages.
+    // Select-all/unselect/auto-select still act on every group, not just the page.
+    const [page, setPage] = useState(0)
+    const [groupsPerPage, setGroupsPerPage] = useState(20)
+    const pagedGroups = groups.slice(page * groupsPerPage, (page + 1) * groupsPerPage)
+    const totalPages = totalPagesFor(groups.length, groupsPerPage)
+    const groupIndexById = new Map(groups.flatMap((group, gi) => group.map(m => [m.id, gi] as const)))
+    const pageOf = (mediaId: string): number | undefined => {
+        const gi = groupIndexById.get(mediaId)
+        return gi === undefined ? undefined : Math.floor(gi / groupsPerPage)
+    }
+
+    // A new scan, a filter or a bigger page size can leave the page past the end.
+    useEffect(() => {
+        if (totalPages > 0 && page > totalPages - 1) setPage(totalPages - 1)
+    }, [page, totalPages])
+
     // Only video/GIF tiles can ever show the 4-frame collage - fetching for
     // the rest would just come back empty (frames are only ever extracted
     // for video/GIF media, see compareImg/mediaIndexer.js). Re-runs whenever
@@ -107,11 +125,23 @@ export const GridDuplicates = (() => {
         setOpenedIds(prev => prev.has(lastZoom.id) ? prev : new Set(prev).add(lastZoom.id))
     }, [lastZoom])
 
-    // "t": bring the last-seen tile into view. This grid renders every group
-    // (no pagination), so the tile is in the DOM whenever it is in flatList.
-    // The ref keeps the window listener on the latest render.
+    // "t": bring the last-seen tile into view. The tile may sit on another
+    // page, so switch page first and let the effect below scroll once that
+    // page has rendered. The ref keeps the window listener on the latest render.
+    const pendingScrollId = useRef<string | null>(null)
     const scrollToLastSeenRef = useRef<() => void>(() => {})
-    scrollToLastSeenRef.current = () => { if (lastZoom) scrollToMedia(lastZoom.id) }
+    scrollToLastSeenRef.current = () => {
+        if (!lastZoom) return;
+        const target = pageOf(lastZoom.id)
+        if (target === undefined) return;
+        if (target === page) { scrollToMedia(lastZoom.id); return; }
+        pendingScrollId.current = lastZoom.id
+        setPage(target)
+    }
+    useEffect(() => {
+        if (pendingScrollId.current === null) return;
+        if (scrollToMedia(pendingScrollId.current)) pendingScrollId.current = null
+    }, [page, pagedGroups.length])
     useEffect(() => {
         const onKeyUp = (ev: globalThis.KeyboardEvent) => {
             if (isScrollToLastSeenKey(ev)) scrollToLastSeenRef.current()
@@ -194,17 +224,23 @@ export const GridDuplicates = (() => {
     const exportDatabase = () => dispatch(ExportDatabase())
     const importDatabase = () => dispatch(ImportDatabase())
 
+    // Paging through the modal follows into the page holding the new media.
+    const zoomTo = (media: Media) => {
+        const target = pageOf(media.id)
+        if (target !== undefined) setPage(target)
+        setLastZoom(media)
+    }
     const nextMedia = () => {
         if (!lastZoom) return;
         const idx = flatList.findIndex(m => m.id === lastZoom.id)
         if (idx === -1 || idx >= flatList.length - 1) return;
-        setLastZoom(flatList[idx + 1])
+        zoomTo(flatList[idx + 1])
     }
     const prevMedia = () => {
         if (!lastZoom) return;
         const idx = flatList.findIndex(m => m.id === lastZoom.id)
         if (idx <= 0) return;
-        setLastZoom(flatList[idx - 1])
+        zoomTo(flatList[idx - 1])
     }
 
     function pressedKeyUp(ev: KeyboardEvent<HTMLDivElement>): void {
@@ -275,6 +311,9 @@ export const GridDuplicates = (() => {
                 <IconButton onClick={selectAll} disabled={groups.length === 0} title="Select all items in the duplicate groups"><RadioButtonChecked /></IconButton>
                 <IconButton onClick={unselectAll} disabled={groups.length === 0} title="Unselect all items in the duplicate groups"><RadioButtonUnchecked /></IconButton>
                 <span>{groups.length} duplicate group{groups.length === 1 ? "" : "s"}</span>
+                <Pagination page={page} setPage={setPage}
+                    perPage={groupsPerPage} setPerPage={setGroupsPerPage} total={groups.length}
+                    perPageTitle="How many groups for page" />
 
                 <div className="spacer" />
 
@@ -312,9 +351,9 @@ export const GridDuplicates = (() => {
 
             {groups.length > 0
                 ? <DuplicatesList>
-                    {groups.map((group, idx) => (
+                    {pagedGroups.map((group, idx) => (
                         <DuplicateGroupCard key={group[0].id}>
-                            <GroupLabel>Group {idx + 1} — {group.length} identical files{group.some(m => m.imported) ? ` (${group.filter(m => m.imported).length} from other folder)` : ""}</GroupLabel>
+                            <GroupLabel>Group {page * groupsPerPage + idx + 1} — {group.length} identical files{group.some(m => m.imported) ? ` (${group.filter(m => m.imported).length} from other folder)` : ""}</GroupLabel>
                             <DuplicateGroupRow>
                                 {group.map(media => {
                                     const frames = mediaFrames[media.id]
