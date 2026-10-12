@@ -1,7 +1,7 @@
 import { addListinActualArray, addOnceMedia, confirmFileMoved, confirmFileUnmoved, orderByFolder, orderByName, orderBySize, orderBySizeInverted, populateArray, purgeArray, updateArrayItem } from './media.reduce';
 import { example } from './populateExample';
 import { Media } from '../../../../entity/Media';
-import { addFolder } from '../folders';
+import { addFolder, resetFolders } from '../folders';
 import { mediaLoadComplete, mediaLoadStart, zoomIn, zoomOut } from '../configurations';
 import { setDuplicateGroups, indexRebuildFinished, setIndexRebuildProgress, databaseExportFinished, databaseImportFinished, setMediaFrames } from '../duplicates';
 import { setDetectionResult, mergeDetections, rekeyDetections, setDetectionProgress, detectingFinished, setModelPath, setDetectionClasses, setDetectionSize, DetectionGroup } from '../detections';
@@ -26,7 +26,7 @@ export const ElectronConnection = () => {
 
     return (dispatch: any) => {
         if (ipcRender) {
-            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete', 'onnxModelChosen', 'databaseExported', 'databaseImported', 'detectionClassesLoaded', 'detectionsLoaded', 'fileProcessed', 'mediaFramesFound', 'detectionSizeLoaded', 'pipelineProgress', 'pipelineFinished', 'pipelineRejected', 'fileUnmoved', 'undoAvailable', 'undoFinished', 'sortByKindFinished'];
+            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'resetFolders', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete', 'onnxModelChosen', 'databaseExported', 'databaseImported', 'detectionClassesLoaded', 'detectionsLoaded', 'fileProcessed', 'mediaFramesFound', 'detectionSizeLoaded', 'pipelineProgress', 'pipelineFinished', 'pipelineRejected', 'fileUnmoved', 'undoAvailable', 'undoFinished', 'sortByKindFinished'];
             channels.forEach(ch => ipcRender.removeAllListeners(ch));
 
             ipcRender.on('directoryOpen', (e: any, args: any) => {
@@ -113,6 +113,9 @@ export const ElectronConnection = () => {
             })
             ipcRender.on('menuOpen', (e: any, folders: string[]) => {
                 folders.forEach(folder => dispatch(addFolder(folder)))
+            })
+            ipcRender.on('resetFolders', () => {
+                dispatch(resetFolders())
             })
             ipcRender.on('cleanGrid', () => {
                 dispatch(purgeArray())

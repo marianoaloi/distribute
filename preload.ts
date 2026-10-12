@@ -91,6 +91,7 @@ const ipc = {
             'undoAvailable',
             'undoFinished',
             'sortByKindFinished',
+            'resetFolders',
         ]
     }
 };

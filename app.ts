@@ -153,6 +153,7 @@ const menuTemplate = (): MenuItemConstructorOptions[] => [
         label: 'Work',
         submenu: [
             { label: 'Load buttons by folders', click: loadFolders },
+            { label: 'Reload folders', click: reloadFolders },
             {
                 label: 'Zoom In',
                 click: () => zoomImg(+1),
@@ -1039,6 +1040,14 @@ const loadFolders = async (): Promise<void> => {
 
     }
 
+};
+
+// Back to only the default L/R buttons, then the same list "Load buttons by
+// folders" adds. Messages on one webContents arrive in order, so the reset
+// always lands before loadFolders' menuOpen.
+const reloadFolders = (): void => {
+    mainWindow!.webContents.send("resetFolders");
+    loadFolders();
 };
 
 
