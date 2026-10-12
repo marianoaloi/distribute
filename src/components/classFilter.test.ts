@@ -4,7 +4,7 @@
 jest.mock("../lib/redux", () => ({}))
 jest.mock("../lib/redux/slices/configurations", () => ({}))
 
-import { matchesClassFilter, normalizeClassFilter } from "./classFilter"
+import { hasClass, matchesClassFilter, matchesClassPresence, normalizeClassFilter } from "./classFilter"
 import { ClassFilterTerm } from "../entity/FilterMedia"
 import { MediaDetections } from "../lib/redux/slices/detections/detections.reduce"
 
@@ -150,5 +150,25 @@ describe("normalizeClassFilter", () => {
 
     it("returns empty for an all-empty filter", () => {
         expect(normalizeClassFilter([[term("")], []])).toEqual([])
+    })
+})
+
+describe("hasClass / matchesClassPresence", () => {
+    it("hasClass is false for media never detected or detected with nothing found", () => {
+        expect(hasClass(undefined)).toBe(false)
+        expect(hasClass(media({}))).toBe(false)
+        expect(hasClass(media({ cat: { min: 0.5, max: 0.5 } }))).toBe(true)
+    })
+
+    it("empty presence keeps everything", () => {
+        expect(matchesClassPresence(true, '')).toBe(true)
+        expect(matchesClassPresence(false, '')).toBe(true)
+    })
+
+    it("'with' keeps only media with a class, 'without' only media with none", () => {
+        expect(matchesClassPresence(true, 'with')).toBe(true)
+        expect(matchesClassPresence(false, 'with')).toBe(false)
+        expect(matchesClassPresence(true, 'without')).toBe(false)
+        expect(matchesClassPresence(false, 'without')).toBe(true)
     })
 })

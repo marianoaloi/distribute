@@ -14,3 +14,8 @@ export interface ClassFilterTerm {
 export type ClassFilterGroup = ClassFilterTerm[]
 
 export type ClassFilter = ClassFilterGroup[]
+
+// Coarse companion of ClassFilter, ANDed with it: '' = no filter, 'with' =
+// media with at least one detected class, 'without' = media with none (never
+// run through detection, or run with nothing found).
+export type ClassPresence = '' | 'with' | 'without'

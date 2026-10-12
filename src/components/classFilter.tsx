@@ -6,9 +6,9 @@ import {
 } from "@mui/material"
 import { FilterAlt, FilterAltOffOutlined, Add, Delete, RestartAlt } from "@mui/icons-material"
 import { LoadDetectionClasses, LoadDetections, selectDetectionClassNames, selectDetectionGroups, useSelector } from "../lib/redux"
-import { configurationsSelector, setClassFilter } from "../lib/redux/slices/configurations"
+import { configurationsSelector, setClassFilter, setClassPresence } from "../lib/redux/slices/configurations"
 import { ClassFilterBar } from "./classFilter.styled"
-import { ClassFilter as ClassFilterExpr, ClassFilterGroup, ClassFilterTerm } from "../entity/FilterMedia"
+import { ClassFilter as ClassFilterExpr, ClassFilterGroup, ClassFilterTerm, ClassPresence } from "../entity/FilterMedia"
 import { DetectionGroup, MediaDetections } from "../lib/redux/slices/detections/detections.reduce"
 
 // Drops half-built terms (no class picked yet) and any group left empty by
@@ -41,6 +41,18 @@ function termHolds(term: ClassFilterTerm, detection: MediaDetections | undefined
 export function matchesClassFilter(detection: MediaDetections | undefined, groups: ClassFilterGroup[]): boolean {
     if (groups.length === 0) return true
     return groups.some(group => group.every(term => termHolds(term, detection) !== term.negate))
+}
+
+// Has the media any detected class at all? Media never run through detection
+// has no entry; one run with nothing found has an empty class list.
+export function hasClass(detection: MediaDetections | undefined): boolean {
+    return (detection?.classes.length ?? 0) > 0
+}
+
+// The "Has class / Without class" selector next to Reset. Takes the yes/no
+// rather than the detection so duplicatesGrid can pass one for a whole group.
+export function matchesClassPresence(withClass: boolean, presence: ClassPresence): boolean {
+    return presence === '' || withClass === (presence === 'with')
 }
 
 // Select values starting with this are group picks, never class names.
@@ -84,7 +96,9 @@ export const ClassFilter = (() => {
     // close the dialog, or a tried-but-uncommitted filter would silently stay
     // active.
     const [preTryFilter, setPreTryFilter] = useState<ClassFilterExpr>([])
-    const active = normalizeClassFilter(config.classFilter).length > 0
+    // Same for the Has/Without class selector, which always applies live.
+    const [preTryPresence, setPreTryPresence] = useState<ClassPresence>('')
+    const active = normalizeClassFilter(config.classFilter).length > 0 || config.classPresence !== ''
     const groupFilters = detectionGroups
         .map((group, index) => ({ index, name: group.name, filter: groupToFilter(group, classNames) }))
         .filter(g => g.filter !== null)
@@ -99,11 +113,11 @@ export const ClassFilter = (() => {
         }
     }, [config.mediaLoading, dispatch])
 
-    const openDialog = () => { setDraft(withBlankRow(config.classFilter)); setPreTryFilter(config.classFilter); setOpen(true) }
+    const openDialog = () => { setDraft(withBlankRow(config.classFilter)); setPreTryFilter(config.classFilter); setPreTryPresence(config.classPresence); setOpen(true) }
     // Discards whatever "Try" applied live and restores what was active
     // before the dialog opened - Cancel must undo Try's preview, not just
     // close the dialog on top of it.
-    const closeDialog = () => { dispatch(setClassFilter(normalizeClassFilter(preTryFilter))); setOpen(false) }
+    const closeDialog = () => { dispatch(setClassFilter(normalizeClassFilter(preTryFilter))); dispatch(setClassPresence(preTryPresence)); setOpen(false) }
     // Applies the draft to the grid immediately, same as Apply, but leaves
     // the dialog open so groups/terms can keep being edited against the
     // live result instead of round-tripping open/close/open to see it.
@@ -160,7 +174,7 @@ export const ClassFilter = (() => {
 
     // Reset takes effect immediately and leaves the dialog open, so the user sees
     // the unfiltered grid and can start a new filter without reopening.
-    const reset = () => { setDraft(withBlankRow([])); dispatch(setClassFilter([])) }
+    const reset = () => { setDraft(withBlankRow([])); dispatch(setClassFilter([])); dispatch(setClassPresence('')) }
 
     const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault()
@@ -256,6 +270,19 @@ export const ClassFilter = (() => {
                 </DialogContent>
                 <DialogActions>
                     <Button type="button" startIcon={<RestartAlt />} onClick={reset}>Reset</Button>
+                    <TextField
+                        select
+                        size="small"
+                        label="Media"
+                        title="Only media with at least one detected class, or only media with none. Applies right away."
+                        value={config.classPresence}
+                        onChange={(e) => dispatch(setClassPresence(e.target.value as ClassPresence))}
+                        sx={{ minWidth: 160 }}
+                    >
+                        <MenuItem value=""><em>All</em></MenuItem>
+                        <MenuItem value="with">Has class</MenuItem>
+                        <MenuItem value="without">Without class</MenuItem>
+                    </TextField>
                     <div style={{ flex: 1 }} />
                     <Button type="button" onClick={closeDialog}>Cancel</Button>
                     <Button type="button" onClick={tryFilter}>Try</Button>

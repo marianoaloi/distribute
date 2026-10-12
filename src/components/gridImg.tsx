@@ -11,7 +11,7 @@ import { Pagination } from "./pagination"
 import ModalZoom from "./modalZoom"
 import { configurationsSelector, setPage, setPostsPerPage, setScrollPosition } from "../lib/redux/slices/configurations"
 import { MediaTypeFilter, matchesMediaType } from "./mediaTypeFilter"
-import { ClassFilter, matchesClassFilter, normalizeClassFilter } from "./classFilter"
+import { ClassFilter, hasClass, matchesClassFilter, matchesClassPresence, normalizeClassFilter } from "./classFilter"
 
 
 import { FolderCopyTwoTone, FolderOpen, Pause, PlayArrow } from '@mui/icons-material';
@@ -30,6 +30,7 @@ export const GridIMGs = (() => {
     // duplicate groups — the main grid stays a true view of the actual folder.
     const medias = useSelector(selectMedias).filter(m => !m.deleted && !m.imported)
         .filter(m => matchesMediaType(m.mime, config.mediaType))
+        .filter(m => matchesClassPresence(hasClass(detections[m.id]), config.classPresence))
         .filter(m => matchesClassFilter(detections[m.id], classFilterGroups))
     // A loadSuperRecursive run already owns "which folder is open" - see app.ts's rejectIfBusy.
     const pipelineRunning = useSelector(selectPipelineRunning)

@@ -11,7 +11,7 @@ import ModalZoom from "./modalZoom"
 import { CounterImgIndex, DuplicateGroupCard, DuplicateGroupRow, DuplicatesList, DuplicatesResume, EmptyState, GroupLabel, ImportedMediaWrap, RebuildIndexInfo } from "./duplicatesGrid.styled"
 import { Folders } from "./folder"
 import { MediaTypeFilter, matchesMediaType } from "./mediaTypeFilter"
-import { ClassFilter, matchesClassFilter, normalizeClassFilter } from "./classFilter"
+import { ClassFilter, hasClass, matchesClassFilter, matchesClassPresence, normalizeClassFilter } from "./classFilter"
 import { Pagination, totalPagesFor } from "./pagination"
 
 export const GridDuplicates = (() => {
@@ -66,6 +66,9 @@ export const GridDuplicates = (() => {
         // detections at all. Per-member filtering would silently drop exactly
         // the cross-folder matches the import feature exists to surface.
         .filter(group => group.some(m => matchesClassFilter(detections[m.id], classFilterGroups)))
+        // Same group-level view for Has/Without class: a group has a class when
+        // any member does, so "Without class" means no member has one.
+        .filter(group => matchesClassPresence(group.some(m => hasClass(detections[m.id])), config.classPresence))
         .map(group => [...group].sort((a, b) => b.size - a.size))
         .map(group => group.map(m => ({ ...m, screenIndex: counterIndex++ })))
 

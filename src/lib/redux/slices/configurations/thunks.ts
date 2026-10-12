@@ -1,5 +1,5 @@
 import { createAction } from "@reduxjs/toolkit";
-import { ClassFilter } from "../../../../entity/FilterMedia";
+import { ClassFilter, ClassPresence } from "../../../../entity/FilterMedia";
 
 
 export const zoomIn = createAction(
@@ -23,6 +23,15 @@ export const setClassFilter = createAction(
     'config/setClassFilter',
     (filter: ClassFilter) => ({
         payload: filter
+    })
+)
+
+// The class filter dialog's "Has class / Without class" selector, applied by
+// gridImg and duplicatesGrid together with setClassFilter. Reset sends ''.
+export const setClassPresence = createAction(
+    'config/setClassPresence',
+    (presence: ClassPresence) => ({
+        payload: presence
     })
 )
 
