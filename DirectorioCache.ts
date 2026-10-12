@@ -16,4 +16,8 @@ export const setActiveFolder = (folder: string): void => {
     activeFolder = folder;
 };
 
-export const getTmpRoot = (): string => path.join(activeFolder || defaultDir, "tmp");
+// Name of the app's own folder inside every opened folder: move destinations
+// plus app data (frames, hashIndex, logs). Recursive scans skip it.
+export const TMP_FOLDER_NAME = "tmp";
+
+export const getTmpRoot = (): string => path.join(activeFolder || defaultDir, TMP_FOLDER_NAME);

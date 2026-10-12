@@ -20,7 +20,7 @@ protocol.registerSchemesAsPrivileged([
 
 import os from 'os';
 import * as util from "./util";
-import { setActiveFolder } from "./DirectorioCache";
+import { setActiveFolder, TMP_FOLDER_NAME } from "./DirectorioCache";
 import * as duplicateFinder from "./compareImg/duplicateFinder";
 import * as compareImgStore from "./compareImg/HashStore";
 import * as mediaIndexer from "./compareImg/mediaIndexer";
@@ -850,7 +850,7 @@ const moveFile = (bol: boolean, dest: string, onlyCopy: boolean, data: MoveFileE
     // moved themselves.
     data.filter(f => f.checked === bol && !f.imported).forEach(media => {
         // let completeDestine = path.join(path.dirname(media.path), dest);
-        const completeDestine = path.join(fileGlobal as string, "tmp", dest);
+        const completeDestine = path.join(fileGlobal as string, TMP_FOLDER_NAME, dest);
         if (!fs.existsSync(completeDestine)) {
             fs.mkdirSync(completeDestine);
         }
@@ -1013,15 +1013,21 @@ const zoomImg = async (zoom: number): Promise<void> => {
     }
 };
 
+// Folders inside <folder>/tmp that are not move destinations: L and R are the
+// renderer's built-in buttons (folders slice), the rest hold app data
+// (compareImg's hashIndex, video/thumbnail frames, electron-log's logs).
+const SYSTEM_TMP_FOLDERS = new Set(["L", "R", "frames", "hashIndex", "logs"]);
+
+// One button per destination folder moveFile created in <folder>/tmp.
 const loadFolders = async (): Promise<void> => {
     try {
-        fs.readdir(fileGlobal as string, { encoding: "utf8", withFileTypes: true }, (err, data) => {
+        fs.readdir(path.join(fileGlobal as string, TMP_FOLDER_NAME), { encoding: "utf8", withFileTypes: true }, (err, data) => {
             if (err) console.error(err);
             else {
                 mainWindow!.webContents.send("menuOpen",
 
                     data
-                        .filter(d => d.isDirectory() && d.name !== "tmp")
+                        .filter(d => d.isDirectory() && !SYSTEM_TMP_FOLDERS.has(d.name))
                         .map(d => d.name)
                 );
 
@@ -1048,7 +1054,7 @@ const loadRecursive = async (): Promise<void> => {
         if (!file.canceled) {
             setActiveFolder(file.filePaths[0]);
             redirectToActiveFolder();
-            fileGlobal = file.filePaths[0]; // path.join(file.filePaths[0], "tmp");
+            fileGlobal = file.filePaths[0]; // path.join(file.filePaths[0], TMP_FOLDER_NAME);
             compareImgStore.closeConnection();
             resetUndoForNewFolder();
 
@@ -1149,7 +1155,7 @@ const openfileRecursive = (folderPath: string): void => {
     fs.readdir(folderPath, "utf8", (err, data) => {
         if (err) { console.error(err); return; }
         const qtdFiles = data.map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isFile()).length;
-        data.filter(item => item !== "tmp").map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isDirectory()).forEach(item => {
+        data.filter(item => item !== TMP_FOLDER_NAME).map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isDirectory()).forEach(item => {
             processedFolders[item] = false;
             openfileRecursive(item);
         });
