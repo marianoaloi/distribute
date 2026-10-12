@@ -94,17 +94,17 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
 
         // moveFile (app.js) only acts on items whose payload `checked` is
         // true, so the unchecked group is sent with checked forced true.
+        const checkedMedias = splitScreenMedias
+            .filter(m => m.checked && !m.deleted && !m.imported)
+        if (checkedMedias.length > 0) {
+            SendSelectedFiles(checkedDestFolder, false, checkedMedias, batchId)
+        }
+
         const uncheckedWire = splitScreenMedias
             .filter(m => !m.checked && !m.deleted && !m.imported)
             .map(m => ({ ...m, checked: true }))
         if (uncheckedWire.length > 0) {
             SendSelectedFiles(uncheckedDestFolder, false, uncheckedWire, batchId)
-        }
-
-        const checkedMedias = splitScreenMedias
-            .filter(m => m.checked && !m.deleted && !m.imported)
-        if (checkedMedias.length > 0) {
-            SendSelectedFiles(checkedDestFolder, false, checkedMedias, batchId)
         }
 
         handleCloseSplitMove();
