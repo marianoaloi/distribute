@@ -10,3 +10,5 @@ export const selectDbImporting = (state: ReduxState) => state.duplicates.dbImpor
 export const selectDbImportError = (state: ReduxState) => state.duplicates.dbImportError;
 export const selectDbImportMatched = (state: ReduxState) => state.duplicates.dbImportMatched;
 export const selectMediaFrames = (state: ReduxState) => state.duplicates.mediaFrames;
+
+export const selectMediaFrameBoxes = (state: ReduxState) => state.duplicates.mediaFrameBoxes;

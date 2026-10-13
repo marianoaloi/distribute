@@ -5,7 +5,7 @@ import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, ImgWra
 import { IconButton, Slider, Modal } from "@mui/material"
 import { toMediaUrl } from "../lib/mediaUrl"
 import { ArrowBackIos, ArrowForwardIos, CleaningServices, Label, ContentCopy, Check, Image } from "@mui/icons-material"
-import { updateArrayItem, useDispatch, useSelector, selectDetections, selectMediaFrames, GetMediaFrames } from "../lib/redux"
+import { updateArrayItem, useDispatch, useSelector, selectDetections, selectMediaFrames, selectMediaFrameBoxes, GetMediaFrames } from "../lib/redux"
 import { configurationsSelector, setVideoVolume } from "../lib/redux/slices/configurations"
 import { DetectionBoxOutline, DetectionBoxLabel } from "./objectDetectionGrid.styled"
 
@@ -40,11 +40,18 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         const toggleDetections = () => setShowDetections(v => !v)
         // Video/GIF detection runs on the 4 extracted frames (start10s, end10s,
         // pct50, pct10 - compareImg/videoFrames.ts). This shows them in a column
-        // beside the media; boxes are only stored for the end10s frame (see
-        // detections.reduce.ts), so only that one gets an overlay.
+        // beside the media, each overlaid with the boxes detected on that frame.
         const isAnimated = mediaWithPreview.mime.includes('video') || mediaWithPreview.mime.includes('gif')
         const mediaFrames = useSelector(selectMediaFrames)
         const frames = mediaFrames[mediaWithPreview.id] || []
+        const frameBoxes = useSelector(selectMediaFrameBoxes)[mediaWithPreview.id] || {}
+        // Frame files are named <hash>_<position>.jpg (videoFrames.ts's framePathFor).
+        // end10s falls back to the media's display boxes for results streamed
+        // by a detection run after the frames were fetched.
+        const boxesForFrame = (frame: string) => {
+            const position = /_([^_]+)\.jpg$/.exec(frame)?.[1] || ''
+            return frameBoxes[position] || (position === 'end10s' ? detectedObjects : [])
+        }
         const [showDetectionFrames, setShowDetectionFrames] = useState(false)
         const showFramesPanel = showDetectionFrames && isAnimated
         useEffect(() => {
@@ -338,7 +345,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                             {frames.map(frame => (
                                 <FrameTile key={frame} title={frame}>
                                     <img src={toMediaUrl(frame)} alt={frame} draggable={false} />
-                                    {/_end10s\.jpg$/.test(frame) && detectedObjects.map((box, idx) => (
+                                    {showDetections && boxesForFrame(frame).map((box, idx) => (
                                         <DetectionBoxOutline key={idx} x={box.x} y={box.y} w={box.w} h={box.h}>
                                             <DetectionBoxLabel>{box.className} {(box.score * 100).toFixed(0)}%</DetectionBoxLabel>
                                         </DetectionBoxOutline>

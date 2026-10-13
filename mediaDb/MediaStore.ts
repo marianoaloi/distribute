@@ -332,6 +332,31 @@ export const getAllDisplayDetections = (): DetectionRowWithMediaId[] => {
     `).all() as DetectionRowWithMediaId[];
 };
 
+export interface FrameDetectionRow extends DetectionRowWithMediaId {
+    framePosition: string;
+}
+
+// Every video/GIF frame item's boxes (not just the display one above), for the
+// zoom modal's frames panel - each frame tile overlays the boxes detected on
+// that exact frame, so x/y/w/h are spatially valid against it.
+export const getFrameDetectionsForMedias = (mediaIds: string[]): FrameDetectionRow[] => {
+    if (mediaIds.length === 0) return [];
+    const db = HashStore.getDb();
+    return db.prepare(`
+        SELECT media_item.mediaId AS mediaId, items.framePosition AS framePosition,
+               item_detection.classId AS classId, detection_class.name AS className,
+               item_detection.score AS score,
+               item_detection.x AS x, item_detection.y AS y, item_detection.w AS w, item_detection.h AS h,
+               model_path.path AS modelPath
+        FROM media_item
+        JOIN items ON items.id = media_item.itemId
+        JOIN item_detection ON item_detection.itemId = items.id
+        LEFT JOIN detection_class ON detection_class.classId = item_detection.classId
+        LEFT JOIN model_path ON model_path.id = item_detection.modelPathId
+        WHERE items.framePosition != '' AND media_item.mediaId IN (${mediaIds.map(() => "?").join(",")})
+    `).all(...mediaIds) as FrameDetectionRow[];
+};
+
 // Filtering (classFilter.tsx/gridImg.tsx) only needs "does this media contain
 // class X anywhere", so - unlike the display boxes above - it uses the union
 // of classes across EVERY item linked to a media (all 4 frames for a video/

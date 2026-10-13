@@ -623,14 +623,23 @@ ipcMain.on("getMediaFrames", (event: IpcMainEvent, data: { medias?: DetectMediaR
     try {
         const medias = (data && data.medias) || [];
         const mediaState = MediaStore.findMediaByIds(medias.map((media) => media.id));
+        // Per-frame boxes keyed by mediaId then framePosition, so the zoom
+        // modal can overlay each frame's own detections.
+        const frameBoxesById = new Map<string, Record<string, DetectionBox[]>>();
+        for (const row of MediaStore.getFrameDetectionsForMedias(medias.map((media) => media.id))) {
+            const { mediaId, framePosition, modelPath, ...box } = row;
+            if (!frameBoxesById.has(mediaId)) frameBoxesById.set(mediaId, {});
+            const byPosition = frameBoxesById.get(mediaId) as Record<string, DetectionBox[]>;
+            (byPosition[framePosition] ||= []).push(box);
+        }
         const items = medias
             .map((media) => {
                 const state = mediaState.get(media.id);
                 if (!state) return null;
                 const frames = frameSetForMedia(state.localPath).map((f) => f.path);
-                return frames.length > 0 ? { id: media.id, frames } : null;
+                return frames.length > 0 ? { id: media.id, frames, frameBoxes: frameBoxesById.get(media.id) || {} } : null;
             })
-            .filter((item): item is { id: string; frames: string[] } => item !== null);
+            .filter((item): item is { id: string; frames: string[]; frameBoxes: Record<string, DetectionBox[]> } => item !== null);
         mainWindow!.webContents.send("mediaFramesFound", { items });
     } catch (error) {
         console.error("getMediaFrames failed", error);
