@@ -24,7 +24,10 @@ export const createMediaSchema = (database: Database.Database): void => {
     //   futurePosition IS NOT NULL -> the file is at futurePosition,
     //                                 and came from localPath
     // localPath is deliberately never rewritten by a move, so the origin
-    // survives to be moved back to. movedAt/moveBatchId record when, and as
+    // survives to be moved back to. The one exception is the kind-folder sort
+    // (organize/sortMediaByKind.ts): it makes the new location the home, via
+    // MediaStore.relocateMedia - localPath and id change, futurePosition is
+    // cleared, and there is no undo. movedAt/moveBatchId record when, and as
     // part of which single user action (one click can move two groups - see
     // folder.tsx's split move), purely so a future "revert that batch" can be
     // a plain query; the live undo stack is in-memory (undo/UndoStack.ts).
@@ -59,6 +62,19 @@ export const createMediaSchema = (database: Database.Database): void => {
             classId   INTEGER PRIMARY KEY,
             name      TEXT NOT NULL,
             updatedAt INTEGER NOT NULL DEFAULT 0
+        );
+    `);
+
+    // Predefined class-filter groups from the picked .maloi, one row per
+    // group in file order. classes is a JSON array of raw class ids (negative
+    // = NOT) rather than names, so renaming a class doesn't break a group -
+    // the renderer resolves ids to names against the current class list.
+    database.exec(`
+        CREATE TABLE IF NOT EXISTS detection_group (
+            position INTEGER PRIMARY KEY,
+            name     TEXT NOT NULL,
+            classes  TEXT NOT NULL,
+            joinType TEXT NOT NULL
         );
     `);
 

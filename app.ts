@@ -20,7 +20,7 @@ protocol.registerSchemesAsPrivileged([
 
 import os from 'os';
 import * as util from "./util";
-import { setActiveFolder } from "./DirectorioCache";
+import { setActiveFolder, TMP_FOLDER_NAME } from "./DirectorioCache";
 import * as duplicateFinder from "./compareImg/duplicateFinder";
 import * as compareImgStore from "./compareImg/HashStore";
 import * as mediaIndexer from "./compareImg/mediaIndexer";
@@ -76,10 +76,31 @@ interface MaloiFile {
     // bakes a Reshape op sized for a specific input resolution other than
     // the 640 default.
     reshape?: number;
+    // Predefined class-filter groups, untrusted until parseMaloiGroups. classes
+    // are 0-based positions in the "classes" list, negative = NOT that class.
+    group?: unknown;
 }
 
 const splitClassNames = (raw: string): string[] =>
     String(raw).split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+
+// Boundary validation for a .maloi's "group" array: a malformed entry is
+// skipped (never throws) so a bad group can't break model loading.
+const parseMaloiGroups = (raw: unknown, classCount: number): MediaStore.DetectionGroup[] => {
+    if (!Array.isArray(raw)) return [];
+    const groups: MediaStore.DetectionGroup[] = [];
+    for (const entry of raw) {
+        const name = typeof entry?.name === "string" ? entry.name.trim() : "";
+        const join = typeof entry?.join === "string" ? entry.join.trim().toUpperCase() : "";
+        const classes = entry?.classes;
+        const validIds = Array.isArray(classes) && classes.length > 0
+            && classes.every((id: unknown) => Number.isInteger(id) && Math.abs(id as number) < classCount);
+        if (name && validIds && (join === "OR" || join === "AND")) {
+            groups.push({ name, classes: classes.map((id: number) => id || 0), join });
+        }
+    }
+    return groups;
+};
 
 // Shared guard for every long-running entry point (loadRecursive/
 // loadSuperRecursive, rebuildIndex, detectObjects, exportDatabase,
@@ -132,6 +153,7 @@ const menuTemplate = (): MenuItemConstructorOptions[] => [
         label: 'Work',
         submenu: [
             { label: 'Load buttons by folders', click: loadFolders },
+            { label: 'Reload folders', click: reloadFolders },
             {
                 label: 'Zoom In',
                 click: () => zoomImg(+1),
@@ -332,7 +354,6 @@ const runSortMediaByKind = (): void => {
         dialog,
         mainWindow: mainWindow!,
         defaultPath: fileGlobal,
-        onMovesRecorded: scheduleUndoUiRefresh,
     });
 };
 
@@ -418,8 +439,10 @@ const chooseOnnxModelDialog = async (): Promise<boolean> => {
                 MediaStore.getOrCreateModelPath(onnxPath);
                 const names = splitClassNames(maloi.classes || "");
                 MediaStore.saveDetectionClasses(names);
+                // Replaces the saved groups; no "group" in the file clears them.
+                MediaStore.saveDetectionGroups(parseMaloiGroups(maloi.group, names.length));
                 onnxDetector.setClassNames(names);
-                mainWindow!.webContents.send("detectionClassesLoaded", { names });
+                mainWindow!.webContents.send("detectionClassesLoaded", { names, groups: MediaStore.getDetectionGroups() });
                 // Always set (even to null/absent) rather than only when
                 // present - otherwise a .maloi with no "reshape" field would
                 // silently inherit whatever override an earlier .maloi pick
@@ -497,10 +520,10 @@ ipcMain.on("saveDetectionClasses", (event: IpcMainEvent, data: SaveDetectionClas
         MediaStore.ensureReady();
         MediaStore.saveDetectionClasses(names);
         onnxDetector.setClassNames(names);
-        mainWindow!.webContents.send("detectionClassesLoaded", { names });
+        mainWindow!.webContents.send("detectionClassesLoaded", { names, groups: MediaStore.getDetectionGroups() });
     } catch (error) {
         console.error("saveDetectionClasses failed", error);
-        mainWindow!.webContents.send("detectionClassesLoaded", { names: [], error: (error as Error).message });
+        mainWindow!.webContents.send("detectionClassesLoaded", { names: [], groups: [], error: (error as Error).message });
     }
 });
 
@@ -509,10 +532,10 @@ ipcMain.on("loadDetectionClasses", () => {
         MediaStore.ensureReady();
         const names = MediaStore.getDetectionClasses();
         onnxDetector.setClassNames(names);
-        mainWindow!.webContents.send("detectionClassesLoaded", { names });
+        mainWindow!.webContents.send("detectionClassesLoaded", { names, groups: MediaStore.getDetectionGroups() });
     } catch (error) {
         console.error("loadDetectionClasses failed", error);
-        mainWindow!.webContents.send("detectionClassesLoaded", { names: [], error: (error as Error).message });
+        mainWindow!.webContents.send("detectionClassesLoaded", { names: [], groups: [], error: (error as Error).message });
     }
 });
 
@@ -571,11 +594,19 @@ ipcMain.on("loadDetections", () => {
             (classesById.get(row.mediaId) as string[]).push(row.className);
         }
 
+        const scoreRows = MediaStore.getDetectionClassScoresByMedia();
+        const scoresById = new Map<string, Record<string, { min: number; max: number }>>();
+        for (const row of scoreRows) {
+            if (!scoresById.has(row.mediaId)) scoresById.set(row.mediaId, {});
+            (scoresById.get(row.mediaId) as Record<string, { min: number; max: number }>)[row.className] = { min: row.minScore, max: row.maxScore };
+        }
+
         const mediaIds = new Set([...boxesById.keys(), ...classesById.keys()]);
         const items = [...mediaIds].map((id) => ({
             id,
             boxes: boxesById.get(id) || [],
             classes: classesById.get(id) || [],
+            classScores: scoresById.get(id) || {},
         }));
         mainWindow!.webContents.send("detectionsLoaded", { items });
     } catch (error) {
@@ -592,14 +623,23 @@ ipcMain.on("getMediaFrames", (event: IpcMainEvent, data: { medias?: DetectMediaR
     try {
         const medias = (data && data.medias) || [];
         const mediaState = MediaStore.findMediaByIds(medias.map((media) => media.id));
+        // Per-frame boxes keyed by mediaId then framePosition, so the zoom
+        // modal can overlay each frame's own detections.
+        const frameBoxesById = new Map<string, Record<string, DetectionBox[]>>();
+        for (const row of MediaStore.getFrameDetectionsForMedias(medias.map((media) => media.id))) {
+            const { mediaId, framePosition, modelPath, ...box } = row;
+            if (!frameBoxesById.has(mediaId)) frameBoxesById.set(mediaId, {});
+            const byPosition = frameBoxesById.get(mediaId) as Record<string, DetectionBox[]>;
+            (byPosition[framePosition] ||= []).push(box);
+        }
         const items = medias
             .map((media) => {
                 const state = mediaState.get(media.id);
                 if (!state) return null;
                 const frames = frameSetForMedia(state.localPath).map((f) => f.path);
-                return frames.length > 0 ? { id: media.id, frames } : null;
+                return frames.length > 0 ? { id: media.id, frames, frameBoxes: frameBoxesById.get(media.id) || {} } : null;
             })
-            .filter((item): item is { id: string; frames: string[] } => item !== null);
+            .filter((item): item is { id: string; frames: string[]; frameBoxes: Record<string, DetectionBox[]> } => item !== null);
         mainWindow!.webContents.send("mediaFramesFound", { items });
     } catch (error) {
         console.error("getMediaFrames failed", error);
@@ -820,7 +860,7 @@ const moveFile = (bol: boolean, dest: string, onlyCopy: boolean, data: MoveFileE
     // moved themselves.
     data.filter(f => f.checked === bol && !f.imported).forEach(media => {
         // let completeDestine = path.join(path.dirname(media.path), dest);
-        const completeDestine = path.join(fileGlobal as string, "tmp", dest);
+        const completeDestine = path.join(fileGlobal as string, TMP_FOLDER_NAME, dest);
         if (!fs.existsSync(completeDestine)) {
             fs.mkdirSync(completeDestine);
         }
@@ -876,9 +916,9 @@ const performUndo = (): void => {
             console.error("Could not restore futurePosition for", entry.from, "-", error);
         }
         // Only a media that has landed back at its localPath origin becomes
-        // visible again. Undoing a second move (the kind-folder sort) puts the
-        // file back in the folder it had already been filed into - still filed
-        // away, so its tile has to stay hidden.
+        // visible again. Undoing a second move would put the file back in the
+        // folder it had already been filed into - still filed away, so its
+        // tile has to stay hidden.
         if (entry.previousFuturePosition === null) {
             mainWindow!.webContents.send("fileUnmoved", { id: entry.mediaId });
         }
@@ -983,15 +1023,21 @@ const zoomImg = async (zoom: number): Promise<void> => {
     }
 };
 
+// Folders inside <folder>/tmp that are not move destinations: L and R are the
+// renderer's built-in buttons (folders slice), the rest hold app data
+// (compareImg's hashIndex, video/thumbnail frames, electron-log's logs).
+const SYSTEM_TMP_FOLDERS = new Set(["L", "R", "frames", "hashIndex", "logs"]);
+
+// One button per destination folder moveFile created in <folder>/tmp.
 const loadFolders = async (): Promise<void> => {
     try {
-        fs.readdir(fileGlobal as string, { encoding: "utf8", withFileTypes: true }, (err, data) => {
+        fs.readdir(path.join(fileGlobal as string, TMP_FOLDER_NAME), { encoding: "utf8", withFileTypes: true }, (err, data) => {
             if (err) console.error(err);
             else {
                 mainWindow!.webContents.send("menuOpen",
 
                     data
-                        .filter(d => d.isDirectory() && d.name !== "tmp")
+                        .filter(d => d.isDirectory() && !SYSTEM_TMP_FOLDERS.has(d.name))
                         .map(d => d.name)
                 );
 
@@ -1003,6 +1049,14 @@ const loadFolders = async (): Promise<void> => {
 
     }
 
+};
+
+// Back to only the default L/R buttons, then the same list "Load buttons by
+// folders" adds. Messages on one webContents arrive in order, so the reset
+// always lands before loadFolders' menuOpen.
+const reloadFolders = (): void => {
+    mainWindow!.webContents.send("resetFolders");
+    loadFolders();
 };
 
 
@@ -1018,13 +1072,15 @@ const loadRecursive = async (): Promise<void> => {
         if (!file.canceled) {
             setActiveFolder(file.filePaths[0]);
             redirectToActiveFolder();
-            fileGlobal = file.filePaths[0]; // path.join(file.filePaths[0], "tmp");
+            fileGlobal = file.filePaths[0]; // path.join(file.filePaths[0], TMP_FOLDER_NAME);
             compareImgStore.closeConnection();
             resetUndoForNewFolder();
 
 
             mainWindow!.webContents.send("cleanGrid");
             mainWindow!.webContents.send("mediaLoadStart");
+            // A previous scan that never finished must not block this one.
+            processedFolders = {};
             openfileRecursive(file.filePaths[0]);
 
         } else {
@@ -1116,28 +1172,34 @@ const openfileRecursive = (folderPath: string): void => {
 
     mainWindow!.title = `Get Images in ${fileGlobal} recursive in ${folderPath}`;
 
+    processedFolders[folderPath] = false;
+    // Every exit path must mark the folder done, or the scan never completes
+    // and a super execution's pipeline stays "running" forever.
+    const markFolderDone = (): void => {
+        processedFolders[folderPath] = true;
+        if (Object.values(processedFolders).every(v => v === true)) {
+            console.log("All folders processed");
+            notifyMediaLoadComplete();
+        }
+    };
+
     fs.readdir(folderPath, "utf8", (err, data) => {
-        if (err) { console.error(err); return; }
-        const qtdFiles = data.map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isFile()).length;
-        data.filter(item => item !== "tmp").map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isDirectory()).forEach(item => {
-            processedFolders[item] = false;
-            openfileRecursive(item);
-        });
+        // The folder may have been moved/deleted since its parent listed it.
+        if (err) { console.error(err); markFolderDone(); return; }
+        // Entries moved away between readdir and stat are simply dropped.
+        const statOf = (item: string): fs.Stats | null => { try { return fs.statSync(item); } catch { return null; } };
+        const entries = data.map(item => ({ item, full: path.join(folderPath, item) })).map(e => ({ ...e, stat: statOf(e.full) }));
+        const qtdFiles = entries.filter(e => e.stat?.isFile()).length;
+        const subfolders = entries.filter(e => e.item !== TMP_FOLDER_NAME && e.stat?.isDirectory()).map(e => e.full);
+        // Registered before any recursion so the "all done" check can't fire early.
+        subfolders.forEach(item => { processedFolders[item] = false; });
+        subfolders.forEach(item => openfileRecursive(item));
 
         if (qtdFiles > 0) {
-            streamingMedia(data, folderPath, () => {
-                // nothing to do here, the onDone callback is just to signal the end of the stream
-                processedFolders[folderPath] = true;
-                if (Object.values(processedFolders).every(v => v === true)) {
-                    console.log("All folders processed");
-                    notifyMediaLoadComplete();
-                }
-            });
+            streamingMedia(data, folderPath, markFolderDone);
         } else {
-            processedFolders[folderPath] = true;
+            markFolderDone();
         }
-
-
     });
 };
 

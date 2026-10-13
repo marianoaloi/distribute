@@ -17,16 +17,14 @@ export const backfillContentMd5 = async (onProgress?: (attempted: number, total:
         const total = MediaStore.countMediaMissingContentMd5();
         let attempted = 0;
         if (onProgress) onProgress(0, total);
-        // Rows that fail (e.g. file deleted mid-scan) stay contentMd5-NULL,
-        // so the next LIMIT query would return the exact same set forever -
-        // stop once a batch makes no progress instead of looping forever.
-        let lastBatchKey: string | null = null;
+        // Rows that fail (e.g. file moved/deleted mid-scan) stay
+        // contentMd5-NULL - the rowid cursor walks past them so they're tried
+        // once per pass and never block the rows behind them.
+        let afterRowid = 0;
         for (;;) {
-            const batch = MediaStore.mediaMissingContentMd5(BATCH_SIZE);
+            const batch = MediaStore.mediaMissingContentMd5(BATCH_SIZE, afterRowid);
             if (batch.length === 0) break;
-            const batchKey = batch.map((r) => r.id).join(",");
-            if (batchKey === lastBatchKey) break;
-            lastBatchKey = batchKey;
+            afterRowid = batch[batch.length - 1].rowid;
 
             let cursor = 0;
             const runWorker = async (): Promise<void> => {
@@ -35,6 +33,7 @@ export const backfillContentMd5 = async (onProgress?: (attempted: number, total:
                     try {
                         const contentMd5 = await fileMd5(row.localPath);
                         if (contentMd5) MediaStore.setContentMd5(row.id, contentMd5);
+                        else console.log("backfillContentMd5: skipping", row.localPath, "- unreadable or no longer exists");
                     } catch (error) {
                         console.error("backfillContentMd5 failed for", row.localPath, "-", (error as Error).message);
                     } finally {

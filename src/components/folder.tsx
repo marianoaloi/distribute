@@ -57,7 +57,7 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
     };
 
     // Scoped to exactly what the caller has on screen (e.g. gridImg's
-    // current page, or duplicatesGrid's flat list) - NOT the whole redux
+    // current page, or duplicatesGrid's current page) - NOT the whole redux
     // store. "Unchecked" is the default state, so acting on the global store
     // would sweep in every other page/screen's untouched media too.
     const splitScreenMedias = screenMedias ?? []
@@ -65,6 +65,10 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
     const checkedCount = splitScreenMedias.filter(m => m.checked && !m.deleted && !m.imported).length
 
     const handleClickOpenSplitMove = (ev: React.MouseEvent) => {
+        // The moved tiles vanish from the grid, so leave the user at the top
+        // of what remains rather than mid-page. gridImg's debounced scroll
+        // listener persists the new 0 position on its own.
+        window.scrollTo({ top: 0, behavior: 'auto' });
         if (ev.ctrlKey && uncheckedDestFolder && checkedDestFolder) {
             handleSplitMove();
             return;
@@ -90,17 +94,17 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
 
         // moveFile (app.js) only acts on items whose payload `checked` is
         // true, so the unchecked group is sent with checked forced true.
+        const checkedMedias = splitScreenMedias
+            .filter(m => m.checked && !m.deleted && !m.imported)
+        if (checkedMedias.length > 0) {
+            SendSelectedFiles(checkedDestFolder, false, checkedMedias, batchId)
+        }
+
         const uncheckedWire = splitScreenMedias
             .filter(m => !m.checked && !m.deleted && !m.imported)
             .map(m => ({ ...m, checked: true }))
         if (uncheckedWire.length > 0) {
             SendSelectedFiles(uncheckedDestFolder, false, uncheckedWire, batchId)
-        }
-
-        const checkedMedias = splitScreenMedias
-            .filter(m => m.checked && !m.deleted && !m.imported)
-        if (checkedMedias.length > 0) {
-            SendSelectedFiles(checkedDestFolder, false, checkedMedias, batchId)
         }
 
         handleCloseSplitMove();

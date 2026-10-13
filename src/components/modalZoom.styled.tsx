@@ -48,7 +48,7 @@ export const VideoPresentation = styled.video`
     text-align: center;
       overflow: auto;
       max-height: 100%;
-      width: 100%;
+    //  width: 100%;
 `
 
 export const ImgWrapper = styled.div`
@@ -58,6 +58,34 @@ export const ImgWrapper = styled.div`
 
 export const ImgPresentation = styled.img`
       display: block;
+`
+
+// Right-hand column of a video/GIF's extracted detection frames, shown next
+// to the media (MediaPresentation shrinks to the remaining 80%).
+export const FramesPanel = styled.div`
+    position: absolute;
+    top: 50px;
+    bottom: 50px;
+    right: 0;
+    width: 20%;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 4px;
+    box-sizing: border-box;
+    border-left: 1px solid #e0e0e0;
+    z-index: 2;
+`
+
+export const FrameTile = styled.div`
+    position: relative;
+    flex-shrink: 0;
+
+    img {
+        width: 100%;
+        display: block;
+    }
 `
 
 export const ControlSlider = styled(Slider)`
@@ -151,8 +179,9 @@ export const FoldersZoom = styled(Folders)`
     }
 `
 export const InfoBox = styled.div`
-    position: fixed;
+    position: sticky;
     top: 10px;
+    float: right;
     right: 10px;
     z-index: 3;
     display: flex;

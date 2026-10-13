@@ -1,4 +1,5 @@
 
+import fs from "fs";
 import * as MediaStore from "../mediaDb/MediaStore";
 import { DetectionBox, DetectMediaRef } from "../types/domain";
 import * as mediaIndexer from "../compareImg/mediaIndexer";
@@ -79,7 +80,7 @@ export const processMediaToDetections = async (mainWindow: any, onnxDetector: an
         try {
             const items = medias || [];
             if (items.length === 0) {
-                mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: [], classes: [] });
+                mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: [], classes: [], classScores: {} });
             } else {
                 const perItem: { item: DetectMediaRef; boxes: DetectionBox[] }[] = [];
                 for (const item of items) {
@@ -89,6 +90,11 @@ export const processMediaToDetections = async (mainWindow: any, onnxDetector: an
                         }
                         item.itemId = item.id; // use the media's own item for images
                     }
+                    // Moved/deleted since findAllItemsExists listed it.
+                    if (!fs.existsSync(item.media)) {
+                        console.log("detectObjects: skipping", item.media, "- file no longer exists");
+                        continue;
+                    }
                     const boxes: DetectionBox[] = await onnxDetector.detect(item.media);
                     MediaStore.replaceItemDetections(item.itemId, boxes, modelPathId);
                     MediaStore.setItemDetectionState(item.itemId, boxes.map(box => box.className).join(","));
@@ -96,13 +102,32 @@ export const processMediaToDetections = async (mainWindow: any, onnxDetector: an
                 }
 
                 const displayItem = perItem.find((d) => isDisplayFrame(d.item.framePosition)) || perItem[0];
+                if (!displayItem) {
+                    mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: [], classes: [], classScores: {} });
+                    return;
+                }
                 const classes = [...new Set(perItem.flatMap((d) => d.boxes.map((b) => b.className)))];
-                mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: displayItem.boxes, classes });
+                const classScores: Record<string, { min: number; max: number }> = {};
+                for (const box of perItem.flatMap((d) => d.boxes)) {
+                    const range = classScores[box.className];
+                    if (!range) classScores[box.className] = { min: box.score, max: box.score };
+                    else {
+                        range.min = Math.min(range.min, box.score);
+                        range.max = Math.max(range.max, box.score);
+                    }
+                }
+                mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: displayItem.boxes, classes, classScores });
             }
         } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+                // Moved/deleted between the existence check above and the read.
+                console.log("detectObjects: skipping", media.media, "- file no longer exists");
+                mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: [], classes: [], classScores: {} });
+                return;
+            }
             MediaStore.replaceItemDetections(media.itemId, [], modelPathId);
             console.error("detectObjects failed for", media.media, error);
-            mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: [], classes: [], error: (error as Error).message });
+            mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: [], classes: [], classScores: {}, error: (error as Error).message });
         } finally {
             processed++;
             mainWindow!.webContents.send("detectionProgress", { processed, total });

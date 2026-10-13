@@ -1,5 +1,5 @@
 import { createReducer, WritableDraft } from "@reduxjs/toolkit"
-import { addFolder, removeFolder, setSplitMoveCheckedFolder, setSplitMoveUncheckedFolder } from "./thunks"
+import { addFolder, removeFolder, resetFolders, setSplitMoveCheckedFolder, setSplitMoveUncheckedFolder } from "./thunks"
 
 
 interface FoldersDistribute {
@@ -8,8 +8,11 @@ interface FoldersDistribute {
     splitMoveCheckedFolder: string
 }
 
+// The built-in destination buttons, also what resetFolders goes back to.
+const DEFAULT_FOLDERS = ["L", "R"]
+
 const initialState: FoldersDistribute = {
-    folders: ["L", "R"],
+    folders: DEFAULT_FOLDERS,
     splitMoveUncheckedFolder: "",
     splitMoveCheckedFolder: "",
 }
@@ -22,6 +25,10 @@ export const FolderReduce = createReducer(initialState, (build) => {
     build.addCase(removeFolder, (state, action) => ({
         ...state,
         folders: removeFolderTransform(state, action)
+    }))
+    build.addCase(resetFolders, (state) => ({
+        ...state,
+        folders: DEFAULT_FOLDERS
     }))
     build.addCase(setSplitMoveUncheckedFolder, (state, action) => ({
         ...state,

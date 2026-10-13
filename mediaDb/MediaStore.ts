@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 
 import type { MediaRow, UpsertMediaInput, MediaMissingMd5Row, MediaAwaitingSortRow, DetectionBox, DetectionRow, DetectMediaRef, ItemDetectionState } from "../types/domain";
-import { getCacheDir } from "../thumbnails/cache";
+import { getCacheDir, hashFor } from "../thumbnails/cache";
 
 export const ensureReady = (): void => HashStore.ensureReady();
 
@@ -64,6 +64,30 @@ export const setFuturePosition = (id: string, futurePosition: string | null, mov
     const db = HashStore.getDb();
     db.prepare("UPDATE media SET futurePosition = ?, movedAt = ?, moveBatchId = ?, updatedAt = ? WHERE id = ?")
         .run(futurePosition, futurePosition ? Date.now() : null, futurePosition ? moveBatchId : null, Date.now(), id);
+};
+
+// Makes newLocalPath the file's home: used after organize/sortMediaByKind.ts
+// moves a filed media, so the invariant "futurePosition IS NULL -> the file is
+// at localPath" holds again. media.id is md5(localPath) (util.ts), so the id
+// changes with the path - otherwise the next folder load would compute a new
+// id for this file and collide with this row on the UNIQUE localPath index.
+// media_item and items_duplicated hold media ids too and are re-keyed in the
+// same transaction; `items` is not (an item id is a content key, and the
+// thumbnail cache is just re-made for the new path). Returns the new id, or
+// null when a stale row already holds that id/path - the caller logs and moves on.
+export const relocateMedia = (id: string, newLocalPath: string): string | null => {
+    const db = HashStore.getDb();
+    const newId = hashFor(newLocalPath);
+    const relocate = db.transaction(() => {
+        const taken = db.prepare("SELECT 1 FROM media WHERE (id = ? OR localPath = ?) AND id <> ?").get(newId, newLocalPath, id);
+        if (taken) return null;
+        db.prepare(`UPDATE media SET id = ?, localPath = ?, filename = ?, futurePosition = NULL, movedAt = NULL, moveBatchId = NULL, updatedAt = ?
+                    WHERE id = ?`).run(newId, newLocalPath, path.basename(newLocalPath), Date.now(), id);
+        db.prepare("UPDATE media_item SET mediaId = ? WHERE mediaId = ?").run(newId, id);
+        db.prepare("UPDATE items_duplicated SET mediaId = ? WHERE mediaId = ?").run(newId, id);
+        return newId;
+    });
+    return relocate();
 };
 
 // Every media that has been filed into a destination folder and is still
@@ -153,9 +177,12 @@ export const findAllDetectionExists = (): Map<string, ItemDetectionState[]> => {
     }, new Map<string, ItemDetectionState[]>());
 };
 
-export const mediaMissingContentMd5 = (limit: number): MediaMissingMd5Row[] => {
+// Keyset-paginated by rowid: rows that fail to hash (e.g. moved away) stay
+// NULL, so a plain LIMIT would return them first forever and starve every row
+// behind them. afterRowid is the last row of the previous batch.
+export const mediaMissingContentMd5 = (limit: number, afterRowid = 0): MediaMissingMd5Row[] => {
     const db = HashStore.getDb();
-    return db.prepare("SELECT id, localPath, kind FROM media WHERE contentMd5 IS NULL LIMIT ?").all(limit) as MediaMissingMd5Row[];
+    return db.prepare("SELECT rowid, id, localPath, kind FROM media WHERE contentMd5 IS NULL AND rowid > ? ORDER BY rowid LIMIT ?").all(afterRowid, limit) as MediaMissingMd5Row[];
 };
 
 // Upfront total for backfillContentMd5's progress reporting - mediaMissingContentMd5
@@ -182,6 +209,30 @@ export const saveDetectionClasses = (names: string[]): void => {
         list.forEach((name, classId) => insert.run(classId, name, now));
     });
     run(names);
+};
+
+export interface DetectionGroup {
+    name: string;
+    classes: number[];
+    join: "OR" | "AND";
+}
+
+export const getDetectionGroups = (): DetectionGroup[] => {
+    const db = HashStore.getDb();
+    const rows = db.prepare("SELECT name, classes, joinType FROM detection_group ORDER BY position ASC").all() as Array<{ name: string; classes: string; joinType: string }>;
+    return rows.map((r) => ({ name: r.name, classes: JSON.parse(r.classes) as number[], join: r.joinType as "OR" | "AND" }));
+};
+
+// Replaces all saved groups (an empty list clears them).
+export const saveDetectionGroups = (groups: DetectionGroup[]): void => {
+    const db = HashStore.getDb();
+    const del = db.prepare("DELETE FROM detection_group");
+    const insert = db.prepare("INSERT INTO detection_group (position, name, classes, joinType) VALUES (?, ?, ?, ?)");
+    const run = db.transaction((list: DetectionGroup[]) => {
+        del.run();
+        list.forEach((g, position) => insert.run(position, g.name, JSON.stringify(g.classes), g.join));
+    });
+    run(groups);
 };
 
 // Mirrors setDetectionState above, one level down: records the class-name
@@ -284,6 +335,31 @@ export const getAllDisplayDetections = (): DetectionRowWithMediaId[] => {
     `).all() as DetectionRowWithMediaId[];
 };
 
+export interface FrameDetectionRow extends DetectionRowWithMediaId {
+    framePosition: string;
+}
+
+// Every video/GIF frame item's boxes (not just the display one above), for the
+// zoom modal's frames panel - each frame tile overlays the boxes detected on
+// that exact frame, so x/y/w/h are spatially valid against it.
+export const getFrameDetectionsForMedias = (mediaIds: string[]): FrameDetectionRow[] => {
+    if (mediaIds.length === 0) return [];
+    const db = HashStore.getDb();
+    return db.prepare(`
+        SELECT media_item.mediaId AS mediaId, items.framePosition AS framePosition,
+               item_detection.classId AS classId, detection_class.name AS className,
+               item_detection.score AS score,
+               item_detection.x AS x, item_detection.y AS y, item_detection.w AS w, item_detection.h AS h,
+               model_path.path AS modelPath
+        FROM media_item
+        JOIN items ON items.id = media_item.itemId
+        JOIN item_detection ON item_detection.itemId = items.id
+        LEFT JOIN detection_class ON detection_class.classId = item_detection.classId
+        LEFT JOIN model_path ON model_path.id = item_detection.modelPathId
+        WHERE items.framePosition != '' AND media_item.mediaId IN (${mediaIds.map(() => "?").join(",")})
+    `).all(...mediaIds) as FrameDetectionRow[];
+};
+
 // Filtering (classFilter.tsx/gridImg.tsx) only needs "does this media contain
 // class X anywhere", so - unlike the display boxes above - it uses the union
 // of classes across EVERY item linked to a media (all 4 frames for a video/
@@ -298,4 +374,20 @@ export const getDetectionClassesByMedia = (): Array<{ mediaId: string; className
         LEFT JOIN detection_class ON detection_class.classId = item_detection.classId
         WHERE detection_class.name IS NOT NULL
     `).all() as Array<{ mediaId: string; className: string }>;
+};
+
+// Same union-across-items semantics as getDetectionClassesByMedia, plus the
+// lowest/highest detection score per (media, class) for the classFilter's
+// per-term score threshold ("at least one detection of X with score >= t").
+export const getDetectionClassScoresByMedia = (): Array<{ mediaId: string; className: string; minScore: number; maxScore: number }> => {
+    const db = HashStore.getDb();
+    return db.prepare(`
+        SELECT media_item.mediaId AS mediaId, detection_class.name AS className,
+               MIN(item_detection.score) AS minScore, MAX(item_detection.score) AS maxScore
+        FROM media_item
+        JOIN item_detection ON item_detection.itemId = media_item.itemId
+        LEFT JOIN detection_class ON detection_class.classId = item_detection.classId
+        WHERE detection_class.name IS NOT NULL
+        GROUP BY media_item.mediaId, detection_class.name
+    `).all() as Array<{ mediaId: string; className: string; minScore: number; maxScore: number }>;
 };

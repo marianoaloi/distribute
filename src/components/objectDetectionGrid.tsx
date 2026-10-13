@@ -12,7 +12,7 @@ import { DetectionBoxLabel, DetectionBoxOutline, DetectionGridWrap, DetectionRes
 // thousands of <img> tags tanks render/scroll performance. Detection itself
 // still runs over every loaded media (see runDetection below); only the
 // on-screen list is capped.
-const MAX_VISIBLE_MEDIAS = 500
+const MAX_VISIBLE_MEDIAS = 40
 
 // Once the run has gone 3/4 of the way through the visible window, slide the
 // window forward so the grid keeps showing what's coming up next instead of

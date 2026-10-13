@@ -29,6 +29,7 @@
     "organize/**/*.ts",
     "fileOps/**/*.ts",
     "scripts/debugCompareVideos.ts",
+    "scripts/debugMovedMedia.ts",
     "types/**/*.ts"
   ]
 }

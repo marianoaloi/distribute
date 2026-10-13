@@ -10,6 +10,14 @@ export interface DetectionBox {
     className: string
 }
 
+// A predefined class-filter group from the folder's .maloi. classes are raw
+// class ids (negative = NOT), resolved to names against classNames at use.
+export interface DetectionGroup {
+    name: string
+    classes: number[]
+    join: 'OR' | 'AND'
+}
+
 interface DetectionProgress {
     processed: number
     total: number
@@ -21,9 +29,14 @@ interface DetectionProgress {
 // thumbnail. classes: the union of classes across EVERY item linked to the
 // media (all 4 video/GIF frames), for classFilter/gridImg's "does this media
 // contain X anywhere" filtering - a superset of boxes' classNames.
+// classScores: per class, the min/max detection score across those same items,
+// for the class filter's per-term score threshold.
+export type ClassScoreRange = { min: number; max: number }
+
 export interface MediaDetections {
     boxes: DetectionBox[]
     classes: string[]
+    classScores: Record<string, ClassScoreRange>
 }
 
 interface DetectionsState {
@@ -33,6 +46,7 @@ interface DetectionsState {
     progress: DetectionProgress | null
     modelPath: string | null
     classNames: string[]
+    groups: DetectionGroup[]
     lastProcessedId: string | null
     // Letterbox/tensor input resolution actually in effect (see
     // objectDetection/onnxDetector.js's getSize): the .maloi "reshape"
@@ -48,6 +62,7 @@ const initialState: DetectionsState = {
     progress: null,
     modelPath: null,
     classNames: [],
+    groups: [],
     lastProcessedId: null,
     detectionSize: null,
 }
@@ -67,7 +82,7 @@ const detectionsSlice = createSlice({
             ...state,
             byId: {
                 ...state.byId,
-                [action.payload.id]: { boxes: action.payload.boxes, classes: action.payload.classes || [] },
+                [action.payload.id]: { boxes: action.payload.boxes, classes: action.payload.classes || [], classScores: action.payload.classScores || {} },
             },
             lastProcessedId: action.payload.id,
         }),
@@ -78,11 +93,19 @@ const detectionsSlice = createSlice({
             byId: {
                 ...state.byId,
                 ...Object.fromEntries(
-                    action.payload.items.map((item: { id: string, boxes: DetectionBox[], classes: string[] }) =>
-                        [item.id, { boxes: item.boxes, classes: item.classes || [] }])
+                    action.payload.items.map((item: { id: string, boxes: DetectionBox[], classes: string[], classScores?: Record<string, ClassScoreRange> }) =>
+                        [item.id, { boxes: item.boxes, classes: item.classes || [], classScores: item.classScores || {} }])
                 ),
             },
         }),
+        // A media whose id changed (organize/sortMediaByKind.ts relocates it
+        // and media ids are md5(path)) keeps its overlay under the new id.
+        rekeyDetections: (state, action) => {
+            const { id, newId } = action.payload
+            if (!(id in state.byId)) return state
+            const { [id]: moved, ...rest } = state.byId
+            return { ...state, byId: { ...rest, [newId]: moved } }
+        },
         setDetectionProgress: (state, action) => ({
             ...state,
             progress: action.payload,
@@ -104,7 +127,8 @@ const detectionsSlice = createSlice({
         }),
         setDetectionClasses: (state, action) => ({
             ...state,
-            classNames: action.payload,
+            classNames: action.payload.names,
+            groups: action.payload.groups ?? [],
         }),
         setDetectionSize: (state, action) => ({
             ...state,
@@ -113,5 +137,5 @@ const detectionsSlice = createSlice({
     }
 })
 
-export const { startDetecting, setDetectionResult, mergeDetections, setDetectionProgress, detectingFinished, clearDetections, setModelPath, setDetectionClasses, setDetectionSize } = detectionsSlice.actions;
+export const { startDetecting, setDetectionResult, mergeDetections, rekeyDetections, setDetectionProgress, detectingFinished, clearDetections, setModelPath, setDetectionClasses, setDetectionSize } = detectionsSlice.actions;
 export default detectionsSlice.reducer;

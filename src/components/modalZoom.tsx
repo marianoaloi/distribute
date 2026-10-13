@@ -1,11 +1,11 @@
-import { forwardRef, SyntheticEvent, useImperativeHandle, useRef, useState } from "react"
+import { forwardRef, SyntheticEvent, useEffect, useImperativeHandle, useRef, useState } from "react"
 import { Media } from "../entity/Media"
 import { prettifySizeF } from "./media"
-import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, ImgWrapper, MediaControllersCSS, FoldersZoom, MuteIcon, InfoBox, ZoomHeader, VideoProgress } from "./modalZoom.styled"
+import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, ImgWrapper, MediaControllersCSS, FoldersZoom, MuteIcon, InfoBox, ZoomHeader, VideoProgress, FramesPanel, FrameTile } from "./modalZoom.styled"
 import { IconButton, Slider, Modal } from "@mui/material"
 import { toMediaUrl } from "../lib/mediaUrl"
-import { ArrowBackIos, ArrowForwardIos, CleaningServices, Label, ContentCopy, Check } from "@mui/icons-material"
-import { updateArrayItem, useDispatch, useSelector, selectDetections } from "../lib/redux"
+import { ArrowBackIos, ArrowForwardIos, CleaningServices, Label, ContentCopy, Check, Image } from "@mui/icons-material"
+import { updateArrayItem, useDispatch, useSelector, selectDetections, selectMediaFrames, selectMediaFrameBoxes, GetMediaFrames } from "../lib/redux"
 import { configurationsSelector, setVideoVolume } from "../lib/redux/slices/configurations"
 import { DetectionBoxOutline, DetectionBoxLabel } from "./objectDetectionGrid.styled"
 
@@ -38,7 +38,31 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         const [duration, setDuration] = useState(0);
         const [showDetections, setShowDetections] = useState(false);
         const toggleDetections = () => setShowDetections(v => !v)
+        // Video/GIF detection runs on the 4 extracted frames (start10s, end10s,
+        // pct50, pct10 - compareImg/videoFrames.ts). This shows them in a column
+        // beside the media, each overlaid with the boxes detected on that frame.
+        const isAnimated = mediaWithPreview.mime.includes('video') || mediaWithPreview.mime.includes('gif')
+        const mediaFrames = useSelector(selectMediaFrames)
+        const frames = mediaFrames[mediaWithPreview.id] || []
+        const frameBoxes = useSelector(selectMediaFrameBoxes)[mediaWithPreview.id] || {}
+        // Frame files are named <hash>_<position>.jpg (videoFrames.ts's framePathFor).
+        // end10s falls back to the media's display boxes for results streamed
+        // by a detection run after the frames were fetched.
+        const boxesForFrame = (frame: string) => {
+            const position = /_([^_]+)\.jpg$/.exec(frame)?.[1] || ''
+            return frameBoxes[position] || (position === 'end10s' ? detectedObjects : [])
+        }
+        const [showDetectionFrames, setShowDetectionFrames] = useState(false)
+        const showFramesPanel = showDetectionFrames && isAnimated
+        useEffect(() => {
+            if (showFramesPanel) dispatch(GetMediaFrames([mediaWithPreview]) as any)
+        }, [showFramesPanel, mediaWithPreview.id, dispatch])
         const [pathCopied, setPathCopied] = useState(false)
+        // Scale factor for the video, applied as a transform (origin top-left)
+        // so MediaPresentation's overflow:auto scrolls over the enlarged frame.
+        // Reset per media so the next video doesn't open already zoomed in.
+        const [videoZoom, setVideoZoom] = useState(1)
+        useEffect(() => setVideoZoom(1), [mediaWithPreview.id])
 
         const copyPathToClipboard = (): void => {
             navigator.clipboard.writeText(mediaWithPreview.path).then(() => {
@@ -215,6 +239,16 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                     <>
                         <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
                         <input style={{ zoom: 2 }} type="checkbox" onClick={changeCheckbox} id="selectMedia" defaultChecked={mediaWithPreview.checked} />
+                        <Slider
+                            aria-label="Video zoom"
+                            value={videoZoom}
+                            valueLabelDisplay="auto"
+                            shiftStep={0.5}
+                            step={0.1}
+                            min={1}
+                            max={10}
+                            onChange={(event: Event, newValue: number | number[]) => setVideoZoom(newValue as number)}
+                        />
                     </>
                     :
                     <>
@@ -294,12 +328,32 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                             title={detectedObjects.length > 0 ? `${showDetections ? "Hide" : "Show"} ${detectedObjects.length} detected object(s)` : "No objects detected for this media"}>
                             <Label />
                         </IconButton>
+                        {isAnimated &&
+                            <IconButton onClick={() => setShowDetectionFrames(v => !v)}
+                                color={showDetectionFrames ? "primary" : "default"}
+                                title={showDetectionFrames ? "Hide the detection frames" : "Show the frames used for object detection"}>
+                                <Image />
+                            </IconButton>}
                         <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
                     </ZoomHeader>
                     {mediaWithPreview.mime.includes('video') &&
                         <VideoProgress variant="determinate" value={duration > 0 ? (currentTime / duration) * 100 : 0} />
                     }
-                    <MediaPresentation>
+                    {showFramesPanel &&
+                        <FramesPanel>
+                            {frames.length === 0 && <span>No extracted frames for this media</span>}
+                            {frames.map(frame => (
+                                <FrameTile key={frame} title={frame}>
+                                    <img src={toMediaUrl(frame)} alt={frame} draggable={false} />
+                                    {showDetections && boxesForFrame(frame).map((box, idx) => (
+                                        <DetectionBoxOutline key={idx} x={box.x} y={box.y} w={box.w} h={box.h}>
+                                            <DetectionBoxLabel>{box.className} {(box.score * 100).toFixed(0)}%</DetectionBoxLabel>
+                                        </DetectionBoxOutline>
+                                    ))}
+                                </FrameTile>
+                            ))}
+                        </FramesPanel>}
+                    <MediaPresentation style={showFramesPanel ? { width: '80%', left: '40%' } : undefined}>
                         {
                             mediaWithPreview.mime.includes('video')
                                 ?
@@ -310,6 +364,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                         onWheel={controlVolumeByAltPresed}
                                         onVolumeChange={saveVideoVolume}
                                         onTimeUpdate={updateVideoTime}
+                                        style={{ transform: `scale(${videoZoom})`, transformOrigin: 'top left' }}
                                         autoPlay title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></VideoPresentation>
                                     <InfoBox>
                                         {!mediaWithPreview.hasAudio ? <MuteIcon color="error" /> : <span>{`${(volumeLevel * 100).toFixed(2)}%`}</span>}
@@ -342,7 +397,9 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                 </>
                         }
                     </MediaPresentation>
-                    <MediaControllers />
+                    {/* Called, not mounted as <MediaControllers />: it's redefined every
+                        render, so onTimeUpdate's re-renders would remount the sliders mid-drag. */}
+                    {MediaControllers()}
                 </ModalBox>
 
             </Modal>

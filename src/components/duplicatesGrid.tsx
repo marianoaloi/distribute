@@ -5,13 +5,14 @@ import { ImageSearch, RestartAlt, FolderOpen, FolderCopyTwoTone, VolumeOff, File
 import { Media } from "../entity/Media"
 import { ExportDatabase, FindIndexDuplicates, GetDuplicateGroups, GetMediaFrames, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDetections, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMediaFrames, selectMedias, selectPipelineRunning, updateManyArrayItem, useSelector } from "../lib/redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
-import { MediaIMG } from "./media"
+import { MediaIMG, isScrollToLastSeenKey, scrollToMedia } from "./media"
 import { FrameCollageTile } from "./frameCollageTile"
 import ModalZoom from "./modalZoom"
 import { CounterImgIndex, DuplicateGroupCard, DuplicateGroupRow, DuplicatesList, DuplicatesResume, EmptyState, GroupLabel, ImportedMediaWrap, RebuildIndexInfo } from "./duplicatesGrid.styled"
 import { Folders } from "./folder"
 import { MediaTypeFilter, matchesMediaType } from "./mediaTypeFilter"
-import { ClassFilter, matchesClassFilter, normalizeClassFilter } from "./classFilter"
+import { ClassFilter, hasClass, matchesClassFilter, matchesClassPresence, normalizeClassFilter } from "./classFilter"
+import { Pagination, totalPagesFor } from "./pagination"
 
 export const GridDuplicates = (() => {
 
@@ -64,11 +65,32 @@ export const GridDuplicates = (() => {
         // yet, and imported items (another folder's exported DB) have no local
         // detections at all. Per-member filtering would silently drop exactly
         // the cross-folder matches the import feature exists to surface.
-        .filter(group => group.some(m => matchesClassFilter(detections[m.id]?.classes, classFilterGroups)))
+        .filter(group => group.some(m => matchesClassFilter(detections[m.id], classFilterGroups)))
+        // Same group-level view for Has/Without class: a group has a class when
+        // any member does, so "Without class" means no member has one.
+        .filter(group => matchesClassPresence(group.some(m => hasClass(detections[m.id])), config.classPresence))
         .map(group => [...group].sort((a, b) => b.size - a.size))
         .map(group => group.map(m => ({ ...m, screenIndex: counterIndex++ })))
 
     const flatList = groups.flat()
+
+    // Paged by GROUP, not by media, so a group is never split across pages.
+    // Select-all/unselect/auto-select and the split move act on this page only.
+    const [page, setPage] = useState(0)
+    const [groupsPerPage, setGroupsPerPage] = useState(20)
+    const pagedGroups = groups.slice(page * groupsPerPage, (page + 1) * groupsPerPage)
+    const pagedMedias = pagedGroups.flat()
+    const totalPages = totalPagesFor(groups.length, groupsPerPage)
+    const groupIndexById = new Map(groups.flatMap((group, gi) => group.map(m => [m.id, gi] as const)))
+    const pageOf = (mediaId: string): number | undefined => {
+        const gi = groupIndexById.get(mediaId)
+        return gi === undefined ? undefined : Math.floor(gi / groupsPerPage)
+    }
+
+    // A new scan, a filter or a bigger page size can leave the page past the end.
+    useEffect(() => {
+        if (totalPages > 0 && page > totalPages - 1) setPage(totalPages - 1)
+    }, [page, totalPages])
 
     // Only video/GIF tiles can ever show the 4-frame collage - fetching for
     // the rest would just come back empty (frames are only ever extracted
@@ -107,6 +129,31 @@ export const GridDuplicates = (() => {
         setOpenedIds(prev => prev.has(lastZoom.id) ? prev : new Set(prev).add(lastZoom.id))
     }, [lastZoom])
 
+    // "t": bring the last-seen tile into view. The tile may sit on another
+    // page, so switch page first and let the effect below scroll once that
+    // page has rendered. The ref keeps the window listener on the latest render.
+    const pendingScrollId = useRef<string | null>(null)
+    const scrollToLastSeenRef = useRef<() => void>(() => {})
+    scrollToLastSeenRef.current = () => {
+        if (!lastZoom) return;
+        const target = pageOf(lastZoom.id)
+        if (target === undefined) return;
+        if (target === page) { scrollToMedia(lastZoom.id); return; }
+        pendingScrollId.current = lastZoom.id
+        setPage(target)
+    }
+    useEffect(() => {
+        if (pendingScrollId.current === null) return;
+        if (scrollToMedia(pendingScrollId.current)) pendingScrollId.current = null
+    }, [page, pagedGroups.length])
+    useEffect(() => {
+        const onKeyUp = (ev: globalThis.KeyboardEvent) => {
+            if (isScrollToLastSeenKey(ev)) scrollToLastSeenRef.current()
+        }
+        window.addEventListener('keyup', onKeyUp)
+        return () => window.removeEventListener('keyup', onKeyUp)
+    }, [])
+
     const [lastClick, setLastClick] = useState<Media>()
     const lastClickedEvent = ($eventClick: Media) => { setLastClick($eventClick) }
     const shiftSelect = ($eventClick: Media) => { processSelection($eventClick, true) }
@@ -128,9 +175,9 @@ export const GridDuplicates = (() => {
     }
 
     // Select-all skips imported fake items — they can never be moved, so a
-    // check mark on them would only be noise. Unselect clears everything.
-    const selectAll = () => processChoice(flatList.filter(m => !m.imported), true)
-    const unselectAll = () => processChoice(flatList, false)
+    // check mark on them would only be noise. Unselect clears the whole page.
+    const selectAll = () => processChoice(pagedMedias.filter(m => !m.imported), true)
+    const unselectAll = () => processChoice(pagedMedias, false)
 
     // Within each group: checks every item for removal except one survivor,
     // chosen by type/audio priority — a video is always preferred over a gif
@@ -140,7 +187,7 @@ export const GridDuplicates = (() => {
     // tier is non-empty.
     const selectDuplicatesToRemove = () => {
         const decided: Media[] = []
-        for (const group of groups) {
+        for (const group of pagedGroups) {
             // Only actual-folder items get checked/spared: imported fake items
             // (database import) are other folders' files — not movable, and
             // they must not count as a group's surviving copy either.
@@ -181,17 +228,23 @@ export const GridDuplicates = (() => {
     const exportDatabase = () => dispatch(ExportDatabase())
     const importDatabase = () => dispatch(ImportDatabase())
 
+    // Paging through the modal follows into the page holding the new media.
+    const zoomTo = (media: Media) => {
+        const target = pageOf(media.id)
+        if (target !== undefined) setPage(target)
+        setLastZoom(media)
+    }
     const nextMedia = () => {
         if (!lastZoom) return;
         const idx = flatList.findIndex(m => m.id === lastZoom.id)
         if (idx === -1 || idx >= flatList.length - 1) return;
-        setLastZoom(flatList[idx + 1])
+        zoomTo(flatList[idx + 1])
     }
     const prevMedia = () => {
         if (!lastZoom) return;
         const idx = flatList.findIndex(m => m.id === lastZoom.id)
         if (idx <= 0) return;
-        setLastZoom(flatList[idx - 1])
+        zoomTo(flatList[idx - 1])
     }
 
     function pressedKeyUp(ev: KeyboardEvent<HTMLDivElement>): void {
@@ -247,8 +300,8 @@ export const GridDuplicates = (() => {
                         : "Rebuild the compareImg vector index from the currently loaded media (use this if indexing errors show up in the console, e.g. a corrupted index)"}>
                     {indexRebuilding ? <CircularProgress size={20} /> : <RestartAlt />}
                 </IconButton>
-                <IconButton onClick={selectDuplicatesToRemove} disabled={groups.length === 0}
-                    title="Check duplicates for removal in every group, keeping one survivor: a video is preferred over a gif or image (biggest with sound, else biggest muted), otherwise the biggest gif, otherwise the biggest item">
+                <IconButton onClick={selectDuplicatesToRemove} disabled={pagedGroups.length === 0}
+                    title="Check duplicates for removal in every group on this page, keeping one survivor: a video is preferred over a gif or image (biggest with sound, else biggest muted), otherwise the biggest gif, otherwise the biggest item">
                     <VolumeOff />
                 </IconButton>
                 <IconButton onClick={exportDatabase} disabled={dbExporting || pipelineRunning}
@@ -259,13 +312,16 @@ export const GridDuplicates = (() => {
                     title="Import another folder's exported database and find items duplicated across the two folders (requires this folder's index to exist)">
                     {dbImporting ? <CircularProgress size={20} /> : <FileUpload />}
                 </IconButton>
-                <IconButton onClick={selectAll} disabled={groups.length === 0} title="Select all items in the duplicate groups"><RadioButtonChecked /></IconButton>
-                <IconButton onClick={unselectAll} disabled={groups.length === 0} title="Unselect all items in the duplicate groups"><RadioButtonUnchecked /></IconButton>
+                <IconButton onClick={selectAll} disabled={pagedGroups.length === 0} title="Select all items in the duplicate groups on this page"><RadioButtonChecked /></IconButton>
+                <IconButton onClick={unselectAll} disabled={pagedGroups.length === 0} title="Unselect all items in the duplicate groups on this page"><RadioButtonUnchecked /></IconButton>
                 <span>{groups.length} duplicate group{groups.length === 1 ? "" : "s"}</span>
+                <Pagination page={page} setPage={setPage}
+                    perPage={groupsPerPage} setPerPage={setGroupsPerPage} total={groups.length}
+                    perPageTitle="How many groups for page" />
 
                 <div className="spacer" />
 
-                <Folders screenMedias={flatList} />
+                <Folders screenMedias={pagedMedias} />
 
                 <IconButton onClick={openDiretory} disabled={pipelineRunning} title="Open folder to choose medias"><FolderOpen /></IconButton>
                 <IconButton onClick={openDiretoryRecursive} disabled={pipelineRunning} title="Open folder recursively to choose medias"><FolderCopyTwoTone /></IconButton>
@@ -299,9 +355,9 @@ export const GridDuplicates = (() => {
 
             {groups.length > 0
                 ? <DuplicatesList>
-                    {groups.map((group, idx) => (
+                    {pagedGroups.map((group, idx) => (
                         <DuplicateGroupCard key={group[0].id}>
-                            <GroupLabel>Group {idx + 1} — {group.length} identical files{group.some(m => m.imported) ? ` (${group.filter(m => m.imported).length} from other folder)` : ""}</GroupLabel>
+                            <GroupLabel>Group {page * groupsPerPage + idx + 1} — {group.length} identical files{group.some(m => m.imported) ? ` (${group.filter(m => m.imported).length} from other folder)` : ""}</GroupLabel>
                             <DuplicateGroupRow>
                                 {group.map(media => {
                                     const frames = mediaFrames[media.id]

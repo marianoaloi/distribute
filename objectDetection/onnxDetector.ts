@@ -1,5 +1,5 @@
 import fs from "fs";
-import { Jimp } from "jimp";
+import { Jimp, ResizeStrategy } from "jimp";
 import * as ort from "onnxruntime-node";
 
 import type { DetectionBox } from "../types/domain";
@@ -76,6 +76,32 @@ const getSession = (): Promise<ort.InferenceSession> => {
 
 export const isAvailable = (): boolean => Boolean(modelPath && fs.existsSync(modelPath));
 
+// Two model shapes are supported, told apart by the first output's rank:
+//   - YOLOv5 detector (e.g. best.onnx): [1, anchors, 5 + classes] -> boxes.
+//   - Hugging Face image classifier (e.g. food.onnx, a Swin fine-tuned on
+//     Food-101): [batch, classes] logits -> one label for the whole image.
+const isClassifier = (session: ort.InferenceSession): boolean => {
+    const meta = session.outputMetadata[0];
+    return Boolean(meta && meta.isTensor && meta.shape.length === 2);
+};
+
+// Normalization Hugging Face's image processor applies for Swin/most
+// ImageNet-pretrained backbones.
+const IMAGENET_MEAN = [0.485, 0.456, 0.406];
+const IMAGENET_STD = [0.229, 0.224, 0.225];
+
+// Jimp.read(path) drops decode options for local files (only its
+// Buffer/URL branches forward them - see @jimp/core's fromBuffer), so
+// the raised JPEG_DECODE_OPTIONS above would silently never apply if
+// called that way. Reading the buffer ourselves and calling
+// Jimp.fromBuffer directly is what actually gets them through to
+// jpeg-js. Ignored (harmless) for non-JPEG input - Jimp.fromBuffer only
+// applies options keyed by the format it detects.
+const readImage = async (input: string) => {
+    const buffer = await fs.promises.readFile(input);
+    return Jimp.fromBuffer(buffer, { "image/jpeg": JPEG_DECODE_OPTIONS });
+};
+
 interface LetterboxContext {
     chw: Float32Array;
     scale: number;
@@ -92,15 +118,7 @@ interface LetterboxContext {
 // rather than read again here so it's guaranteed to match the tensor dims
 // detect() builds from the same call's value.
 const letterbox = async (input: string, size: number): Promise<LetterboxContext> => {
-    // Jimp.read(path) drops decode options for local files (only its
-    // Buffer/URL branches forward them - see @jimp/core's fromBuffer), so
-    // the raised JPEG_DECODE_OPTIONS above would silently never apply if
-    // called that way. Reading the buffer ourselves and calling
-    // Jimp.fromBuffer directly is what actually gets them through to
-    // jpeg-js. Ignored (harmless) for non-JPEG input - Jimp.fromBuffer only
-    // applies options keyed by the format it detects.
-    const buffer = await fs.promises.readFile(input);
-    const image = await Jimp.fromBuffer(buffer, { "image/jpeg": JPEG_DECODE_OPTIONS });
+    const image = await readImage(input);
     const origWidth = image.bitmap.width;
     const origHeight = image.bitmap.height;
     const scale = Math.min(size / origWidth, size / origHeight);
@@ -120,6 +138,26 @@ const letterbox = async (input: string, size: number): Promise<LetterboxContext>
     }
 
     return { chw, scale, padX, padY, origWidth, origHeight };
+};
+
+// Classifier preprocessing, as Hugging Face's image processor does it: a
+// plain bicubic stretch to size x size (no letterbox), then mean/std
+// normalization. size must be what the model was exported for (224 for
+// food.onnx - its Swin windows break on anything else, see the .maloi
+// "reshape" note at the top).
+const resizeNormalize = async (input: string, size: number): Promise<Float32Array> => {
+    const image = await readImage(input);
+    image.resize({ w: size, h: size, mode: ResizeStrategy.BICUBIC });
+
+    const { data } = image.bitmap; // RGBA, size*size*4
+    const plane = size * size;
+    const chw = new Float32Array(3 * plane);
+    for (let i = 0; i < plane; i++) {
+        for (let c = 0; c < 3; c++) {
+            chw[plane * c + i] = (data[i * 4 + c] / 255 - IMAGENET_MEAN[c]) / IMAGENET_STD[c];
+        }
+    }
+    return chw;
 };
 
 const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
@@ -192,9 +230,30 @@ const decode = (output: ArrayLike<number>, dims: readonly number[], ctx: Letterb
     return nms(boxes);
 };
 
+// Softmax over a classifier's logits. The top class becomes a box covering
+// the whole image, so it flows through the same storage, class filter and
+// overlay as a detection. Under CONF the model isn't sure enough and nothing
+// is reported, same as a YOLO box under the threshold.
+const decodeClassification = (logits: ArrayLike<number>): DetectionBox[] => {
+    let best = 0;
+    for (let c = 1; c < logits.length; c++) {
+        if (logits[c] > logits[best]) best = c;
+    }
+    let sum = 0;
+    for (let c = 0; c < logits.length; c++) sum += Math.exp(logits[c] - logits[best]);
+    const score = 1 / sum;
+    if (score < CONF) return [];
+    return [{ classId: best, className: classNameFor(best), score, x: 0, y: 0, w: 1, h: 1 }];
+};
+
 export const detect = async (imagePath: string): Promise<DetectionBox[]> => {
     const session = await getSession();
     const size = getSize();
+    if (isClassifier(session)) {
+        const chw = await resizeNormalize(imagePath, size);
+        const results = await session.run({ [session.inputNames[0]]: new ort.Tensor("float32", chw, [1, 3, size, size]) });
+        return decodeClassification(results[session.outputNames[0]].data as ArrayLike<number>);
+    }
     const ctx = await letterbox(imagePath, size);
     const tensor = new ort.Tensor("float32", ctx.chw, [1, 3, size, size]);
     const results = await session.run({ [session.inputNames[0]]: tensor });

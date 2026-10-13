@@ -1,10 +1,10 @@
 import { addListinActualArray, addOnceMedia, confirmFileMoved, confirmFileUnmoved, orderByFolder, orderByName, orderBySize, orderBySizeInverted, populateArray, purgeArray, updateArrayItem } from './media.reduce';
 import { example } from './populateExample';
 import { Media } from '../../../../entity/Media';
-import { addFolder } from '../folders';
+import { addFolder, resetFolders } from '../folders';
 import { mediaLoadComplete, mediaLoadStart, zoomIn, zoomOut } from '../configurations';
 import { setDuplicateGroups, indexRebuildFinished, setIndexRebuildProgress, databaseExportFinished, databaseImportFinished, setMediaFrames } from '../duplicates';
-import { setDetectionResult, mergeDetections, setDetectionProgress, detectingFinished, setModelPath, setDetectionClasses, setDetectionSize } from '../detections';
+import { setDetectionResult, mergeDetections, rekeyDetections, setDetectionProgress, detectingFinished, setModelPath, setDetectionClasses, setDetectionSize, DetectionGroup } from '../detections';
 import { setPipelineProgress, pipelineFinished, pipelineRejected, PipelineSnapshot } from '../pipeline';
 import { setUndoAvailable, undoFinished, sortByKindFinished, UndoSkipped, SortByKindResult } from '../undo';
 import { FileDTO } from '../../../../entity/FileDTO';
@@ -26,7 +26,7 @@ export const ElectronConnection = () => {
 
     return (dispatch: any) => {
         if (ipcRender) {
-            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete', 'onnxModelChosen', 'databaseExported', 'databaseImported', 'detectionClassesLoaded', 'detectionsLoaded', 'fileProcessed', 'mediaFramesFound', 'detectionSizeLoaded', 'pipelineProgress', 'pipelineFinished', 'pipelineRejected', 'fileUnmoved', 'undoAvailable', 'undoFinished', 'sortByKindFinished'];
+            const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'resetFolders', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete', 'onnxModelChosen', 'databaseExported', 'databaseImported', 'detectionClassesLoaded', 'detectionsLoaded', 'fileProcessed', 'mediaFramesFound', 'detectionSizeLoaded', 'pipelineProgress', 'pipelineFinished', 'pipelineRejected', 'fileUnmoved', 'undoAvailable', 'undoFinished', 'sortByKindFinished'];
             channels.forEach(ch => ipcRender.removeAllListeners(ch));
 
             ipcRender.on('directoryOpen', (e: any, args: any) => {
@@ -75,8 +75,9 @@ export const ElectronConnection = () => {
             // rename back to the original path actually succeeded - a file
             // that could not be restored (someone moved it out from under the
             // app) never gets one, so its tile stays hidden.
-            ipcRender.on('fileUnmoved', (e: any, result: { id: string }) => {
-                dispatch(confirmFileUnmoved({ id: result.id }))
+            ipcRender.on('fileUnmoved', (e: any, result: { id: string, newId?: string, path?: string }) => {
+                dispatch(confirmFileUnmoved(result))
+                if (result.newId) dispatch(rekeyDetections({ id: result.id, newId: result.newId }))
             })
             ipcRender.on('undoAvailable', (e: any, result: { canUndo: boolean, label: string }) => {
                 dispatch(setUndoAvailable(result))
@@ -113,6 +114,9 @@ export const ElectronConnection = () => {
             ipcRender.on('menuOpen', (e: any, folders: string[]) => {
                 folders.forEach(folder => dispatch(addFolder(folder)))
             })
+            ipcRender.on('resetFolders', () => {
+                dispatch(resetFolders())
+            })
             ipcRender.on('cleanGrid', () => {
                 dispatch(purgeArray())
             })
@@ -131,7 +135,7 @@ export const ElectronConnection = () => {
             ipcRender.on('mediaLoadComplete', () => {
                 dispatch(mediaLoadComplete())
             })
-            ipcRender.on('detectionFound', (e: any, result: { id: string, boxes: any[], classes: string[] }) => {
+            ipcRender.on('detectionFound', (e: any, result: { id: string, boxes: any[], classes: string[], classScores?: Record<string, { min: number; max: number }> }) => {
                 dispatch(setDetectionResult(result))
             })
             ipcRender.on('detectionProgress', (e: any, progress: { processed: number, total: number }) => {
@@ -144,13 +148,13 @@ export const ElectronConnection = () => {
                 dispatch(setModelPath(result.path))
                 dispatch(setDetectionSize(result.size))
             })
-            ipcRender.on('detectionClassesLoaded', (e: any, result: { names: string[] }) => {
-                dispatch(setDetectionClasses(result.names))
+            ipcRender.on('detectionClassesLoaded', (e: any, result: { names: string[], groups?: DetectionGroup[] }) => {
+                dispatch(setDetectionClasses(result))
             })
             ipcRender.on('detectionSizeLoaded', (e: any, result: { size: number }) => {
                 dispatch(setDetectionSize(result.size))
             })
-            ipcRender.on('detectionsLoaded', (e: any, result: { items: { id: string, boxes: any[], classes: string[] }[] }) => {
+            ipcRender.on('detectionsLoaded', (e: any, result: { items: { id: string, boxes: any[], classes: string[], classScores?: Record<string, { min: number; max: number }> }[] }) => {
                 dispatch(mergeDetections(result))
             })
             ipcRender.on('databaseExported', (e: any, result: { success: boolean, path?: string, error?: string, canceled?: boolean }) => {

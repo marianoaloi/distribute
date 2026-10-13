@@ -58,7 +58,7 @@ export const FrameCollageTile: React.FC<FrameCollageTileProps> = ({ media, frame
         handleOpenPreview(media)
     }
 
-    return <ThePhoto onMouseMove={mouseMoveOpen}>
+    return <ThePhoto id={`media-${media.id}`} onMouseMove={mouseMoveOpen}>
         <CollageWrap size={config.pxzoom} onClick={(val) => changeCkecked(val)}
             title={`${media.path}\n${media.id} ${media.screenIndex}`}>
             {frames.map((frame, idx) => <CollageFrame size={config.pxzoom} key={idx} src={toMediaUrl(frame)} draggable={false} />)}

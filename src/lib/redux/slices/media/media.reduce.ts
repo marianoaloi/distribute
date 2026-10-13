@@ -77,10 +77,27 @@ const itemsSlice = createSlice({
         // file that could not be restored, because someone moved it out from
         // under the app, stays hidden rather than reappearing as a tile
         // pointing at nothing.
+        //
+        // The kind-folder sort also sends this, with newId and path: the file
+        // now lives at a new localPath and media ids are md5(path), so the
+        // tile is re-keyed and re-pointed rather than just un-hidden. A
+        // video's media is its thumbnail, which stays valid, so only an image
+        // (whose media IS its path) follows the file.
         confirmFileUnmoved: (state, action) => ({
             ...state,
             medias: state.medias.map(
-                media => media.id === action.payload.id ? { ...media, deleted: false, checked: false } : media
+                media => media.id === action.payload.id
+                    ? {
+                        ...media,
+                        deleted: false,
+                        checked: false,
+                        ...(action.payload.newId ? {
+                            id: action.payload.newId,
+                            path: action.payload.path,
+                            media: media.media === media.path ? action.payload.path : media.media,
+                        } : {}),
+                    }
+                    : media
             )
         }),
 

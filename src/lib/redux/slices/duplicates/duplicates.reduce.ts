@@ -1,4 +1,5 @@
 import { createSlice } from "@reduxjs/toolkit";
+import type { DetectionBox } from "../detections/detections.reduce";
 
 interface IndexRebuildProgress {
     processed: number
@@ -23,6 +24,9 @@ interface DuplicatesState {
     // A media with no entry here (or an empty array) falls back to a plain
     // thumbnail - either it's an image, or its frames were never extracted.
     mediaFrames: Record<string, string[]>
+    // Detection boxes of each extracted frame, keyed by mediaId then frame
+    // position (start10s/end10s/pct50/pct10), for the zoom modal's frames panel.
+    mediaFrameBoxes: Record<string, Record<string, DetectionBox[]>>
 }
 
 const initialState: DuplicatesState = {
@@ -37,6 +41,7 @@ const initialState: DuplicatesState = {
     dbImportError: null,
     dbImportMatched: null,
     mediaFrames: {},
+    mediaFrameBoxes: {},
 }
 
 const duplicatesSlice = createSlice({
@@ -98,6 +103,12 @@ const duplicatesSlice = createSlice({
                 ...state.mediaFrames,
                 ...Object.fromEntries(
                     action.payload.items.map((item: { id: string, frames: string[] }) => [item.id, item.frames])
+                ),
+            },
+            mediaFrameBoxes: {
+                ...state.mediaFrameBoxes,
+                ...Object.fromEntries(
+                    action.payload.items.map((item: { id: string, frameBoxes?: Record<string, DetectionBox[]> }) => [item.id, item.frameBoxes || {}])
                 ),
             },
         }),
