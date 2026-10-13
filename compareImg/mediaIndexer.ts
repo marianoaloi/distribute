@@ -1,3 +1,4 @@
+import fs from "fs";
 import * as compareImgStore from "./HashStore";
 import { pixelHashFor } from "./pixelHash";
 import { extractFrames, FRAME_POSITIONS } from "./videoFrames";
@@ -67,7 +68,9 @@ const indexImage = async (mediaItem: IndexableMediaItem): Promise<void> => {
     try {
         await indexUnit(itemBaseId(mediaItem), localPath, mediaItem.id, "");
     } catch (error) {
-        console.error(`compareImg: failed to index image ${localPath}:`, (error as Error).message);
+        // Moved/deleted after the existence check in indexMediaBackground.
+        if (!fs.existsSync(localPath)) console.log(`compareImg: skipping ${localPath}, file no longer exists`);
+        else console.error(`compareImg: failed to index image ${localPath}:`, (error as Error).message);
     }
 };
 
@@ -149,7 +152,11 @@ export const indexMediaBackground = async (
     const runWorker = async (): Promise<void> => {
         while (cursor < mediaItems.length) {
             const mediaItem = mediaItems[cursor++];
-            if (mediaItem.mime && mediaItem.mime.includes("gif")) {
+            // The list was read from the DB before this run started; the user
+            // may have moved the file out of the folder since.
+            if (!fs.existsSync(mediaItem.item)) {
+                console.log(`compareImg: skipping ${mediaItem.item}, file no longer exists`);
+            } else if (mediaItem.mime && mediaItem.mime.includes("gif")) {
                 // A gif is many frames like a video, not a single still like
                 // an image - route it through indexVideo before the generic
                 // image/video mime checks below.

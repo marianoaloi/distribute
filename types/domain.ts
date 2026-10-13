@@ -39,6 +39,7 @@ export interface UpsertMediaInput {
 }
 
 export interface MediaMissingMd5Row {
+    rowid: number;
     id: string;
     localPath: string;
     kind: MediaKind;

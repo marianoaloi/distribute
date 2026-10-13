@@ -1079,6 +1079,8 @@ const loadRecursive = async (): Promise<void> => {
 
             mainWindow!.webContents.send("cleanGrid");
             mainWindow!.webContents.send("mediaLoadStart");
+            // A previous scan that never finished must not block this one.
+            processedFolders = {};
             openfileRecursive(file.filePaths[0]);
 
         } else {
@@ -1170,28 +1172,34 @@ const openfileRecursive = (folderPath: string): void => {
 
     mainWindow!.title = `Get Images in ${fileGlobal} recursive in ${folderPath}`;
 
+    processedFolders[folderPath] = false;
+    // Every exit path must mark the folder done, or the scan never completes
+    // and a super execution's pipeline stays "running" forever.
+    const markFolderDone = (): void => {
+        processedFolders[folderPath] = true;
+        if (Object.values(processedFolders).every(v => v === true)) {
+            console.log("All folders processed");
+            notifyMediaLoadComplete();
+        }
+    };
+
     fs.readdir(folderPath, "utf8", (err, data) => {
-        if (err) { console.error(err); return; }
-        const qtdFiles = data.map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isFile()).length;
-        data.filter(item => item !== TMP_FOLDER_NAME).map(item => path.join(folderPath, item)).filter(item => fs.statSync(item).isDirectory()).forEach(item => {
-            processedFolders[item] = false;
-            openfileRecursive(item);
-        });
+        // The folder may have been moved/deleted since its parent listed it.
+        if (err) { console.error(err); markFolderDone(); return; }
+        // Entries moved away between readdir and stat are simply dropped.
+        const statOf = (item: string): fs.Stats | null => { try { return fs.statSync(item); } catch { return null; } };
+        const entries = data.map(item => ({ item, full: path.join(folderPath, item) })).map(e => ({ ...e, stat: statOf(e.full) }));
+        const qtdFiles = entries.filter(e => e.stat?.isFile()).length;
+        const subfolders = entries.filter(e => e.item !== TMP_FOLDER_NAME && e.stat?.isDirectory()).map(e => e.full);
+        // Registered before any recursion so the "all done" check can't fire early.
+        subfolders.forEach(item => { processedFolders[item] = false; });
+        subfolders.forEach(item => openfileRecursive(item));
 
         if (qtdFiles > 0) {
-            streamingMedia(data, folderPath, () => {
-                // nothing to do here, the onDone callback is just to signal the end of the stream
-                processedFolders[folderPath] = true;
-                if (Object.values(processedFolders).every(v => v === true)) {
-                    console.log("All folders processed");
-                    notifyMediaLoadComplete();
-                }
-            });
+            streamingMedia(data, folderPath, markFolderDone);
         } else {
-            processedFolders[folderPath] = true;
+            markFolderDone();
         }
-
-
     });
 };
 

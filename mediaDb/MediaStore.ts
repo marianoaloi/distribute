@@ -177,9 +177,12 @@ export const findAllDetectionExists = (): Map<string, ItemDetectionState[]> => {
     }, new Map<string, ItemDetectionState[]>());
 };
 
-export const mediaMissingContentMd5 = (limit: number): MediaMissingMd5Row[] => {
+// Keyset-paginated by rowid: rows that fail to hash (e.g. moved away) stay
+// NULL, so a plain LIMIT would return them first forever and starve every row
+// behind them. afterRowid is the last row of the previous batch.
+export const mediaMissingContentMd5 = (limit: number, afterRowid = 0): MediaMissingMd5Row[] => {
     const db = HashStore.getDb();
-    return db.prepare("SELECT id, localPath, kind FROM media WHERE contentMd5 IS NULL LIMIT ?").all(limit) as MediaMissingMd5Row[];
+    return db.prepare("SELECT rowid, id, localPath, kind FROM media WHERE contentMd5 IS NULL AND rowid > ? ORDER BY rowid LIMIT ?").all(afterRowid, limit) as MediaMissingMd5Row[];
 };
 
 // Upfront total for backfillContentMd5's progress reporting - mediaMissingContentMd5
