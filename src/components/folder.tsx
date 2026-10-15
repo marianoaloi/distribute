@@ -68,7 +68,6 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
         // The moved tiles vanish from the grid, so leave the user at the top
         // of what remains rather than mid-page. gridImg's debounced scroll
         // listener persists the new 0 position on its own.
-        window.scrollTo({ top: 0, behavior: 'auto' });
         if (ev.ctrlKey && uncheckedDestFolder && checkedDestFolder) {
             handleSplitMove();
             return;
@@ -87,6 +86,7 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
     // item is only marked deleted once app.js's "fileProcessed" event (see
     // electron.action.ts) confirms the physical move actually succeeded.
     const handleSplitMove = () => {
+        window.scrollTo({ top: 0, behavior: 'auto' });
         // Both halves share one batch id: this is a single user action, so
         // undoing it must take a single Ctrl+Z rather than one press per half
         // (see undo/UndoStack.ts).
