@@ -94,14 +94,27 @@ export const GridDuplicates = (() => {
 
     // Only video/GIF tiles can ever show the 4-frame collage - fetching for
     // the rest would just come back empty (frames are only ever extracted
-    // for video/GIF media, see compareImg/mediaIndexer.js). Re-runs whenever
-    // the duplicate groups themselves change (a new scan finished), not on
-    // every render.
+    // for video/GIF media, see compareImg/mediaIndexer.js). Fetches for the
+    // tiles on this page still missing frames, so videos that stream in after
+    // the groups arrived (or a page change) get their collage too - not just
+    // after the zoom modal fetched them one by one. requestedFrames keeps
+    // media with nothing cached from being re-requested every render; it is
+    // reset when a new scan or index rebuild may have extracted new frames.
+    const requestedFrames = useRef<Set<string>>(new Set())
+    const missingFrames = pagedMedias.filter(m => !m.imported
+        && (m.mime.includes('video') || m.mime.includes('gif'))
+        && !mediaFrames[m.id])
+    const missingFramesKey = missingFrames.map(m => m.id).join('|')
     useEffect(() => {
-        const withFrames = flatList.filter(m => !m.imported && (m.mime.includes('video') || m.mime.includes('gif')))
-        if (withFrames.length > 0) dispatch(GetMediaFrames(withFrames))
+        requestedFrames.current.clear()
+    }, [groupIds, indexRebuilding])
+    useEffect(() => {
+        const toFetch = missingFrames.filter(m => !requestedFrames.current.has(m.id))
+        if (toFetch.length === 0) return
+        toFetch.forEach(m => requestedFrames.current.add(m.id))
+        dispatch(GetMediaFrames(toFetch))
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [groupIds])
+    }, [missingFramesKey, groupIds, indexRebuilding])
 
     const modalZoomRefMethods = useRef<{
         chamgeImageClass: () => void,
