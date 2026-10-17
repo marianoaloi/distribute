@@ -182,6 +182,7 @@ const menuTemplate = (): MenuItemConstructorOptions[] => [
             { label: "Sort by Size", click: sortBySize },
             { label: "Sort by Size Inverted", click: sortBySizeInverted },
             { label: "Sort by Folder", click: sortByFolder },
+            { label: "Order by Type", click: sortByType },
         ]
     },
 
@@ -1244,6 +1245,11 @@ const sortBySizeInverted = async (): Promise<void> => {
 const sortByFolder = async (): Promise<void> => {
     if (mainWindow) {
         mainWindow.webContents.send("sort", "sortByFolder");
+    }
+};
+const sortByType = async (): Promise<void> => {
+    if (mainWindow) {
+        mainWindow.webContents.send("sort", "sortByType");
     }
 };
 
