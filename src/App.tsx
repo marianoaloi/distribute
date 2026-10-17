@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { IconButton } from '@mui/material';
 import { GridView, Difference, Radar } from '@mui/icons-material';
 import './App.css';
-import { ElectronConnection, selectMedias, SetTextEditingActive, useDispatch, useSelector } from './lib/redux';
+import { ElectronConnection, OpenDroppedFolderRecursive, selectMedias, SetTextEditingActive, useDispatch, useSelector } from './lib/redux';
 import { configurationsSelector } from './lib/redux/slices/configurations';
 import { GridIMGs } from './components/gridImg';
 import { GridDuplicates } from './components/duplicatesGrid';
@@ -13,6 +13,7 @@ function App() {
 
   const dispatch = useDispatch();
   const [view, setView] = useState<'grid' | 'duplicates' | 'detections'>('grid');
+  const [draggingFolder, setDraggingFolder] = useState(false);
 
   const medias = useSelector(selectMedias).filter(m => !m.deleted);
   const config = useSelector(configurationsSelector);
@@ -69,6 +70,56 @@ function App() {
 
 
 
+  // A folder dragged in from the OS file manager is scanned recursively, like
+  // "Load recursive" without the folder picker. Listeners sit on the window so
+  // a drop anywhere counts - and so Electron's default (navigating the window
+  // to the dropped file) never kicks in. Only OS file drags are handled; the
+  // app's own images are draggable={false}.
+  useEffect(() => {
+    const isFileDrag = (ev: DragEvent) => !!ev.dataTransfer && Array.from(ev.dataTransfer.types).includes('Files');
+    // dragenter/dragleave also fire for every child element crossed, so a
+    // counter tells "left the window" apart from "moved onto a child".
+    let depth = 0;
+    const onDragEnter = (ev: DragEvent) => {
+      if (!isFileDrag(ev)) return;
+      ev.preventDefault();
+      depth++;
+      setDraggingFolder(true);
+    };
+    const onDragOver = (ev: DragEvent) => {
+      if (!isFileDrag(ev)) return;
+      ev.preventDefault();
+      ev.dataTransfer!.dropEffect = 'copy';
+    };
+    const onDragLeave = (ev: DragEvent) => {
+      if (!isFileDrag(ev)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) setDraggingFolder(false);
+    };
+    const onDrop = (ev: DragEvent) => {
+      if (!isFileDrag(ev)) return;
+      ev.preventDefault();
+      depth = 0;
+      setDraggingFolder(false);
+      const items = Array.from(ev.dataTransfer!.items);
+      const folderIndex = items.findIndex(item => item.webkitGetAsEntry()?.isDirectory);
+      if (folderIndex < 0) return;
+      const file = items[folderIndex].getAsFile();
+      const folderPath = file && window.electron?.getPathForFile(file);
+      if (folderPath) dispatch(OpenDroppedFolderRecursive(folderPath));
+    };
+    window.addEventListener('dragenter', onDragEnter);
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('dragleave', onDragLeave);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragenter', onDragEnter);
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('dragleave', onDragLeave);
+      window.removeEventListener('drop', onDrop);
+    };
+  }, [dispatch])
+
   return (
     <div className="App" >
 
@@ -92,6 +143,8 @@ function App() {
       {view === 'grid' ? <GridIMGs /> : view === 'duplicates' ? <GridDuplicates /> : <GridDetections />}
 
       <PipelineStatus />
+
+      {draggingFolder && <div className="App-dropOverlay">Drop a folder to load it recursively</div>}
     </div>
   );
 }

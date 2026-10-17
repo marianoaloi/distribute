@@ -215,6 +215,20 @@ export const OpenDirectoryRecursive = () => {
     }
 }
 
+// Same scan as OpenDirectoryRecursive, for a folder dropped from the OS -
+// the path is already known, so the main process skips the folder picker.
+export const OpenDroppedFolderRecursive = (folderPath: string) => {
+
+    if (!isElectronApp) {
+        return (dispatch: any) => { }
+    }
+
+    return (dispatch: any) => {
+        if (ipcRender)
+            ipcRender.send('openRecursivePath', folderPath);
+    }
+}
+
 // One id per user action, so the undo stack can group every "process" message
 // that action produced into a single undoable batch - the split move sends two
 // (checked and unchecked halves), and one click has to stay one Ctrl+Z.

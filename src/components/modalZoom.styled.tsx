@@ -97,7 +97,7 @@ max-width: 30%;
 // Sits right under the header, spanning the modal's full width regardless of
 // the video's own width — a passive readout of playback position, not a
 // scrubber (pointer-events left alone; native video controls still seek).
-export const VideoProgress = styled(LinearProgress)`
+export const VideoProgress = styled(Slider)`
     position: absolute;
     top: 40px;
     left: 0;

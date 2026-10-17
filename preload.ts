@@ -1,5 +1,5 @@
 // Import the necessary Electron components.
-import { contextBridge, ipcRenderer, IpcRendererEvent } from "electron";
+import { contextBridge, ipcRenderer, IpcRendererEvent, webUtils } from "electron";
 
 // Renderer-side listener signature varies by channel (each channel carries a
 // different payload shape - see types/domain.ts's StreamMediaItem etc. on the
@@ -19,6 +19,7 @@ const ipc = {
             'process',
             'verifyOpen',
             'openRecursive',
+            'openRecursivePath',
             'sort',
             'open',
             'findIndexDuplicates',
@@ -100,6 +101,9 @@ const ipc = {
 contextBridge.exposeInMainWorld(
     // Allowed 'ipcRenderer' methods.
     'electron', {
+    // Absolute path of a File dropped from the OS (File.path is gone in
+    // newer Electron; webUtils is the supported replacement).
+    getPathForFile: (file: File): string => webUtils.getPathForFile(file),
     ipcRenderer: {
         // From render to main.
         send: (channel: string, args: unknown) => {

@@ -337,7 +337,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                         <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
                     </ZoomHeader>
                     {mediaWithPreview.mime.includes('video') &&
-                        <VideoProgress variant="determinate" value={duration > 0 ? (currentTime / duration) * 100 : 0} />
+                        <VideoProgress  value={duration > 0 ? (currentTime / duration) * 100 : 0} />
                     }
                     {showFramesPanel &&
                         <FramesPanel>

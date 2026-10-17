@@ -1070,19 +1070,7 @@ const loadRecursive = async (): Promise<void> => {
     if (fileGlobal) options.defaultPath = fileGlobal;
     dialog.showOpenDialog(options).then(file => {
         if (!file.canceled) {
-            setActiveFolder(file.filePaths[0]);
-            redirectToActiveFolder();
-            fileGlobal = file.filePaths[0]; // path.join(file.filePaths[0], TMP_FOLDER_NAME);
-            compareImgStore.closeConnection();
-            resetUndoForNewFolder();
-
-
-            mainWindow!.webContents.send("cleanGrid");
-            mainWindow!.webContents.send("mediaLoadStart");
-            // A previous scan that never finished must not block this one.
-            processedFolders = {};
-            openfileRecursive(file.filePaths[0]);
-
+            startRecursiveScan(file.filePaths[0]);
         } else {
             // Dialog cancelled: a super execution that already picked its
             // model has nothing left to scan, so don't leave the flag (or
@@ -1095,6 +1083,37 @@ const loadRecursive = async (): Promise<void> => {
         cancelSuperExecutionIfPending();
     });
 };
+
+// Shared by the "Load recursive" dialog and a folder dropped from the OS onto
+// the window: makes rootFolder the active folder and scans it recursively.
+const startRecursiveScan = (rootFolder: string): void => {
+    setActiveFolder(rootFolder);
+    redirectToActiveFolder();
+    fileGlobal = rootFolder;
+    compareImgStore.closeConnection();
+    resetUndoForNewFolder();
+
+    mainWindow!.webContents.send("cleanGrid");
+    mainWindow!.webContents.send("mediaLoadStart");
+    // A previous scan that never finished must not block this one.
+    processedFolders = {};
+    openfileRecursive(rootFolder);
+};
+
+// A folder dragged from the OS file manager. The path comes from the
+// renderer, so it is only trusted once it resolves to an existing directory.
+ipcMain.on("openRecursivePath", (event: IpcMainEvent, folderPath: unknown) => {
+    if (typeof folderPath !== "string" || !folderPath) return;
+    const resolved = path.resolve(folderPath);
+    let isDirectory = false;
+    try { isDirectory = fs.statSync(resolved).isDirectory(); } catch { /* missing or unreadable */ }
+    if (!isDirectory) {
+        console.error("Dropped path is not a folder", resolved);
+        return;
+    }
+    if (rejectIfBusy()) return;
+    startRecursiveScan(resolved);
+});
 
 // File > "Load super recursive": picks the ONNX/.maloi model up front (the
 // same dialog "Choose ONNX model" uses - detectObjects, the last stage of
