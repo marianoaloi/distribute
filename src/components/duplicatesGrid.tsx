@@ -3,7 +3,7 @@ import { useDispatch } from "react-redux"
 import { IconButton, CircularProgress, LinearProgress } from "@mui/material"
 import { ImageSearch, RestartAlt, FolderOpen, FolderCopyTwoTone, VolumeOff, FileDownload, FileUpload, RadioButtonChecked, RadioButtonUnchecked } from "@mui/icons-material"
 import { Media } from "../entity/Media"
-import { ExportDatabase, FindIndexDuplicates, GetDuplicateGroups, GetMediaFrames, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDetections, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMediaFrames, selectMedias, selectPipelineRunning, updateManyArrayItem, useSelector } from "../lib/redux"
+import { DuplicateAlgorithm, ExportDatabase, FindBlurDuplicates, FindIndexDuplicates, FindObjectDuplicates, GetDuplicateGroups, selectDuplicateAlgorithm, setDuplicateAlgorithm, GetMediaFrames, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDetections, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMediaFrames, selectMedias, selectPipelineRunning, updateManyArrayItem, useSelector } from "../lib/redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { MediaIMG, isScrollToLastSeenKey, scrollToMedia } from "./media"
 import { FrameCollageTile } from "./frameCollageTile"
@@ -13,6 +13,18 @@ import { Folders } from "./folder"
 import { MediaTypeFilter, matchesMediaType } from "./mediaTypeFilter"
 import { ClassFilter, hasClass, matchesClassFilter, matchesClassPresence, normalizeClassFilter } from "./classFilter"
 import { Pagination, totalPagesFor } from "./pagination"
+import { ALGORITHM_EMPTY_TEXTS, ALGORITHM_GROUP_LABELS, ALGORITHM_SCAN_TITLES, DuplicateAlgorithmSelect } from "./duplicateAlgorithmSelect"
+
+// Pixel shows the last persisted scan (cheap read); the others are fast
+// on-demand queries in the main process, so they just run.
+const loadGroupsFor = (algorithm: DuplicateAlgorithm) =>
+    algorithm === 'objects' ? FindObjectDuplicates()
+        : algorithm === 'blur' ? FindBlurDuplicates()
+        : GetDuplicateGroups()
+
+// The pixel scan is the slow whole-library comparison; the others re-run their query.
+const scanFor = (algorithm: DuplicateAlgorithm) =>
+    algorithm === 'pixel' ? FindIndexDuplicates() : loadGroupsFor(algorithm)
 
 export const GridDuplicates = (() => {
 
@@ -24,6 +36,7 @@ export const GridDuplicates = (() => {
     const detections = useSelector(selectDetections)
     const classFilterGroups = normalizeClassFilter(config.classFilter)
     const groupIds = useSelector(selectDuplicateGroups)
+    const algorithm = useSelector(selectDuplicateAlgorithm)
     const indexRebuilding = useSelector(selectIndexRebuilding)
     const indexRebuildError = useSelector(selectIndexRebuildError)
     const indexRebuildProgress = useSelector(selectIndexRebuildProgress)
@@ -41,9 +54,9 @@ export const GridDuplicates = (() => {
     // instead of starting empty until the user clicks "scan" - the scan
     // itself is a slow whole-library pixel comparison, but its last result
     // is persisted (compareImg/HashStore.js's items_duplicated table) and
-    // this is just a cheap read of that table.
+    // this is just a cheap read of that table. Honours the stored algorithm.
     useEffect(() => {
-        dispatch(GetDuplicateGroups())
+        dispatch(loadGroupsFor(algorithm))
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
@@ -225,7 +238,11 @@ export const GridDuplicates = (() => {
     // they live in other folders and must never enter this folder's index.
     const actualMedias = medias.filter(m => !m.imported)
 
-    const scanByHash = () => dispatch(FindIndexDuplicates())
+    const scanByHash = () => dispatch(scanFor(algorithm))
+    const changeAlgorithm = (next: DuplicateAlgorithm) => {
+        dispatch(setDuplicateAlgorithm(next))
+        dispatch(loadGroupsFor(next))
+    }
     const openDiretory = () => dispatch(OpenDirectory())
     const openDiretoryRecursive = () => dispatch(OpenDirectoryRecursive())
     const rebuildIndex = () => {
@@ -304,7 +321,8 @@ export const GridDuplicates = (() => {
     return (
         <div onKeyUp={(ev) => pressedKeyUp(ev)}>
             <DuplicatesResume>
-                <IconButton onClick={scanByHash} disabled={pipelineRunning} title="Scan indexed media for visual duplicates (perceptual hash)"><ImageSearch /></IconButton>
+                <DuplicateAlgorithmSelect value={algorithm} onChange={changeAlgorithm} disabled={pipelineRunning} />
+                <IconButton onClick={scanByHash} disabled={pipelineRunning} title={ALGORITHM_SCAN_TITLES[algorithm]}><ImageSearch /></IconButton>
                 <IconButton onClick={rebuildIndex} disabled={indexRebuilding || config.mediaLoading || pipelineRunning}
                     title={pipelineRunning
                         ? "A Load super recursive run is in progress — wait for it to finish"
@@ -370,7 +388,7 @@ export const GridDuplicates = (() => {
                 ? <DuplicatesList>
                     {pagedGroups.map((group, idx) => (
                         <DuplicateGroupCard key={group[0].id}>
-                            <GroupLabel>Group {page * groupsPerPage + idx + 1} — {group.length} identical files{group.some(m => m.imported) ? ` (${group.filter(m => m.imported).length} from other folder)` : ""}</GroupLabel>
+                            <GroupLabel>Group {page * groupsPerPage + idx + 1} — {group.length} {ALGORITHM_GROUP_LABELS[algorithm]}{group.some(m => m.imported) ? ` (${group.filter(m => m.imported).length} from other folder)` : ""}</GroupLabel>
                             <DuplicateGroupRow>
                                 {group.map(media => {
                                     const frames = mediaFrames[media.id]
@@ -399,7 +417,7 @@ export const GridDuplicates = (() => {
                         </DuplicateGroupCard>
                     ))}
                 </DuplicatesList>
-                : <EmptyState>No duplicates found yet. Click the scan button to compare the loaded media by content.</EmptyState>
+                : <EmptyState>{ALGORITHM_EMPTY_TEXTS[algorithm]}</EmptyState>
             }
 
             <MediaTypeFilter />

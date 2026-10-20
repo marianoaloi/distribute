@@ -41,6 +41,44 @@ export const meanAbsDiff = (a: Buffer, b: Buffer): number => {
     return sum / a.length;
 };
 
+// Merges overlapping id groups into clusters: ids that appear together in any
+// one group end up in the same cluster, transitively. Clusters of fewer than 2
+// ids are dropped.
+const mergeGroups = (groups: string[][]): string[][] => {
+    const { find, union } = makeDisjointSet();
+    const ids = new Set<string>();
+    for (const group of groups) {
+        for (const id of group) {
+            ids.add(id);
+            union(group[0], id);
+        }
+    }
+    const clusters = new Map<string, string[]>();
+    for (const id of ids) {
+        const root = find(id);
+        if (!clusters.has(root)) clusters.set(root, []);
+        (clusters.get(root) as string[]).push(id);
+    }
+    return [...clusters.values()].filter(cluster => cluster.length > 1);
+};
+
+// Media that share an object-detection box (same class, coordinates equal to
+// BOX_ROUND_DECIMALS places) are duplicate candidates. A media sharing ANY box
+// with another joins its cluster, so per-box groups are merged. Computed on
+// demand from item_detection; not persisted.
+export const findObjectDuplicates = (): string[][] => {
+    compareImgStore.ensureReady();
+    return mergeGroups(compareImgStore.mediaIdGroupsBySharedBox());
+};
+
+// Media whose items share the same non-null baseMd5Blur (the coarse blurred
+// key from pixelHash.ts) - a cheap, looser visual-duplicate signal than the
+// pixel comparison in findIndexDuplicates. Computed on demand; not persisted.
+export const findBlurDuplicates = (): string[][] => {
+    compareImgStore.ensureReady();
+    return mergeGroups(compareImgStore.mediaIdGroupsBySharedBlur());
+};
+
 // Two frames count as visual duplicates when their cropped/greyscale pixels
 // differ, on average, by no more than this many levels out of 255. Picked
 // from measuring real near-duplicate frame pairs (re-encoded/re-cropped

@@ -303,6 +303,46 @@ export const itemsForMedia = (mediaId: string): MediaItemRow[] => db!
     `)
     .all(mediaId) as MediaItemRow[];
 
+// Decimal places detection boxes (item_detection x/y/w/h) are rounded to when
+// deciding two media "share" a box. The detector's normalised coordinates are
+// floats, so exact equality would almost never match; 4 places (~1/10000 of
+// the frame) absorbs float noise while staying far tighter than any real
+// difference between two distinct objects.
+export const BOX_ROUND_DECIMALS = 4;
+
+// One entry per object-detection box (same class + same rounded x/y/w/h)
+// that more than one media has, each holding the media ids sharing it.
+// json_group_array rather than GROUP_CONCAT so ids are never split on a comma.
+export const mediaIdGroupsBySharedBox = (): string[][] => {
+    const r = BOX_ROUND_DECIMALS;
+    const rows = db!
+        .prepare(`
+            SELECT json_group_array(DISTINCT mi.mediaId) AS mediaIds
+            FROM item_detection d
+            JOIN media_item mi ON mi.itemId = d.itemId
+            GROUP BY d.classId, ROUND(d.x, ${r}), ROUND(d.y, ${r}), ROUND(d.w, ${r}), ROUND(d.h, ${r})
+            HAVING COUNT(DISTINCT mi.mediaId) > 1
+        `)
+        .all() as Array<{ mediaIds: string }>;
+    return rows.map(row => JSON.parse(row.mediaIds) as string[]);
+};
+
+// One entry per non-null items.baseMd5Blur that is linked to more than one
+// media, holding those media ids.
+export const mediaIdGroupsBySharedBlur = (): string[][] => {
+    const rows = db!
+        .prepare(`
+            SELECT json_group_array(DISTINCT mi.mediaId) AS mediaIds
+            FROM items
+            JOIN media_item mi ON mi.itemId = items.id
+            WHERE items.baseMd5Blur IS NOT NULL
+            GROUP BY items.baseMd5Blur
+            HAVING COUNT(DISTINCT mi.mediaId) > 1
+        `)
+        .all() as Array<{ mediaIds: string }>;
+    return rows.map(row => JSON.parse(row.mediaIds) as string[]);
+};
+
 // Overwrites the stored duplicate-group result with a freshly computed one.
 // Each call to duplicateFinder.findIndexDuplicates() re-scans the whole
 // library, so its result is a complete snapshot, not an incremental delta -

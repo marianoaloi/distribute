@@ -378,6 +378,25 @@ const findIndexDuplicates = async (onProgress?: (comparedRows: number, totalRows
 };
 ipcMain.on("findIndexDuplicates", () => { if (!rejectIfBusy()) findIndexDuplicates(); });
 
+// On-demand, non-persisted duplicate scans (shared object-detection box /
+// shared baseMd5Blur). Same "duplicatesFound" reply as findIndexDuplicates.
+// The algorithm tag lets the renderer drop a reply that arrives after the user
+// switched to a different algorithm (untagged replies are the pixel results).
+const replyWithDuplicates = (algorithm: "objects" | "blur", find: () => string[][]): void => {
+    try {
+        mainWindow!.webContents.send("duplicatesFound", find(), algorithm);
+    } catch (error) {
+        console.error(`${algorithm} duplicates failed`, error);
+        mainWindow!.webContents.send("duplicatesFound", [], algorithm);
+    }
+};
+ipcMain.on("findObjectDuplicates", () => {
+    if (!rejectIfBusy()) replyWithDuplicates("objects", duplicateFinder.findObjectDuplicates);
+});
+ipcMain.on("findBlurDuplicates", () => {
+    if (!rejectIfBusy()) replyWithDuplicates("blur", duplicateFinder.findBlurDuplicates);
+});
+
 // Reads back whatever the last findIndexDuplicates scan persisted
 // (compareImg/HashStore.js's items_duplicated table) instead of re-running
 // the slow O(n^2) pixel comparison - lets the duplicates view show its last
