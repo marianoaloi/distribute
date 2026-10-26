@@ -308,7 +308,7 @@ export const itemsForMedia = (mediaId: string): MediaItemRow[] => db!
 // floats, so exact equality would almost never match; 4 places (~1/10000 of
 // the frame) absorbs float noise while staying far tighter than any real
 // difference between two distinct objects.
-export const BOX_ROUND_DECIMALS = 4;
+export const BOX_ROUND_DECIMALS = 2;
 
 // One entry per object-detection box (same class + same rounded x/y/w/h)
 // that more than one media has, each holding the media ids sharing it.
