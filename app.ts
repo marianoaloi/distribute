@@ -123,6 +123,7 @@ const menuTemplate = (): MenuItemConstructorOptions[] => [
         submenu: [
             { label: 'Load recursive', enabled: !pipelineRun.isRunning(), click: () => { if (!rejectIfBusy()) loadRecursive(); } },
             { label: 'Load super recursive', enabled: !pipelineRun.isRunning(), click: loadSuperRecursive },
+            { label: 'Load super background', enabled: !pipelineRun.isRunning(), click: loadSuperBackground },
         ]
     },
     {
@@ -719,6 +720,35 @@ const SUPER_STAGES: pipelineRun.StageDef[] = [
     { key: "duplicates", label: "Finding visual duplicates" },
 ];
 
+// pipelineRun kind of the "Load super background" run. The renderer recognizes
+// the background run by this exact string (the frontend uses the same
+// literal), so keep both in sync.
+const SUPER_BACKGROUND_KIND = "Load super background";
+
+// Media scanned during a "Load super background" run, held back from the
+// renderer until flushBackgroundMedia. null for every other run (including
+// plain "Load recursive"), in which case streamingMedia sends straight through.
+let backgroundMediaBuffer: StreamMediaItem[] | null = null;
+
+// Max items per "loadMedias" send when flushing the background buffer
+// ("loadMedias" appends in the renderer, so chunking is safe).
+const BACKGROUND_FLUSH_CHUNK = 500;
+
+// Hands the buffered background-run media to the renderer, then signals
+// "mediaLoadComplete" (withheld by notifyMediaLoadComplete meanwhile). Called
+// right before pipelineRun.finish()/fail() so the grid already holds the
+// media when the renderer's background screen closes. No-op outside a
+// background run.
+const flushBackgroundMedia = (): void => {
+    const buffer = backgroundMediaBuffer;
+    if (buffer === null) return;
+    backgroundMediaBuffer = null;
+    for (let i = 0; i < buffer.length; i += BACKGROUND_FLUSH_CHUNK) {
+        mainWindow!.webContents.send("loadMedias", buffer.slice(i, i + BACKGROUND_FLUSH_CHUNK));
+    }
+    mainWindow!.webContents.send("mediaLoadComplete");
+};
+
 // Runs after a recursive scan finishes: hashes any not-yet-hashed content
 // (see backfillContentMd5's doc below), then the same pair "Rebuild index"
 // already runs (buildIndex + findIndexDuplicates), then detectObjects - all
@@ -752,9 +782,11 @@ const runSuperExecutionPipeline = async (): Promise<void> => {
         pipelineRun.startStage("duplicates");
         await findIndexDuplicates((processed, total) => pipelineRun.updateStage(processed, total));
 
+        flushBackgroundMedia();
         pipelineRun.finish();
     } catch (error) {
         console.error("super execution pipeline failed", error);
+        flushBackgroundMedia();
         pipelineRun.fail((error as Error).message);
     }
 };
@@ -1012,15 +1044,26 @@ const openfile = (): void => {
 };
 
 
+// A background run's scan stage has no media arriving in the grid to show it
+// is making progress, so the running count of buffered media is reported as
+// the "scan" stage's processed number instead (total stays 0 - the folder
+// walk's size is never known upfront - so no ETA is derived from it).
+const bufferBackgroundMedia = (buffer: StreamMediaItem[], items: StreamMediaItem[]): void => {
+    buffer.push(...items);
+    pipelineRun.updateStage(buffer.length);
+};
+
 const streamingMedia = (data: string[], root: string, complete: () => void): void => {
     transformDataStreaming(
         data,
         root,
         (mediaReady: StreamMediaItem[]) => {
+            if (backgroundMediaBuffer) { bufferBackgroundMedia(backgroundMediaBuffer, mediaReady); return; }
             mainWindow!.webContents.send("loadMedias", mediaReady);
         },
         (mediaLazy: StreamMediaItem) => {
             // console.log("Video found", video.id);
+            if (backgroundMediaBuffer) { bufferBackgroundMedia(backgroundMediaBuffer, [mediaLazy]); return; }
             mainWindow!.webContents.send("addOneMedia", mediaLazy);
         },
         complete
@@ -1135,15 +1178,17 @@ ipcMain.on("openRecursivePath", (event: IpcMainEvent, folderPath: unknown) => {
     startRecursiveScan(resolved);
 });
 
-// File > "Load super recursive": picks the ONNX/.maloi model up front (the
-// same dialog "Choose ONNX model" uses - detectObjects, the last stage of
-// this chain, refuses to run without one, so better to ask before the whole
-// recursive scan+index+dup-scan runs than after). If the user cancels with
-// no model configured at all, the chain never starts. Otherwise it opens the
-// recursive-folder dialog exactly like "Load recursive" - the rest of the
-// chain (buildIndex -> findIndexDuplicates -> detectObjects) picks up once
-// the scan itself finishes, see notifyMediaLoadComplete.
-const loadSuperRecursive = async (): Promise<void> => {
+// Shared body of "Load super recursive" and "Load super background": picks the
+// ONNX/.maloi model up front (the same dialog "Choose ONNX model" uses -
+// detectObjects, the last stage of this chain, refuses to run without one, so
+// better to ask before the whole recursive scan+index+dup-scan runs than
+// after). If the user cancels with no model configured at all, the chain
+// never starts. Otherwise it opens the recursive-folder dialog exactly like
+// "Load recursive" - the rest of the chain (buildIndex -> findIndexDuplicates
+// -> detectObjects) picks up once the scan itself finishes, see
+// notifyMediaLoadComplete. `background` additionally buffers the scanned media
+// instead of streaming it to the renderer, see backgroundMediaBuffer.
+const startSuperExecution = async (kind: string, background: boolean): Promise<void> => {
     if (rejectIfBusy()) return;
     const modelAvailable = await chooseOnnxModelDialog();
     if (!modelAvailable) {
@@ -1154,22 +1199,31 @@ const loadSuperRecursive = async (): Promise<void> => {
     // so rejectIfBusy above already covers "double-click Load super
     // recursive while the first click's model dialog is still open" - not
     // just the scan/index/detect/duplicates stages that follow it.
-    if (!pipelineRun.begin("Load super recursive", SUPER_STAGES)) return;
+    if (!pipelineRun.begin(kind, SUPER_STAGES)) return;
+    if (background) backgroundMediaBuffer = [];
     pipelineRun.startStage("scan");
     updateMenu();
     superExecutionInProgress = true;
     await loadRecursive();
 };
 
-// Shared by loadRecursive's cancel/catch branches: undoes loadSuperRecursive's
+// File > "Load super recursive".
+const loadSuperRecursive = (): Promise<void> => startSuperExecution("Load super recursive", false);
+
+// File > "Load super background": same chain as loadSuperRecursive, but the
+// renderer gets no media until the whole pipeline is done.
+const loadSuperBackground = (): Promise<void> => startSuperExecution(SUPER_BACKGROUND_KIND, true);
+
+// Shared by loadRecursive's cancel/catch branches: undoes startSuperExecution's
 // claim on the pipeline slot (and re-enables the menu) when the folder-choose
 // dialog it opened gets cancelled or errors before any real work started -
 // otherwise pipelineRun would stay "running" forever with nothing left to
 // finish it. A no-op for a plain "Load recursive" (superExecutionInProgress
-// is only ever true mid-loadSuperRecursive).
+// is only ever true mid-startSuperExecution).
 const cancelSuperExecutionIfPending = (): void => {
     if (!superExecutionInProgress) return;
     superExecutionInProgress = false;
+    backgroundMediaBuffer = null;
     pipelineRun.cancel("No folder chosen");
     updateMenu();
 };
@@ -1180,7 +1234,9 @@ let processedFolders: Record<string, boolean> = {};
 // loadSuperRecursive can chain into buildIndex+detectObjects right as it
 // fires, instead of the renderer needing to trigger each stage itself.
 const notifyMediaLoadComplete = (): void => {
-    mainWindow!.webContents.send("mediaLoadComplete");
+    // A background run holds "mediaLoadComplete" back too - flushBackgroundMedia
+    // sends it after the buffered items, once the whole pipeline is done.
+    if (backgroundMediaBuffer === null) mainWindow!.webContents.send("mediaLoadComplete");
     if (superExecutionInProgress) {
         superExecutionInProgress = false;
         // chooseOnnxModelDialog (called by loadSuperRecursive) persists the

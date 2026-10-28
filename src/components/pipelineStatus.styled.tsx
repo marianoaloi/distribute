@@ -58,3 +58,55 @@ export const EtaGroup = styled.span`
     color: rgba(255, 255, 255, 0.6);
     font-variant-numeric: tabular-nums;
 `
+
+// Same panel as PipelineBar, but covering the whole viewport with its content
+// centered - used when the progress is the only thing the app has to show (the
+// background run holds all media back until it finishes). The nested rules
+// scale the shared row pieces up (matched by the pl-* classes the component
+// sets, since emotion component selectors need a babel plugin).
+export const PipelineFullScreen = styled.div`
+    position: fixed;
+    inset: 0;
+    box-sizing: border-box;
+    background: rgba(20, 24, 32, 0.97);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    padding: 24px;
+    z-index: 11;
+    color: #e0e0e0;
+
+    & > .pl-top {
+        flex-direction: column;
+        gap: 14px;
+        font-size: 20px;
+        text-align: center;
+    }
+
+    & .pl-label {
+        font-size: 28px;
+    }
+
+    & .pl-counter {
+        font-size: 20px;
+    }
+
+    & .pl-eta {
+        margin-left: 0;
+        font-size: 16px;
+    }
+
+    & > .MuiLinearProgress-root {
+        width: min(720px, 80%);
+        height: 12px;
+        border-radius: 6px;
+    }
+`
+
+export const PipelineElapsed = styled.div`
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 16px;
+    font-variant-numeric: tabular-nums;
+`

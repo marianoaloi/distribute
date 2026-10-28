@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react';
 import { IconButton } from '@mui/material';
 import { GridView, Difference, Radar } from '@mui/icons-material';
 import './App.css';
-import { ElectronConnection, OpenDroppedFolderRecursive, selectMedias, SetTextEditingActive, useDispatch, useSelector } from './lib/redux';
+import { ElectronConnection, OpenDroppedFolderRecursive, selectMedias, selectPipelineKind, selectPipelineRunning, SetTextEditingActive, useDispatch, useSelector } from './lib/redux';
 import { configurationsSelector } from './lib/redux/slices/configurations';
 import { GridIMGs } from './components/gridImg';
 import { GridDuplicates } from './components/duplicatesGrid';
 import { GridDetections } from './components/objectDetectionGrid';
 import { PipelineStatus } from './components/pipelineStatus';
+import { BackgroundProcessing, SUPER_BACKGROUND_KIND } from './components/backgroundProcessing';
 
 function App() {
 
@@ -17,6 +18,11 @@ function App() {
 
   const medias = useSelector(selectMedias).filter(m => !m.deleted);
   const config = useSelector(configurationsSelector);
+  // The background run holds all media back until it ends, so while it is
+  // active the app shows nothing but its progress.
+  const pipelineRunning = useSelector(selectPipelineRunning);
+  const pipelineKind = useSelector(selectPipelineKind);
+  const backgroundRun = pipelineRunning && pipelineKind === SUPER_BACKGROUND_KIND;
   // Duplicate scanning and object detection both operate on whatever the
   // grid currently has loaded — with the folder still streaming in (videos
   // load one at a time) or nothing loaded yet, there's nothing for them to
@@ -119,6 +125,8 @@ function App() {
       window.removeEventListener('drop', onDrop);
     };
   }, [dispatch])
+
+  if (backgroundRun) return <div className="App"><BackgroundProcessing /></div>;
 
   return (
     <div className="App" >

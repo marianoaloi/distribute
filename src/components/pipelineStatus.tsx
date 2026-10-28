@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react"
 import { LinearProgress, Snackbar, Alert } from "@mui/material"
 import { useDispatch } from "react-redux"
 import {
@@ -10,6 +11,7 @@ import {
     selectPipelineRejectedMessage,
     selectPipelineRunning,
     selectPipelineStage,
+    selectPipelineStartedAt,
     dismissUndoResult,
     dismissSortResult,
     selectSortResult,
@@ -17,7 +19,7 @@ import {
     selectUndoLastSkipped,
     useSelector,
 } from "../lib/redux"
-import { EtaGroup, LiveDot, PipelineBar, PipelineTopRow, StageCounter, StageLabel } from "./pipelineStatus.styled"
+import { EtaGroup, LiveDot, PipelineBar, PipelineElapsed, PipelineFullScreen, PipelineTopRow, StageCounter, StageLabel } from "./pipelineStatus.styled"
 
 // mm:ss under an hour, h:mm:ss beyond it - an ETA display only needs to be
 // glanceable, not to the second.
@@ -37,7 +39,7 @@ const formatDuration = (ms: number): string => {
 // open, so "is this still running" never depends on which tab the user is
 // looking at, and a live pulse + elapsed/ETA numbers make it plain the app
 // hasn't stalled even during a stage with no visible new results.
-export const PipelineStatus = (() => {
+export const PipelineStatus = (({ fullScreen = false }: { fullScreen?: boolean }) => {
     const dispatch = useDispatch()
 
     const running = useSelector(selectPipelineRunning)
@@ -50,6 +52,17 @@ export const PipelineStatus = (() => {
     const undoRestored = useSelector(selectUndoLastRestored)
     const undoSkipped = useSelector(selectUndoLastSkipped)
     const sortResult = useSelector(selectSortResult)
+    const startedAt = useSelector(selectPipelineStartedAt)
+
+    // Elapsed time only shows full-screen, so the 1s tick only runs there.
+    const [now, setNow] = useState(() => Date.now())
+    useEffect(() => {
+        if (!fullScreen || !running) return
+        const id = setInterval(() => setNow(Date.now()), 1000)
+        return () => clearInterval(id)
+    }, [fullScreen, running])
+
+    const Panel = fullScreen ? PipelineFullScreen : PipelineBar
 
     // Everything the sort could not move, so a run that quietly did less than
     // expected still says why rather than just reporting a smaller number.
@@ -60,15 +73,17 @@ export const PipelineStatus = (() => {
     return (
         <>
             {running &&
-                <PipelineBar>
-                    <PipelineTopRow>
+                <Panel>
+                    <PipelineTopRow className="pl-top">
                         <LiveDot />
-                        <StageLabel>{kind}{stage ? ` — ${stage.label}` : ""}</StageLabel>
-                        {stage && <StageCounter>
+                        <StageLabel className="pl-label">{kind}{stage ? ` — ${stage.label}` : ""}</StageLabel>
+                        {stage && <StageCounter className="pl-counter">
                             step {stage.index + 1}/{stage.count}
-                            {stage.total > 0 ? ` · ${stage.processed}/${stage.total}` : ""}
+                            {stage.total > 0 ? ` · ${stage.processed}/${stage.total}`
+                                // Unknown total (Load super background's scan stage) - a plain running count.
+                                : stage.processed > 0 ? ` · ${stage.processed} media found` : ""}
                         </StageCounter>}
-                        <EtaGroup>
+                        <EtaGroup className="pl-eta">
                             {etaStageMs !== null && <span>stage ETA {formatDuration(etaStageMs)}</span>}
                             {etaOverallMs !== null && <span>overall ETA {formatDuration(etaOverallMs)}</span>}
                         </EtaGroup>
@@ -77,7 +92,10 @@ export const PipelineStatus = (() => {
                         variant={stage && stage.total > 0 ? "determinate" : "indeterminate"}
                         value={stage && stage.total > 0 ? (stage.processed / stage.total) * 100 : 0}
                     />
-                </PipelineBar>
+                    {fullScreen && startedAt !== null && <PipelineElapsed>
+                        elapsed {formatDuration(Math.max(0, now - startedAt))}
+                    </PipelineElapsed>}
+                </Panel>
             }
 
             <Snackbar open={!!rejectedMessage} autoHideDuration={5000} onClose={() => dispatch(clearPipelineRejected())}>
