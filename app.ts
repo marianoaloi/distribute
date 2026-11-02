@@ -158,13 +158,19 @@ const menuTemplate = (): MenuItemConstructorOptions[] => [
             {
                 label: 'Zoom In',
                 click: () => zoomImg(+1),
-                accelerator: "numadd"
+                accelerator: "CommandOrControl+Plus"
             },
             {
                 label: 'Zoom Out',
                 click: () => zoomImg(-1),
-                accelerator: "numsub"
+                accelerator: "CommandOrControl+-"
             },
+            // A menu item takes one accelerator, so the numpad +/- aliases for
+            // the two above are hidden duplicates (their accelerators still
+            // fire on Windows/Linux). modalZoom.tsx leaves the numpad keys to
+            // these and uses only the main-row +/- for video volume.
+            { label: 'Zoom In (numpad)', click: () => zoomImg(+1), accelerator: "numadd", visible: false },
+            { label: 'Zoom Out (numpad)', click: () => zoomImg(-1), accelerator: "numsub", visible: false },
             { label: 'Clean', click: cleanGrid },
             {
                 label: 'Send filed media back into kind folders…',
