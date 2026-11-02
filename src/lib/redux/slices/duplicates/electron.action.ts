@@ -35,8 +35,8 @@ export const FindObjectDuplicates = () => {
     }
 }
 
-// Media sharing the same baseMd5Blur. Same contract as FindObjectDuplicates.
-export const FindBlurDuplicates = () => {
+// Video/GIF media whose extracted frames share a signature. Same contract as FindObjectDuplicates.
+export const FindFrameDuplicates = () => {
 
     if (!isElectronApp) {
         return (dispatch: any) => { }
@@ -44,7 +44,7 @@ export const FindBlurDuplicates = () => {
 
     return (dispatch: any) => {
         if (ipcRender) {
-            ipcRender.send('findBlurDuplicates', undefined);
+            ipcRender.send('findFrameDuplicates', undefined);
         }
     }
 }

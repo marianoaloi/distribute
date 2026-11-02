@@ -71,12 +71,13 @@ export const findObjectDuplicates = (): string[][] => {
     return mergeGroups(compareImgStore.mediaIdGroupsBySharedBox());
 };
 
-// Media whose items share the same non-null baseMd5Blur (the coarse blurred
-// key from pixelHash.ts) - a cheap, looser visual-duplicate signal than the
-// pixel comparison in findIndexDuplicates. Computed on demand; not persisted.
-export const findBlurDuplicates = (): string[][] => {
+// Video/GIF media whose extracted frames carry the same signature (detected
+// classes at the same frame positions/seconds). Each media has exactly one
+// signature, so the groups are already disjoint and need no mergeGroups.
+// Computed on demand; not persisted.
+export const findFrameDuplicates = (): string[][] => {
     compareImgStore.ensureReady();
-    return mergeGroups(compareImgStore.mediaIdGroupsBySharedBlur());
+    return compareImgStore.mediaIdGroupsByFrameSignature();
 };
 
 // Two frames count as visual duplicates when their cropped/greyscale pixels

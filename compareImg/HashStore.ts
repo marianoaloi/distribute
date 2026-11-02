@@ -428,19 +428,41 @@ export const mediaIdGroupsBySharedBox = (): string[][] => {
     return rows.map(row => JSON.parse(row.mediaIds) as string[]);
 };
 
-// One entry per non-null items.baseMd5Blur that is linked to more than one
-// media, holding those media ids.
-export const mediaIdGroupsBySharedBlur = (): string[][] => {
+// One signature per media = the sorted set of (frame position, frame second)
+// over its extracted frames, plus the number of distinct detected classes on
+// those frames; media with the same frames and class count are grouped.
+// Video/GIF only: images have no framePositionSeconds, so they are excluded
+// (their key would be NULL). GROUP_CONCAT's own ORDER BY makes identical sets
+// build identical strings.
+export const mediaIdGroupsByFrameSignature = (): string[][] => {
     const rows = db!
         .prepare(`
-            SELECT json_group_array(DISTINCT mi.mediaId) AS mediaIds
-            FROM items
-            JOIN media_item mi ON mi.itemId = items.id
-            WHERE items.baseMd5Blur IS NOT NULL
-            GROUP BY items.baseMd5Blur
-            HAVING COUNT(DISTINCT mi.mediaId) > 1
+            WITH baseItem AS (
+              SELECT DISTINCT mi.mediaId, id.classId, i.framePosition, i.framePositionSeconds
+              FROM media_item mi
+              JOIN items i ON mi.itemId = i.id
+              LEFT JOIN item_detection id ON mi.itemId = id.itemId
+              WHERE i.framePositionSeconds IS NOT NULL
+            ),
+            counterClass AS (
+              SELECT mediaId, COUNT(classId) AS cClass,
+                     ':' || framePosition || ':' || framePositionSeconds AS k
+              FROM baseItem
+              GROUP BY mediaId, k
+            ),
+            sig AS (
+              SELECT mediaId, SUM(cClass) AS cClass, COUNT(*) AS groupCount,
+                     GROUP_CONCAT(k, ';' ORDER BY k) AS signature
+              FROM counterClass
+              GROUP BY mediaId
+            )
+            SELECT json_group_array(DISTINCT s.mediaId) AS mediaIds, COUNT(*) AS mediaCount
+            FROM sig s
+            GROUP BY s.signature, s.groupCount, s.cClass
+            HAVING COUNT(*) > 1
+            ORDER BY s.groupCount DESC, mediaCount DESC
         `)
-        .all() as Array<{ mediaIds: string }>;
+        .all() as Array<{ mediaIds: string; mediaCount: number }>;
     return rows.map(row => JSON.parse(row.mediaIds) as string[]);
 };
 

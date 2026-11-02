@@ -4,25 +4,25 @@ import { DuplicateAlgorithm } from "../lib/redux"
 export const ALGORITHM_LABELS: Record<DuplicateAlgorithm, string> = {
     pixel: "Pixel",
     objects: "Objects",
-    blur: "Blur",
+    frames: "Frames",
 }
 
 export const ALGORITHM_SCAN_TITLES: Record<DuplicateAlgorithm, string> = {
     pixel: "Scan indexed media for visual duplicates (perceptual hash)",
     objects: "Find media sharing the same detected object (same class and box)",
-    blur: "Find media sharing the same blur hash",
+    frames: "Find video/GIF media whose extracted frames have the same positions, durations and detected objects",
 }
 
 export const ALGORITHM_GROUP_LABELS: Record<DuplicateAlgorithm, string> = {
     pixel: "identical files",
     objects: "files sharing a detected object",
-    blur: "files with same blur hash",
+    frames: "files with identical frame signatures",
 }
 
 export const ALGORITHM_EMPTY_TEXTS: Record<DuplicateAlgorithm, string> = {
     pixel: "No duplicates found yet. Click the scan button to compare the loaded media by content.",
     objects: "No media share a detected object. Run object detection first, then click the scan button.",
-    blur: "No media share a blur hash. Click the scan button to search again.",
+    frames: "No video/GIF media share a frame signature. Index the media (and run object detection) first, then click the scan button.",
 }
 
 // The toolbar background is dark, so the default grey toggle is barely visible:

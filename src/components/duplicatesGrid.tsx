@@ -3,7 +3,7 @@ import { useDispatch } from "react-redux"
 import { IconButton, CircularProgress, LinearProgress } from "@mui/material"
 import { ImageSearch, RestartAlt, FolderOpen, FolderCopyTwoTone, VolumeOff, FileDownload, FileUpload, RadioButtonChecked, RadioButtonUnchecked } from "@mui/icons-material"
 import { Media } from "../entity/Media"
-import { DuplicateAlgorithm, ExportDatabase, FindBlurDuplicates, FindIndexDuplicates, FindObjectDuplicates, GetDuplicateGroups, selectDuplicateAlgorithm, setDuplicateAlgorithm, GetMediaFrames, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDetections, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMediaFrames, selectMedias, selectPipelineRunning, updateManyArrayItem, useSelector } from "../lib/redux"
+import { DuplicateAlgorithm, ExportDatabase, FindFrameDuplicates, FindIndexDuplicates, FindObjectDuplicates, GetDuplicateGroups, selectDuplicateAlgorithm, setDuplicateAlgorithm, GetMediaFrames, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDetections, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMediaFrames, selectMedias, selectPipelineRunning, updateManyArrayItem, useSelector } from "../lib/redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { MediaIMG, isScrollToLastSeenKey, scrollToMedia } from "./media"
 import { FrameCollageTile } from "./frameCollageTile"
@@ -19,7 +19,7 @@ import { ALGORITHM_EMPTY_TEXTS, ALGORITHM_GROUP_LABELS, ALGORITHM_SCAN_TITLES, D
 // on-demand queries in the main process, so they just run.
 const loadGroupsFor = (algorithm: DuplicateAlgorithm) =>
     algorithm === 'objects' ? FindObjectDuplicates()
-        : algorithm === 'blur' ? FindBlurDuplicates()
+        : algorithm === 'frames' ? FindFrameDuplicates()
         : GetDuplicateGroups()
 
 // The pixel scan is the slow whole-library comparison; the others re-run their query.
