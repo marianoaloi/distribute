@@ -466,6 +466,40 @@ export const mediaIdGroupsByFrameSignature = (): string[][] => {
     return rows.map(row => JSON.parse(row.mediaIds) as string[]);
 };
 
+// Tolerances for mediaIdPairsBySharedBlurFrames: how far apart (seconds) two
+// frames at the same position may sit, how far apart two media lengths may be,
+// and how many frames must match for the pair to count.
+export const BLUR_FRAME_SECOND_TOLERANCE = 0.1;
+export const BLUR_LENGTH_TOLERANCE = 0.2;
+export const BLUR_MIN_SAME_FRAMES = 2;
+
+// [mediaA, mediaB] pairs of video/GIF media of (nearly) the same length that
+// share baseMd5Blur on at least BLUR_MIN_SAME_FRAMES frames at the same frame
+// position and (nearly) the same second. Length is twice the pct50 frame's
+// second. Pairs, not groups: the caller chains them transitively.
+export const mediaIdPairsBySharedBlurFrames = (): string[][] => {
+    const rows = db!
+        .prepare(`
+            WITH f AS (
+              SELECT mi.mediaId, i.framePosition AS pos, i.framePositionSeconds AS sec, i.baseMd5Blur AS blur
+              FROM media_item mi
+              JOIN items i ON i.id = mi.itemId
+              WHERE i.framePositionSeconds IS NOT NULL AND i.baseMd5Blur IS NOT NULL
+            ),
+            dur AS (SELECT mediaId, sec * 2 AS dur FROM f WHERE pos = 'pct50')
+            SELECT a.mediaId AS ma, b.mediaId AS mb
+            FROM f a
+            JOIN f b ON b.blur = a.blur AND b.pos = a.pos AND b.mediaId > a.mediaId
+                    AND ABS(a.sec - b.sec) <= @secTol
+            JOIN dur da ON da.mediaId = a.mediaId
+            JOIN dur db ON db.mediaId = b.mediaId AND ABS(da.dur - db.dur) <= @lengthTol
+            GROUP BY a.mediaId, b.mediaId
+            HAVING COUNT(*) >= @minFrames
+        `)
+        .all({ secTol: BLUR_FRAME_SECOND_TOLERANCE, lengthTol: BLUR_LENGTH_TOLERANCE, minFrames: BLUR_MIN_SAME_FRAMES }) as Array<{ ma: string; mb: string }>;
+    return rows.map(row => [row.ma, row.mb]);
+};
+
 // Overwrites the stored duplicate-group result with a freshly computed one.
 // Each call to duplicateFinder.findIndexDuplicates() re-scans the whole
 // library, so its result is a complete snapshot, not an incremental delta -

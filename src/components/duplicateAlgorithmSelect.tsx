@@ -5,24 +5,28 @@ export const ALGORITHM_LABELS: Record<DuplicateAlgorithm, string> = {
     pixel: "Pixel",
     objects: "Objects",
     frames: "Frames",
+    blurFrames: "Blur frames",
 }
 
 export const ALGORITHM_SCAN_TITLES: Record<DuplicateAlgorithm, string> = {
     pixel: "Scan indexed media for visual duplicates (perceptual hash)",
     objects: "Find media sharing the same detected object (same class and box)",
     frames: "Find video/GIF media whose extracted frames have the same positions, durations and detected objects",
+    blurFrames: "Find video/GIF media of the same length whose frames at the same positions share the blur hash on at least 2 frames",
 }
 
 export const ALGORITHM_GROUP_LABELS: Record<DuplicateAlgorithm, string> = {
     pixel: "identical files",
     objects: "files sharing a detected object",
     frames: "files with identical frame signatures",
+    blurFrames: "files with matching blurred frames",
 }
 
 export const ALGORITHM_EMPTY_TEXTS: Record<DuplicateAlgorithm, string> = {
     pixel: "No duplicates found yet. Click the scan button to compare the loaded media by content.",
     objects: "No media share a detected object. Run object detection first, then click the scan button.",
     frames: "No video/GIF media share a frame signature. Index the media (and run object detection) first, then click the scan button.",
+    blurFrames: "No video/GIF media share matching blurred frames. Index the media first, then click the scan button.",
 }
 
 // The toolbar background is dark, so the default grey toggle is barely visible:

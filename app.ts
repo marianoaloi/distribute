@@ -386,10 +386,10 @@ const findIndexDuplicates = async (onProgress?: (comparedRows: number, totalRows
 ipcMain.on("findIndexDuplicates", () => { if (!rejectIfBusy()) findIndexDuplicates(); });
 
 // On-demand, non-persisted duplicate scans (shared object-detection box /
-// identical per-frame signature). Same "duplicatesFound" reply as findIndexDuplicates.
+// identical per-frame signature / shared blurred frames). Same "duplicatesFound" reply as findIndexDuplicates.
 // The algorithm tag lets the renderer drop a reply that arrives after the user
 // switched to a different algorithm (untagged replies are the pixel results).
-const replyWithDuplicates = (algorithm: "objects" | "frames", find: () => string[][]): void => {
+const replyWithDuplicates = (algorithm: "objects" | "frames" | "blurFrames", find: () => string[][]): void => {
     try {
         mainWindow!.webContents.send("duplicatesFound", find(), algorithm);
     } catch (error) {
@@ -402,6 +402,9 @@ ipcMain.on("findObjectDuplicates", () => {
 });
 ipcMain.on("findFrameDuplicates", () => {
     if (!rejectIfBusy()) replyWithDuplicates("frames", duplicateFinder.findFrameDuplicates);
+});
+ipcMain.on("findBlurFrameDuplicates", () => {
+    if (!rejectIfBusy()) replyWithDuplicates("blurFrames", duplicateFinder.findBlurFrameDuplicates);
 });
 
 // Reads back whatever the last findIndexDuplicates scan persisted

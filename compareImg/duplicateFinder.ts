@@ -80,6 +80,14 @@ export const findFrameDuplicates = (): string[][] => {
     return compareImgStore.mediaIdGroupsByFrameSignature();
 };
 
+// Video/GIF media of the same length sharing the blur hash on several frames at
+// the same positions. The store returns matching pairs; mergeGroups chains them
+// (A~B, B~C -> [A,B,C]). Computed on demand; not persisted.
+export const findBlurFrameDuplicates = (): string[][] => {
+    compareImgStore.ensureReady();
+    return mergeGroups(compareImgStore.mediaIdPairsBySharedBlurFrames());
+};
+
 // Two frames count as visual duplicates when their cropped/greyscale pixels
 // differ, on average, by no more than this many levels out of 255. Picked
 // from measuring real near-duplicate frame pairs (re-encoded/re-cropped

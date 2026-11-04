@@ -8,8 +8,10 @@ interface IndexRebuildProgress {
 
 // pixel: perceptual frame comparison (persisted scan); objects: media sharing
 // the same detection box; frames: video/GIF media whose extracted frames have
-// the identical signature of frame position + frame second + detected classes.
-export type DuplicateAlgorithm = 'pixel' | 'objects' | 'frames'
+// the identical signature of frame position + frame second + detected classes;
+// blurFrames: video/GIF media of the same length sharing the blur hash on at
+// least 2 frames at the same positions.
+export type DuplicateAlgorithm = 'pixel' | 'objects' | 'frames' | 'blurFrames'
 
 interface DuplicatesState {
     algorithm: DuplicateAlgorithm

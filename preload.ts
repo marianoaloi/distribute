@@ -25,6 +25,7 @@ const ipc = {
             'findIndexDuplicates',
             'findObjectDuplicates',
             'findFrameDuplicates',
+            'findBlurFrameDuplicates',
             'getDuplicateGroups',
             'rebuildIndex',
             'detectObjects',
