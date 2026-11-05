@@ -1157,6 +1157,70 @@ d("lsr CLI (Electron integration)", () => {
             expect(extraChildrenOf(slow)).toEqual([])
             expect(fs.existsSync(lockOf(slow))).toBe(false)
         })
+        it("the algorithm children never write index.db (mtime unchanged, no journal/WAL left)", () => {
+            const rx = path.join(base, "xd-readonly")
+            makeFixture(rx)
+            expect(lsr(["--root", rx, "--maloi", m, "--stages", "scan,hash,index,detect,duplicates"], FAKE).code).toBe(0)
+            const db = path.join(rx, "tmp", "hashIndex", "index.db")
+            const before = { mtimeMs: fs.statSync(db).mtimeMs, md5: crypto.createHash("md5").update(fs.readFileSync(db)).digest("hex") }
+            const r = lsr(["--root", rx, "--stages", "extraDups"], FAKE)
+            expect(r.code).toBe(0)
+            expect(fs.statSync(db).mtimeMs).toBe(before.mtimeMs)
+            expect(crypto.createHash("md5").update(fs.readFileSync(db)).digest("hex")).toBe(before.md5)
+            expect(fs.readdirSync(path.dirname(db)).filter(f => /-(journal|wal|shm)$/.test(f))).toEqual([])
+        })
+        it("HashStore.useReadOnlyConnection refuses writes and makes ensureReady a no-op", () => {
+            const rx = path.join(base, "xd-readonly")
+            const dist = path.join(REPO, "electron-dist")
+            const script = `
+                require(${JSON.stringify(path.join(dist, "DirectorioCache.js"))}).setActiveFolder(${JSON.stringify(rx)});
+                const HashStore = require(${JSON.stringify(path.join(dist, "compareImg", "HashStore.js"))});
+                const db = HashStore.useReadOnlyConnection();
+                HashStore.ensureReady();
+                const same = HashStore.getDb() === db;
+                let err = "";
+                try { db.prepare("INSERT INTO items_duplicated (groupId, mediaId) VALUES ('g', 'm')").run(); } catch (e) { err = e.message; }
+                let err2 = "";
+                try { db.exec("CREATE TABLE lsr_probe (x)"); } catch (e) { err2 = e.message; }
+                process.stdout.write(JSON.stringify({ same, readonly: db.readonly, err, err2 }));`
+            const r = spawnSync(ELECTRON, ["-e", script], { env, encoding: "utf8" })
+            expect(r.status).toBe(0)
+            const res = JSON.parse(r.stdout.slice(r.stdout.lastIndexOf('{"same"')))
+            expect(res).toEqual({ same: true, readonly: true, err: expect.stringMatching(/readonly database/), err2: expect.stringMatching(/readonly database/) })
+        })
+        it("useReadOnlyConnection on a root with no index.db fails instead of creating one", () => {
+            const empty = path.join(base, "xd-nodb")
+            fs.mkdirSync(empty)
+            const dist = path.join(REPO, "electron-dist")
+            const script = `
+                require(${JSON.stringify(path.join(dist, "DirectorioCache.js"))}).setActiveFolder(${JSON.stringify(empty)});
+                const HashStore = require(${JSON.stringify(path.join(dist, "compareImg", "HashStore.js"))});
+                try { HashStore.useReadOnlyConnection(); process.stdout.write("opened") } catch (e) { process.stdout.write("refused: " + e.message) }`
+            const r = spawnSync(ELECTRON, ["-e", script], { env, encoding: "utf8" })
+            expect(r.stdout).toMatch(/refused/)
+            expect(fs.existsSync(path.join(empty, "tmp", "hashIndex", "index.db"))).toBe(false)
+        })
+        it("LSR_EXTRA_DUPS_MAX_MB=1: every algorithm 'ran out of memory' -> stage FAILED, exit 3, report skipped", () => {
+            const rx = path.join(base, "xd-readonly")
+            const r = lsr(["--root", rx, "--stages", "extraDups,report"], { ...FAKE, LSR_EXTRA_DUPS_MAX_MB: "1" })
+            expect(r.code).toBe(3)
+            for (const a of ["objects", "frames", "blurFrames"]) {
+                expect(r.stdout + r.stderr).toMatch(new RegExp(`${a}: FAILED \\(ran out of memory \\(LSR_EXTRA_DUPS_MAX_MB=1\\)\\)`))
+            }
+            expect(r.stdout).toMatch(/extraDups\s+\S+\s+FAILED: every duplicate algorithm failed/)
+            expect(stagesDone(r.stdout)).toEqual([])
+            expect(r.stdout).not.toMatch(/\[2\/2 report/)
+            expect(extraChildrenOf(rx)).toEqual([])
+            expect(fs.existsSync(lockOf(rx))).toBe(false)
+        })
+        it("a generous LSR_EXTRA_DUPS_MAX_MB does not change results", () => {
+            const rx = path.join(base, "xd-readonly")
+            const a = lsr(["--root", rx, "--stages", "extraDups"], FAKE)
+            const b = lsr(["--root", rx, "--stages", "extraDups"], { ...FAKE, LSR_EXTRA_DUPS_MAX_MB: "256" })
+            expect(b.code).toBe(0)
+            const note = (o: string) => /stage extraDups done in \S+: (.*)$/m.exec(o)![1]
+            expect(note(b.stdout)).toBe(note(a.stdout))
+        })
         it("SIGKILL of the runner (no exit handlers run): the child notices and kills itself within 3s", async () => {
             const run = lsrAsync(["--root", slow, "--stages", "extraDups"])
             await waitFor(() => extraChildrenOf(slow).length > 0, 10_000)
@@ -1212,7 +1276,7 @@ d("lsr CLI (Electron integration)", () => {
             expect(stagesDone(r.stdout)).toEqual(["scan", "hash", "index", "detect", "duplicates", "extraDups", "report"])
             const json = path.join(out, "r.json"), csv = path.join(out, "r.csv")
             expect(r.stdout).toMatch(new RegExp(`report: ${json.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`))
-            expect(r.stdout).toMatch(/stage report done in \S+: pixel 1 \(\S+ \S+ reclaimable\).*; written to /)
+            expect(r.stdout).toMatch(/stage report done in \S+: pixel 1 \(\S+ \S+ reclaimable\).*objects \d+ \(to review\).*; 2 files suggested for removal, \S+ \S+; written to /)
             const rep = readJson(json)
             expect(rep.root).toBe(rr)
             expect(rep.stages).toEqual(["scan", "hash", "index", "detect", "duplicates", "extraDups", "report"])
@@ -1238,8 +1302,25 @@ d("lsr CLI (Electron integration)", () => {
             for (const x of rep.groups) { byAlg[x.algorithm] = (byAlg[x.algorithm] ?? 0) + 1; members[x.algorithm] = (members[x.algorithm] ?? 0) + x.members.length }
             expect(rep.totals.groupsByAlgorithm).toEqual(byAlg)
             expect(rep.totals.membersByAlgorithm).toEqual(members)
-            // every group has exactly one keep
-            for (const x of rep.groups) expect(x.members.filter((y: any) => y.role === "keep")).toHaveLength(1)
+            // pixel groups decide (exactly one keep); every other algorithm only reviews
+            for (const x of rep.groups) {
+                if (x.algorithm === "pixel") expect(x.members.filter((y: any) => y.role === "keep")).toHaveLength(1)
+                else {
+                    expect(x.survivorId).toBeNull()
+                    expect(x.reclaimableBytes).toBe(0)
+                    expect(x.members.every((y: any) => y.role === "review" || y.role === "missing")).toBe(true)
+                }
+            }
+            expect(rep.groups.some((x: any) => x.algorithm === "objects")).toBe(true) // the overlap case is exercised
+            // whole-report invariants (reviewer H1)
+            const keep = new Set<string>(), remove = new Set<string>()
+            for (const x of rep.groups) for (const y of x.members) { if (y.role === "keep") keep.add(y.path); if (y.role === "remove") remove.add(y.path) }
+            expect([...keep].filter(p => remove.has(p))).toEqual([])
+            for (const x of rep.groups) expect(x.members.some((y: any) => !y.missing && y.role !== "remove")).toBe(true)
+            expect(rep.totals.removeFiles).toBe(remove.size)
+            expect(rep.totals.reclaimableBytes).toBe(2 * fs.statSync(path.join(rr, "a.png")).size)
+            expect(Number.isNaN(Date.parse(rep.pixelGroupsSavedAt))).toBe(false)
+            expect(rep.algorithms.pixel).toContain(rep.pixelGroupsSavedAt)
 
             // CSV: header, one row per member, RFC 4180 quoting survives a round trip
             const rows = parseCsv(fs.readFileSync(csv, "utf8"))
@@ -1258,6 +1339,16 @@ d("lsr CLI (Electron integration)", () => {
             expect(r.code).toBe(0)
             expect(readJson(json).generatedAt).not.toBe(firstAt)
             expect(readJson(json).stages).toEqual(["report"])
+            // atomic write: nothing but finished reports in the folder
+            expect(fs.readdirSync(out).filter(f => f.endsWith(".tmp"))).toEqual([])
+        })
+        it("a stale .tmp from a killed run is cleaned up by the next report", () => {
+            fs.writeFileSync(path.join(out, "r.json.tmp"), "garbage from a killed run")
+            fs.writeFileSync(path.join(out, "r.csv.tmp"), "")
+            const r = lsr(["--root", rr, "--stages", "report", "--report", path.join(out, "r"), "--format", "json,csv"], FAKE)
+            expect(r.code).toBe(0)
+            expect(fs.readdirSync(out).filter(f => f.endsWith(".tmp"))).toEqual([])
+            expect(readJson(path.join(out, "r.json")).groups.length).toBeGreaterThan(0)
         })
         it("--stages report alone recomputes the other algorithms (same groups as the extraDups run)", () => {
             const prev = readJson(path.join(out, "r.json"))
@@ -1320,6 +1411,37 @@ d("lsr CLI (Electron integration)", () => {
             expect(g.survivorId).toBe(aIds[1].id)
             expect(g.reclaimableBytes).toBe(fs.statSync(path.join(rm, aIds[2].filename)).size)
             expect(rep.groups.some((x: any) => x.members.some((y: any) => y.path.endsWith("x1.png")))).toBe(false)
+        })
+        it("overlapping persisted pixel groups are merged: one cluster, one keep, a shared file decided once", () => {
+            const ro = path.join(base, "report-overlap")
+            fs.mkdirSync(ro)
+            for (const n of ["p", "q", "r"]) fs.copyFileSync(path.join(root, "a.png"), path.join(ro, `${n}.png`))
+            fs.copyFileSync(path.join(root, "b.png"), path.join(ro, "big.png"))
+            expect(lsr(["--root", ro, "--stages", "scan,hash,index,duplicates"]).code).toBe(0)
+            const ids: Record<string, string> = {}
+            for (const x of query(ro, "select id, filename from media")) ids[x.filename] = x.id
+            // Hand-made overlapping groups: {p,q} and {q,r,big} share q.
+            execSql(ro, "DELETE FROM items_duplicated;" +
+                `INSERT INTO items_duplicated (groupId, mediaId) VALUES ('g1','${ids["p.png"]}'),('g1','${ids["q.png"]}'),('g2','${ids["q.png"]}'),('g2','${ids["r.png"]}'),('g2','${ids["big.png"]}');`)
+            const r = lsr(["--root", ro, "--stages", "report", "--report", path.join(out, "overlap")], { NODE_ENV: "test", LSR_FAKE_DETECTOR: "1" })
+            expect(r.code).toBe(0)
+            const rep = readJson(path.join(out, "overlap.json"))
+            const pixel = rep.groups.filter((g: any) => g.algorithm === "pixel")
+            expect(pixel).toHaveLength(1)
+            expect(pixel[0].members.map((m: any) => m.id).sort()).toEqual(Object.values(ids).sort())
+            expect(pixel[0].members.filter((m: any) => m.role === "keep")).toHaveLength(1)
+            expect(pixel[0].survivorId).toBe(ids["big.png"]) // biggest file
+            expect(rep.totals.removeFiles).toBe(3)
+            expect(rep.totals.reclaimableBytes).toBe(3 * fs.statSync(path.join(ro, "p.png")).size)
+        })
+        it("pixelGroupsSavedAt is null for groups saved before the createdAt column existed", () => {
+            const ro = path.join(base, "report-overlap")
+            execSql(ro, "UPDATE items_duplicated SET createdAt = NULL")
+            const r = lsr(["--root", ro, "--stages", "report", "--report", path.join(out, "oldrows")], { NODE_ENV: "test", LSR_FAKE_DETECTOR: "1" })
+            expect(r.code).toBe(0)
+            const rep = readJson(path.join(out, "oldrows.json"))
+            expect(rep.pixelGroupsSavedAt).toBeNull()
+            expect(rep.algorithms.pixel).toMatch(/^1 groups as last persisted by the duplicates stage$/)
         })
         it("a report with no groups at all is still valid JSON", () => {
             const rz = path.join(base, "report-empty")

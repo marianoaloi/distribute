@@ -157,8 +157,10 @@ ELECTRON_RUN_AS_NODE=1 npx electron electron-dist/cli/lsr.js \
 - Interrupt with Ctrl-C (or SIGTERM) and re-run the same command: work that
   is already done is skipped. Only one run per folder at a time
   (`tmp/lsr.lock`); don't open the same folder in the GUI meanwhile.
-- The report (`tmp/reports/` by default) lists every duplicate group with a
-  suggested file to keep - advisory only.
+- The report (`tmp/reports/` by default) lists every duplicate group. Only
+  pixel-duplicate groups get a suggested `keep` and `remove` members; groups
+  of the looser algorithms (shared detection boxes, frame signature, blurred
+  frames) list `review` members to check by hand. Advisory only.
 - Exit codes: 0 ok, 1 some items failed, 2 usage/configuration error,
   3 a stage failed, 130 interrupted. `--help` has the details.
 - Tuning: `LSR_STALL_MINUTES` (default 30) ends a run whose progress stops;

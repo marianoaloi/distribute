@@ -48,14 +48,18 @@ Options:
                       it is abandoned and reported as failed.
                       report = every duplicate group (pixel groups as last
                       persisted; the other algorithms from this run's
-                      extraDups, or computed again) with a suggested file
-                      to keep. Advisory only: nothing is moved or deleted.
+                      extraDups, or computed again). Only pixel groups get
+                      keep/remove (one keep per group); the other
+                      algorithms' members are "review" (check by hand).
+                      Advisory only: nothing is moved or deleted.
   --report <path>     Decision report file (default:
                       <mediaRoot>/tmp/reports/lsr-<timestamp>.json). An
                       existing file is only replaced if it is an earlier
                       LSR report.
-  --format <list>     json, csv or json,csv (default json); with both, the
-                      same name with each extension.
+  --format <list>     json, csv or json,csv (default json). The file names
+                      come from --report with its .json/.csv extension
+                      replaced, so "--report r.csv --format json" writes
+                      r.json.
   --verbose           Also print per-item log lines to stdout (they always go
                       to the run log under <mediaRoot>/tmp/logs/).
   --help              Show this help.

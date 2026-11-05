@@ -145,6 +145,8 @@ const createSchema = (database: Database.Database): void => {
         );
     `);
     database.exec("CREATE INDEX IF NOT EXISTS idx_items_duplicated_mediaId ON items_duplicated(mediaId);");
+    // When the snapshot was written (the decision report states its age).
+    ensureColumn(database, "items_duplicated", "createdAt", "INTEGER");
 
     dropFingerprintsFromOlderAlgorithm(database);
     backfillBlurKeys(database);
@@ -519,11 +521,12 @@ export const mediaIdPairsBySharedBlurFrames = (): string[][] => {
 export const replaceDuplicateGroups = (groups: string[][]): void => {
     const replace = db!.transaction((groups: string[][]): void => {
         db!.prepare("DELETE FROM items_duplicated").run();
-        const insert = db!.prepare("INSERT INTO items_duplicated (groupId, mediaId) VALUES (?, ?)");
+        const insert = db!.prepare("INSERT INTO items_duplicated (groupId, mediaId, createdAt) VALUES (?, ?, ?)");
+        const createdAt = Date.now();
         for (const group of groups) {
             if (group.length < 2) continue;
             const groupId = crypto.randomUUID();
-            for (const mediaId of group) insert.run(groupId, mediaId);
+            for (const mediaId of group) insert.run(groupId, mediaId, createdAt);
         }
     });
     replace(groups);
@@ -543,6 +546,11 @@ export const getDuplicateGroups = (): string[][] => {
     }
     return [...groups.values()];
 };
+
+// When the persisted duplicate groups were written (ms), or null when there
+// are none or they predate the createdAt column.
+export const duplicateGroupsSavedAt = (): number | null =>
+    (db!.prepare("SELECT MAX(createdAt) AS t FROM items_duplicated").get() as { t: number | null }).t;
 
 // The fingerprint generation this index's baseMd5/baseGrey values were
 // produced by, for dbImport.ts to refuse comparing across generations.

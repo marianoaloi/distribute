@@ -3,7 +3,7 @@
  */
 // cli/extraDups.ts - the extraDups stage runner (pure parts; runInChild is covered by the Electron integration tests).
 import {
-    DEFAULT_EXTRA_DUPS_MINUTES, EXTRA_ALGORITHMS, ExtraAlgorithm, extraDupsBudgetMs, formatExtraSummary,
+    DEFAULT_EXTRA_DUPS_MAX_MB, DEFAULT_EXTRA_DUPS_MINUTES, EXTRA_ALGORITHMS, extraDupsMaxMb, ExtraAlgorithm, extraDupsBudgetMs, formatExtraSummary,
     runExtraDuplicates, StoppedError,
 } from "../../cli/extraDups"
 
@@ -131,5 +131,18 @@ describe("formatExtraSummary", () => {
     })
     it("says so when nothing finished", () => {
         expect(formatExtraSummary([])).toBe("no algorithm finished")
+    })
+})
+
+describe("extraDupsMaxMb", () => {
+    it("defaults to 4096 MB", () => {
+        expect(DEFAULT_EXTRA_DUPS_MAX_MB).toBe(4096)
+        expect(extraDupsMaxMb({})).toBe(4096)
+    })
+    it.each([["1", 1], ["0.2", 1], ["1.9", 1], ["512", 512], [" 64 ", 64]])("LSR_EXTRA_DUPS_MAX_MB=%p -> %d", (v, mb) => {
+        expect(extraDupsMaxMb({ LSR_EXTRA_DUPS_MAX_MB: v })).toBe(mb)
+    })
+    it.each(["", "x", "0", "-1", "NaN", "Infinity"])("falls back to 4096 for %p", (v) => {
+        expect(extraDupsMaxMb({ LSR_EXTRA_DUPS_MAX_MB: v })).toBe(4096)
     })
 })

@@ -116,6 +116,7 @@ const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, 
         extraDups: await import("./extraDups"),
         reportWriter: await import("../reporting/report"),
         reportGroups: await import("../reporting/groups"),
+        duplicateMath: await import("../compareImg/duplicateMath"),
     }, state);
 
     const summaries: StageSummary[] = [];

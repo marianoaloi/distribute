@@ -11,7 +11,7 @@ import type { ExtraResult } from "./extraDups";
 import { allFailedError, everyItemFailed, StageFailure } from "./stageRules";
 import { targetsFor } from "./reportArgs";
 import { stampFor } from "./runLog";
-import { formatBytes, type ReportGroup, type ReportTotals } from "../reporting/report";
+import { DECIDING_ALGORITHMS, formatBytes, type ReportGroup, type ReportTotals } from "../reporting/report";
 
 export interface StageDeps {
     MediaStore: typeof import("../mediaDb/MediaStore");
@@ -23,6 +23,7 @@ export interface StageDeps {
     extraDups: typeof import("./extraDups");
     reportWriter: typeof import("../reporting/report");
     reportGroups: typeof import("../reporting/groups");
+    duplicateMath: typeof import("../compareImg/duplicateMath");
 }
 
 export interface FailedFiles { count: number; paths: string[] }
@@ -135,8 +136,12 @@ export const createStageRunners = (
             const targets = targetsFor(stem, options.reportFormats);
 
             deps.HashStore.ensureReady();
-            const pixel = deps.HashStore.getDuplicateGroups();
-            const algorithms: Record<string, string> = { pixel: `${pixel.length} groups as last persisted by the duplicates stage` };
+            // Disjoint clusters, so each media gets exactly one keep/remove
+            // decision (the persisted groups already are; this guarantees it).
+            const pixel = deps.duplicateMath.mergeGroups(deps.HashStore.getDuplicateGroups());
+            const savedAt = deps.HashStore.duplicateGroupsSavedAt();
+            const pixelGroupsSavedAt = savedAt === null ? null : new Date(savedAt).toISOString();
+            const algorithms: Record<string, string> = { pixel: `${pixel.length} groups as last persisted by the duplicates stage${pixelGroupsSavedAt ? ` (${pixelGroupsSavedAt})` : ""}` };
             for (const r of extra) algorithms[r.algorithm] = r.error ? `FAILED: ${r.error}` : `${r.groups.length} groups`;
             const groupsOf = deps.reportGroups.reportGroupsFor;
             async function* allGroups(): AsyncGenerator<ReportGroup> {
@@ -144,14 +149,18 @@ export const createStageRunners = (
                 for (const r of extra ?? []) if (!r.error) yield* groupsOf(r.algorithm, r.groups);
             }
             const totals: ReportTotals = await deps.reportWriter.writeReport(
-                { generatedAt: new Date().toISOString(), root: options.root, maloi: options.maloi, stages: options.stages, algorithms },
+                { generatedAt: new Date().toISOString(), root: options.root, maloi: options.maloi, stages: options.stages, algorithms, pixelGroupsSavedAt },
                 allGroups(),
                 targets,
             );
             state.reportPaths = Object.values(targets).filter((p): p is string => Boolean(p));
-            const perAlgorithm = Object.keys(totals.groupsByAlgorithm)
-                .map(a => `${a} ${totals.groupsByAlgorithm[a]} (${formatBytes(totals.reclaimableBytesByAlgorithm[a] ?? 0)} reclaimable)`);
-            return `${perAlgorithm.length ? perAlgorithm.join(", ") : "no duplicate groups"}; written to ${state.reportPaths.join(", ")}`;
+            // Per algorithm only: a media can be in several algorithms' groups.
+            const perAlgorithm = Object.keys(totals.groupsByAlgorithm).map(a => (DECIDING_ALGORITHMS as readonly string[]).includes(a)
+                ? `${a} ${totals.groupsByAlgorithm[a]} (${formatBytes(totals.reclaimableBytesByAlgorithm[a] ?? 0)} reclaimable)`
+                : `${a} ${totals.groupsByAlgorithm[a]} (to review)`);
+            return `${perAlgorithm.length ? perAlgorithm.join(", ") : "no duplicate groups"}` +
+                (totals.removeFiles ? `; ${totals.removeFiles} files suggested for removal, ${formatBytes(totals.reclaimableBytes)}` : "") +
+                `; written to ${state.reportPaths.join(", ")}`;
         },
     };
 };
