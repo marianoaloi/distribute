@@ -83,6 +83,8 @@
     "postinstall": "electron-rebuild -f -o better-sqlite3",
     "build:electron": "tsc -p tsconfig.electron.json",
     "watch:electron": "tsc -p tsconfig.electron.json -w",
+    "lsr": "npm run build:electron && ELECTRON_RUN_AS_NODE=1 electron electron-dist/cli/lsr.js",
+    "lsr:run": "ELECTRON_RUN_AS_NODE=1 electron electron-dist/cli/lsr.js",
     "prestartele": "npm run build:electron",
     "startele": "nodemon -e js --watch electron-dist --exec electron . ",
     "start": "react-scripts start --no-browser  --source-map --base-href ",
