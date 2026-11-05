@@ -48,7 +48,7 @@ describe("parseStages", () => {
         expect(parseStages("extradups").ok).toBe(false) // case-sensitive
     })
     it("STAGE_ORDER is the documented order", () => {
-        expect([...STAGE_ORDER]).toEqual(["scan", "hash", "index", "detect", "duplicates", "extraDups"])
+        expect([...STAGE_ORDER]).toEqual(["scan", "hash", "index", "detect", "duplicates", "extraDups", "report"])
     })
 })
 
@@ -135,6 +135,26 @@ describe("parseArgs", () => {
         const look = path.join(dir, "proc")
         fs.mkdirSync(look, { recursive: true })
         expect(ok(["--root", look, "--stages", "scan"]).root).toBe(look)
+    })
+    it("--report/--format: defaults, stem, formats", () => {
+        const o = ok(["--root", root, "--stages", "report"])
+        expect(o.reportStem).toBeUndefined()
+        expect(o.reportFormats).toEqual(["json"])
+        const o2 = ok(["--root", root, "--stages", "report", "--report", path.join(dir, "out.json"), "--format", "csv,json"])
+        expect(o2.reportStem).toBe(path.join(dir, "out"))
+        expect(o2.reportFormats).toEqual(["json", "csv"])
+    })
+    it("--report/--format without the report stage is an error", () => {
+        expect(err(["--root", root, "--stages", "scan", "--format", "json"])).toMatch(/the "report" stage is not selected/)
+        expect(err(["--root", root, "--stages", "scan", "--report", path.join(dir, "r")])).toMatch(/the "report" stage is not selected/)
+    })
+    it("--report validation errors", () => {
+        expect(err(["--root", root, "--stages", "report", "--report", "  "])).toMatch(/--report needs a path/)
+        expect(err(["--root", root, "--stages", "report", "--report", path.join(dir, "nope", "r")])).toMatch(/folder does not exist/)
+        expect(err(["--root", root, "--stages", "report", "--format", "xml"])).toMatch(/unknown report format/)
+        fs.writeFileSync(path.join(dir, "foreign.json"), "{}")
+        expect(err(["--root", root, "--stages", "report", "--report", path.join(dir, "foreign.json")])).toMatch(/not an LSR report/)
+        expect(err(["--root", root, "--stages", "report", "--report", "a", "--report", "b"])).toMatch(/more than once/)
     })
     it("propagates --stages errors", () => {
         expect(err(["--root", root, "--stages", "scan,nope"])).toMatch(/unknown stage/)

@@ -1,8 +1,8 @@
 // Headless "Load super recursive" for big libraries on a server:
 //   ELECTRON_RUN_AS_NODE=1 electron electron-dist/cli/lsr.js --root <dir> --maloi <file> [--stages ...]
-// Runs scan -> hash -> index -> detect -> duplicates against <root>, writing
-// the same per-folder index.db the GUI reads, plus a run log under
-// <root>/tmp/logs/. Never moves or deletes media. See cli/args.ts's USAGE.
+// Runs scan -> hash -> index -> detect -> duplicates -> extraDups -> report
+// against <root>, writing the same per-folder index.db the GUI reads, a
+// decision report and a run log under <root>/tmp/. Never moves or deletes media. See cli/args.ts's USAGE.
 //
 // Only the pure CLI modules are imported up front: everything that loads a
 // native addon (better-sqlite3 is built for Electron's ABI) is imported after
@@ -14,30 +14,19 @@ import { installStopHandlers, EXIT_INTERRUPTED } from "./signals";
 import { acquireLock } from "./lock";
 import { setActiveFolder } from "../DirectorioCache";
 import type { StageDef } from "../pipeline/PipelineRun";
-import type { ExtraResult } from "./extraDups";
 import * as inFlight from "../system/inFlight";
+import { CLI_ONLY_STAGES, MAX_DUPLICATE_BUCKET, StageFailure } from "./stageRules";
+import type { FailedFiles, StageState } from "./stages";
+
+// Re-exported for existing importers (tests).
+export { ALL_FAILED_MIN_ITEMS, everyItemFailed, MAX_DUPLICATE_BUCKET } from "./stageRules";
 
 export const EXIT_OK = 0;
 export const EXIT_ITEM_ERRORS = 1;
 export const EXIT_USAGE = 2;
 export const EXIT_STAGE_FAILED = 3;
 
-// Pixel-duplicate buckets above this many frames get exact matches only (see
-// duplicateFinder.findIndexDuplicatesBucketed): one degenerate bucket - all
-// black frames, say - would otherwise cost k^2 pixel comparisons.
-export const MAX_DUPLICATE_BUCKET = 5000;
-
 const RUN_HINT = "Run it with Electron's bundled Node: ELECTRON_RUN_AS_NODE=1 electron electron-dist/cli/lsr.js ...";
-
-class StageFailure extends Error { }
-
-// Stages the GUI chain does not have.
-const CLI_ONLY_STAGES: StageDef[] = [
-    { key: "extraDups", label: "Running the other duplicate algorithms" },
-];
-
-// The last extraDups results of this run (they are not persisted).
-let extraResults: ExtraResult[] | null = null;
 
 // The files workers were busy with when an error escaped every handler -
 // most likely the one that caused it (see system/inFlight.ts).
@@ -55,23 +44,6 @@ export const stallTimeoutMs = (env: NodeJS.ProcessEnv): number => {
     const minutes = Number(env.LSR_STALL_MINUTES);
     return (Number.isFinite(minutes) && minutes > 0 ? minutes : DEFAULT_STALL_MINUTES) * 60_000;
 };
-
-// A stage that tried at least this many items and got not one of them
-// through is FAILED (exit 3, later stages skipped): that is almost always
-// system-wide (ffmpeg missing, disk full, read-only database). Fewer
-// failures - one corrupt new file on a re-run, say - stay item errors
-// (exit 1), so a single bad file can never block every future run.
-export const ALL_FAILED_MIN_ITEMS = 5;
-
-// alreadyDone: items of this stage finished by EARLIER runs. A re-run only
-// retries the leftovers - mostly the permanently bad files - so "none of
-// this run's items succeeded" alone would turn a handful of bad files into
-// a FAILED stage on every re-run; with earlier successes it is not system-wide.
-export const everyItemFailed = (succeeded: number, failed: number, alreadyDone = 0): boolean =>
-    failed >= ALL_FAILED_MIN_ITEMS && succeeded === 0 && alreadyDone === 0;
-
-const allFailedError = (stage: string, failed: number): StageFailure =>
-    new StageFailure(`every one of the ${failed} items the ${stage} stage tried failed - most likely a system-wide problem (ffmpeg missing, disk full, read-only database); see the log`);
 
 // Called on every progress snapshot (see run); set up in main.
 let onActivity: () => void = () => undefined;
@@ -91,23 +63,17 @@ const checkNativeRuntime = (): string | null => {
     }
 };
 
-interface FailedFiles { count: number; paths: string[] }
 interface StageSummary { stage: CliStage; elapsedMs: number; note: string; failed?: FailedFiles }
 
 // Failed files listed per stage in the end summary (all are in the log).
 const SUMMARY_FAILED_FILES = 20;
 
-const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, errorCount: () => number): Promise<{ code: number; summaries: StageSummary[] }> => {
+const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, errorCount: () => number, state: StageState): Promise<{ code: number; summaries: StageSummary[] }> => {
     const MediaStore = await import("../mediaDb/MediaStore");
     const onnxDetector = await import("../objectDetection/onnxDetector");
     const superPipeline = await import("../pipeline/superPipeline");
     const pipelineRun = await import("../pipeline/PipelineRun");
     const { readMaloi, applyMaloi } = await import("../objectDetection/maloi");
-    const { scanTree } = await import("./scan");
-    const { countMedia } = await import("../mediaDb/mediaPages");
-    const failedFiles: Partial<Record<CliStage, FailedFiles>> = {};
-    const { runExtraDuplicates, runInChild, extraDupsBudgetMs, formatExtraSummary } = await import("./extraDups");
-
     MediaStore.ensureReady();
     if (options.maloi) {
         try {
@@ -131,85 +97,26 @@ const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, 
     const stageDefs: StageDef[] = [...superPipeline.SUPER_STAGES, ...CLI_ONLY_STAGES];
     pipelineRun.begin("LSR CLI", stageDefs.filter(s => (options.stages as readonly string[]).includes(s.key)));
 
-    const detections = { media: 0, failed: 0, alreadyDone: 0, withoutFrames: 0, failedPaths: [] as string[] };
     const ctx: import("../pipeline/superPipeline").SuperContext = {
         detector,
         shouldStop,
         abort: shouldStop,
         maxDuplicateBucket: MAX_DUPLICATE_BUCKET,
         strict: true,
-        events: {
-            progress: (processed, total) => pipelineRun.updateStage(processed, total),
-            detection: (event) => { detections.media++; if (event.error) detections.failed++; },
-            detectionStats: (stats) => { detections.alreadyDone = stats.alreadyDone; detections.withoutFrames = stats.withoutFrames; detections.failedPaths = stats.failedPaths; },
-        },
+        events: { progress: (processed, total) => pipelineRun.updateStage(processed, total) },
     };
-
-    const stageRunners: Record<CliStage, () => Promise<string>> = {
-        scan: async () => {
-            const stats = await scanTree(options.root, { shouldStop, onProgress: (s) => pipelineRun.updateStage(s.media) });
-            if (stats.folders === 0 && stats.unreadableFolders > 0) throw new StageFailure(`the media folder itself cannot be read: ${options.root}`);
-            return `${stats.folders} folders, ${stats.media} media` +
-                (stats.unreadableFolders ? `, ${stats.unreadableFolders} unreadable folders` : "") +
-                (stats.skippedSymlinks ? `, ${stats.skippedSymlinks} symlinks skipped` : "") +
-                (stats.skippedSpecial ? `, ${stats.skippedSpecial} special files skipped` : "");
-        },
-        hash: async () => {
-            const missingBefore = MediaStore.countMediaMissingContentMd5();
-            const hashedBefore = countMedia() - missingBefore;
-            let hashStats = { hashed: 0, failed: 0, missing: 0, failedPaths: [] as string[] };
-            ctx.events.hashStats = (r) => { hashStats = r; };
-            await superPipeline.runHash(ctx);
-            failedFiles.hash = { count: hashStats.failed, paths: hashStats.failedPaths };
-            if (everyItemFailed(hashStats.hashed, hashStats.failed, hashedBefore)) throw allFailedError("hash", hashStats.failed);
-            return `${missingBefore - MediaStore.countMediaMissingContentMd5()} of ${missingBefore} unhashed files hashed` +
-                (hashStats.failed ? `, ${hashStats.failed} unreadable` : "") + (hashStats.missing ? `, ${hashStats.missing} no longer on disk` : "");
-        },
-        index: async () => {
-            let failure: string | undefined;
-            ctx.events.indexDone = (result) => { if (!result.success) failure = result.error; };
-            // "done" already includes media indexed by earlier runs.
-            let indexStats = { done: 0, failed: 0, failedPaths: [] as string[] };
-            ctx.events.indexStats = (s) => { indexStats = s; };
-            const count = await superPipeline.runBuildIndex(ctx);
-            failedFiles.index = { count: indexStats.failed, paths: indexStats.failedPaths };
-            if (failure !== undefined) throw new StageFailure(failure);
-            if (everyItemFailed(indexStats.done, indexStats.failed)) throw allFailedError("index", indexStats.failed);
-            return `${count} media checked` + (indexStats.failed ? `, ${indexStats.failed} failed` : "");
-        },
-        detect: async () => {
-            const result = await superPipeline.runDetect(ctx);
-            if (result === "no-model" || result === "no-classes") throw new StageFailure(result);
-            // Video/GIF media without frames still emit an (empty) result.
-            const processedMedia = detections.media - detections.withoutFrames;
-            failedFiles.detect = { count: detections.failed, paths: detections.failedPaths };
-            if (everyItemFailed(processedMedia - detections.failed, detections.failed, detections.alreadyDone)) throw allFailedError("detect", detections.failed);
-            return `${processedMedia} media processed, ${detections.failed} failed, ${detections.alreadyDone} already detected` +
-                (detections.withoutFrames ? `, ${detections.withoutFrames} videos/GIFs without frames skipped` : "");
-        },
-        extraDups: async () => {
-            const budgetMs = extraDupsBudgetMs(process.env);
-            let done = 0;
-            const { results, stopped } = await runExtraDuplicates({
-                shouldStop,
-                run: (algorithm) => runInChild(options.root, algorithm, {
-                    budgetMs,
-                    shouldStop,
-                    onTick: () => pipelineRun.updateStage(done, 3),
-                }),
-                onStep: (n, total) => { done = n; pipelineRun.updateStage(n, total); },
-            });
-            extraResults = stopped ? null : results;
-            const failed = results.filter(r => r.error);
-            if (results.length > 0 && failed.length === results.length) throw new StageFailure(`every duplicate algorithm failed: ${formatExtraSummary(results)}`);
-            return formatExtraSummary(results);
-        },
-        duplicates: async () => {
-            const groups = await superPipeline.runDuplicates(ctx);
-            if (shouldStop()) return "the previous duplicate result is kept";
-            return `${groups.length} duplicate groups`;
-        },
-    };
+    const { createStageRunners } = await import("./stages");
+    const stageRunners = createStageRunners(options, ctx, shouldStop, {
+        MediaStore,
+        HashStore: await import("../compareImg/HashStore"),
+        superPipeline,
+        pipelineRun,
+        mediaPages: await import("../mediaDb/mediaPages"),
+        scan: await import("./scan"),
+        extraDups: await import("./extraDups"),
+        reportWriter: await import("../reporting/report"),
+        reportGroups: await import("../reporting/groups"),
+    }, state);
 
     const summaries: StageSummary[] = [];
     let code = EXIT_OK;
@@ -222,11 +129,11 @@ const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, 
             const note = (await stageRunners[stage]()) + (shouldStop() ? " (stopped early)" : "");
             reporter.flush();
             const errors = errorCount() - errorsBefore;
-            summaries.push({ stage, elapsedMs: Date.now() - started, note: errors ? `${note}; ${errors} errors logged` : note, failed: failedFiles[stage] });
+            summaries.push({ stage, elapsedMs: Date.now() - started, note: errors ? `${note}; ${errors} errors logged` : note, failed: state.failedFiles[stage] });
             log.info(`stage ${stage} done in ${formatDuration(Date.now() - started)}: ${summaries[summaries.length - 1].note}`);
         } catch (error) {
             log.error(`stage ${stage} failed: ${(error as Error).stack || (error as Error).message}`);
-            summaries.push({ stage, elapsedMs: Date.now() - started, note: `FAILED: ${(error as Error).message}`, failed: failedFiles[stage] });
+            summaries.push({ stage, elapsedMs: Date.now() - started, note: `FAILED: ${(error as Error).message}`, failed: state.failedFiles[stage] });
             code = EXIT_STAGE_FAILED;
             break;
         }
@@ -318,8 +225,9 @@ export const main = async (argv: string[]): Promise<void> => {
 
     let code = EXIT_OK;
     let summaries: StageSummary[] = [];
+    const state: StageState = { failedFiles: {}, extraResults: null, reportPaths: [] };
     try {
-        ({ code, summaries } = await run(options, log, stop.shouldStop, () => counters.errors));
+        ({ code, summaries } = await run(options, log, stop.shouldStop, () => counters.errors, state));
     } catch (error) {
         log.error(`fatal: ${(error as Error).stack || (error as Error).message}`);
         code = EXIT_STAGE_FAILED;
@@ -339,6 +247,7 @@ export const main = async (argv: string[]): Promise<void> => {
     }
     log.info(`  total      ${formatDuration(Date.now() - startedAt).padStart(7)}  ${counters.errors} errors, ${counters.warnings} warnings logged`);
     if (code === EXIT_INTERRUPTED) log.info("  interrupted - re-run the same command to continue");
+    for (const p of state.reportPaths) log.info(`  report: ${p}`);
     log.info(`  exit code ${code}; log: ${log.path}`);
 
     clearInterval(watchdog);

@@ -3,9 +3,10 @@
 // free of native imports so --help and usage errors work under plain node.
 import fs from "fs";
 import path from "path";
+import { checkReportTargets, parseFormats, reportStem, targetsFor, type ReportFormat } from "./reportArgs";
 
 // Canonical execution order; --stages is re-sorted into it.
-export const STAGE_ORDER = ["scan", "hash", "index", "detect", "duplicates", "extraDups"] as const;
+export const STAGE_ORDER = ["scan", "hash", "index", "detect", "duplicates", "extraDups", "report"] as const;
 export type CliStage = typeof STAGE_ORDER[number];
 
 export interface CliOptions {
@@ -13,6 +14,10 @@ export interface CliOptions {
     maloi?: string;
     stages: CliStage[];
     verbose: boolean;
+    // Report path without extension (absolute); undefined = the default
+    // <root>/tmp/reports/lsr-<stamp>.
+    reportStem?: string;
+    reportFormats: ReportFormat[];
 }
 
 export type ParseOutcome =
@@ -38,8 +43,19 @@ Options:
                       GUI); extraDups = the GUI's other three algorithms
                       (shared detection boxes, frame signature, blurred
                       frames), computed on demand and not persisted; each
-                      gets LSR_EXTRA_DUPS_MINUTES (default 60) before it
-                      is abandoned and reported as timed out.
+                      gets LSR_EXTRA_DUPS_MINUTES (default 60) and
+                      LSR_EXTRA_DUPS_MAX_MB of memory (default 4096) before
+                      it is abandoned and reported as failed.
+                      report = every duplicate group (pixel groups as last
+                      persisted; the other algorithms from this run's
+                      extraDups, or computed again) with a suggested file
+                      to keep. Advisory only: nothing is moved or deleted.
+  --report <path>     Decision report file (default:
+                      <mediaRoot>/tmp/reports/lsr-<timestamp>.json). An
+                      existing file is only replaced if it is an earlier
+                      LSR report.
+  --format <list>     json, csv or json,csv (default json); with both, the
+                      same name with each extension.
   --verbose           Also print per-item log lines to stdout (they always go
                       to the run log under <mediaRoot>/tmp/logs/).
   --help              Show this help.
@@ -65,7 +81,7 @@ Exit codes:
 // Kernel pseudo-filesystems: never media, and reading some entries blocks.
 const PSEUDO_FS = ["/proc", "/sys", "/dev"];
 
-const VALUE_FLAGS = new Set(["--root", "--maloi", "--stages"]);
+const VALUE_FLAGS = new Set(["--root", "--maloi", "--stages", "--report", "--format"]);
 const BOOL_FLAGS = new Set(["--verbose", "--help", "-h"]);
 
 export const parseStages = (raw: string): { ok: true; stages: CliStage[] } | { ok: false; error: string } => {
@@ -134,5 +150,22 @@ export const parseArgs = (argv: readonly string[]): ParseOutcome => {
         return { ok: false, error: "--maloi is required when the \"detect\" stage runs (or leave it out with --stages)" };
     }
 
-    return { ok: true, help: false, options: { root, maloi, stages, verbose: bools.has("--verbose") } };
+    let reportFormats: ReportFormat[] = ["json"];
+    if (values["--format"] !== undefined) {
+        const parsed = parseFormats(values["--format"]);
+        if (!parsed.ok) return parsed;
+        reportFormats = parsed.formats;
+    }
+    if ((values["--report"] !== undefined || values["--format"] !== undefined) && !stages.includes("report")) {
+        return { ok: false, error: "--report/--format given, but the \"report\" stage is not selected" };
+    }
+    let stem: string | undefined;
+    if (values["--report"] !== undefined) {
+        if (values["--report"].trim() === "") return { ok: false, error: "--report needs a path" };
+        stem = reportStem(values["--report"]);
+        const problem = checkReportTargets(targetsFor(stem, reportFormats));
+        if (problem) return { ok: false, error: problem };
+    }
+
+    return { ok: true, help: false, options: { root, maloi, stages, verbose: bools.has("--verbose"), reportStem: stem, reportFormats } };
 };

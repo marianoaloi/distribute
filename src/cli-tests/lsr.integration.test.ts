@@ -409,7 +409,7 @@ d("lsr CLI (Electron integration)", () => {
             const before = snapshotTree(dr)
             const r = lsr(["--root", dr, "--maloi", fakeMaloi], FAKE)
             expect(r.code).toBe(0)
-            expect(stagesDone(r.stdout)).toEqual(["scan", "hash", "index", "detect", "duplicates", "extraDups"])
+            expect(stagesDone(r.stdout)).toEqual(["scan", "hash", "index", "detect", "duplicates", "extraDups", "report"])
             expect(snapshotTree(dr)).toEqual(before)
         })
         it("resume works past the 400-id lookup chunk", () => {
@@ -1168,6 +1168,169 @@ d("lsr CLI (Electron integration)", () => {
             for (const l of orphans) { try { process.kill(Number(l.trim().split(/\s+/)[0]), "SIGKILL") } catch { /* gone */ } }
             fs.rmSync(lockOf(slow), { force: true })
             expect(orphans).toEqual([])
+        })
+    })
+
+
+    // E5: the decision report (advisory only).
+    describe("report stage", () => {
+        const FAKE = { NODE_ENV: "test", LSR_FAKE_DETECTOR: "1" }
+        let m: string
+        let rr: string
+        let out: string
+        const parseCsv = (text: string): string[][] => {
+            const rows: string[][] = []
+            let row: string[] = [], field = "", q = false
+            for (let i = 0; i < text.length; i++) {
+                const c = text[i]
+                if (q) { if (c === '"' && text[i + 1] === '"') { field += '"'; i++ } else if (c === '"') q = false; else field += c }
+                else if (c === '"') q = true
+                else if (c === ",") { row.push(field); field = "" }
+                else if (c === "\n") { row.push(field); rows.push(row); row = []; field = "" }
+                else field += c
+            }
+            if (field || row.length) { row.push(field); rows.push(row) }
+            return rows
+        }
+        const readJson = (p: string) => JSON.parse(fs.readFileSync(p, "utf8"))
+        const rel = (r: string, p: string) => path.relative(r, p)
+        beforeAll(() => {
+            m = path.join(base, "report.maloi")
+            fs.writeFileSync(m, JSON.stringify({ onnx: "x.onnx", classes: "x" }))
+            rr = path.join(base, "report-root")
+            makeFixture(rr)
+            // a file name that needs CSV quoting, byte-identical to a.png
+            fs.copyFileSync(path.join(rr, "a.png"), path.join(rr, 'we,ird "name".png'))
+            out = path.join(base, "report-out")
+            fs.mkdirSync(out)
+        })
+
+        it("full default chain with --report/--format json,csv: exit 0, both files, consistent content, media untouched", () => {
+            const before = snapshotTree(rr)
+            const r = lsr(["--root", rr, "--maloi", m, "--report", path.join(out, "r.json"), "--format", "json,csv"], FAKE)
+            expect(r.code).toBe(0)
+            expect(stagesDone(r.stdout)).toEqual(["scan", "hash", "index", "detect", "duplicates", "extraDups", "report"])
+            const json = path.join(out, "r.json"), csv = path.join(out, "r.csv")
+            expect(r.stdout).toMatch(new RegExp(`report: ${json.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`))
+            expect(r.stdout).toMatch(/stage report done in \S+: pixel 1 \(\S+ \S+ reclaimable\).*; written to /)
+            const rep = readJson(json)
+            expect(rep.root).toBe(rr)
+            expect(rep.stages).toEqual(["scan", "hash", "index", "detect", "duplicates", "extraDups", "report"])
+            expect(Object.keys(rep.algorithms).sort()).toEqual(["blurFrames", "frames", "objects", "pixel"])
+            expect(Number.isNaN(Date.parse(rep.generatedAt))).toBe(false)
+
+            // pixel: the three byte-identical PNGs, one survivor (equal size -> smallest id), the rest "remove"
+            const pixel = rep.groups.filter((g: any) => g.algorithm === "pixel")
+            expect(pixel).toHaveLength(1)
+            const g = pixel[0]
+            expect(g.members.map((x: any) => rel(rr, x.path)).sort()).toEqual(["a.png", "sub/a-copy.png", 'we,ird "name".png'])
+            const ids = g.members.map((x: any) => x.id).sort()
+            expect(g.survivorId).toBe(ids[0])
+            expect(g.members.filter((x: any) => x.role === "keep").map((x: any) => x.id)).toEqual([ids[0]])
+            expect(g.members.filter((x: any) => x.role === "remove")).toHaveLength(2)
+            expect(g.reclaimableBytes).toBe(2 * fs.statSync(path.join(rr, "a.png")).size)
+            expect(g.groupId).toMatch(/^[0-9a-f]{40}$/)
+            for (const x of g.members) expect(Object.keys(x).sort()).toEqual(["contentMd5", "hasAudio", "id", "kind", "mime", "missing", "path", "role", "size"])
+
+            // totals agree with groups
+            const byAlg: Record<string, number> = {}
+            const members: Record<string, number> = {}
+            for (const x of rep.groups) { byAlg[x.algorithm] = (byAlg[x.algorithm] ?? 0) + 1; members[x.algorithm] = (members[x.algorithm] ?? 0) + x.members.length }
+            expect(rep.totals.groupsByAlgorithm).toEqual(byAlg)
+            expect(rep.totals.membersByAlgorithm).toEqual(members)
+            // every group has exactly one keep
+            for (const x of rep.groups) expect(x.members.filter((y: any) => y.role === "keep")).toHaveLength(1)
+
+            // CSV: header, one row per member, RFC 4180 quoting survives a round trip
+            const rows = parseCsv(fs.readFileSync(csv, "utf8"))
+            expect(rows[0]).toEqual(["algorithm", "groupId", "role", "id", "path", "size", "kind", "hasAudio", "contentMd5"])
+            expect(rows.length - 1).toBe(rep.groups.reduce((n: number, x: any) => n + x.members.length, 0))
+            expect(rows.some(row => row[4] === path.join(rr, 'we,ird "name".png'))).toBe(true)
+            expect(fs.readFileSync(csv, "utf8")).toContain('"' + path.join(rr, 'we,ird ""name"".png') + '"')
+
+            expect(snapshotTree(rr)).toEqual(before)
+        })
+        it("re-running with the same --report replaces the files", async () => {
+            const json = path.join(out, "r.json")
+            const firstAt = readJson(json).generatedAt
+            await new Promise(res => setTimeout(res, 20))
+            const r = lsr(["--root", rr, "--stages", "report", "--report", path.join(out, "r"), "--format", "json,csv"], FAKE)
+            expect(r.code).toBe(0)
+            expect(readJson(json).generatedAt).not.toBe(firstAt)
+            expect(readJson(json).stages).toEqual(["report"])
+        })
+        it("--stages report alone recomputes the other algorithms (same groups as the extraDups run)", () => {
+            const prev = readJson(path.join(out, "r.json"))
+            const r = lsr(["--root", rr, "--stages", "report", "--report", path.join(out, "alone")], FAKE)
+            expect(r.code).toBe(0)
+            const rep = readJson(path.join(out, "alone.json"))
+            expect(fs.existsSync(path.join(out, "alone.csv"))).toBe(false) // default format json only
+            for (const a of ["objects", "frames", "blurFrames"]) expect(rep.algorithms[a]).toMatch(/^\d+ groups$/)
+            const key = (rp: any) => rp.groups.map((x: any) => `${x.algorithm}:${x.groupId}:${x.survivorId}`).sort()
+            expect(key(rep)).toEqual(key(prev))
+        })
+        it("refuses to overwrite a foreign file (exit 2, file untouched, nothing run)", () => {
+            const foreign = path.join(out, "mine.csv")
+            fs.writeFileSync(foreign, "my,own,data\n")
+            const r = lsr(["--root", rr, "--stages", "report", "--report", path.join(out, "mine"), "--format", "csv"], FAKE)
+            expect(r.code).toBe(2)
+            expect(r.stderr).toMatch(/would overwrite .*mine\.csv, which is not an LSR report/)
+            expect(fs.readFileSync(foreign, "utf8")).toBe("my,own,data\n")
+            expect(stagesDone(r.stdout)).toEqual([])
+        })
+        it.each([
+            [["--stages", "scan", "--format", "csv"], /the "report" stage is not selected/],
+            [["--stages", "report", "--report", "/no/such/dir/r"], /--report folder does not exist/],
+            [["--stages", "report", "--format", "xml"], /unknown report format/],
+        ])("usage error %j -> exit 2", (args, msg) => {
+            const r = lsr(["--root", rr, ...(args as string[])], FAKE)
+            expect(r.code).toBe(2)
+            expect(r.stderr).toMatch(msg as RegExp)
+        })
+        it("without --report it goes to <root>/tmp/reports/lsr-<stamp>.json", () => {
+            const r = lsr(["--root", rr, "--stages", "report"], FAKE)
+            expect(r.code).toBe(0)
+            const dir = path.join(rr, "tmp", "reports")
+            const files = fs.readdirSync(dir).filter(f => /^lsr-\d{8}-\d{6}\.json$/.test(f))
+            expect(files.length).toBeGreaterThanOrEqual(1)
+            expect(r.stdout).toContain(path.join(dir, files.sort().pop()!))
+        })
+        it("a member deleted after duplicates is 'missing' (never kept); a pair left with one file is dropped", () => {
+            const rm = path.join(base, "report-missing")
+            fs.mkdirSync(rm)
+            for (const n of ["a1", "a2", "a3"]) fs.copyFileSync(path.join(root, "a.png"), path.join(rm, `${n}.png`))
+            for (const n of ["x1", "x2"]) fs.copyFileSync(path.join(root, "b.png"), path.join(rm, `${n}.png`))
+            expect(lsr(["--root", rm, "--stages", "scan,hash,index,duplicates"]).code).toBe(0)
+            expect(query(rm, "select count(distinct groupId) n from items_duplicated")[0].n).toBe(2)
+            // delete the would-be survivor of the a-group (smallest id) and one of the pair
+            const aIds = query(rm, "select id, filename from media where filename like 'a%' order by id")
+            const gone = aIds[0]
+            fs.unlinkSync(path.join(rm, gone.filename))
+            fs.unlinkSync(path.join(rm, "x2.png"))
+            const r = lsr(["--root", rm, "--stages", "report", "--report", path.join(out, "missing")], FAKE)
+            expect(r.code).toBe(0)
+            const rep = readJson(path.join(out, "missing.json"))
+            const pixel = rep.groups.filter((g: any) => g.algorithm === "pixel")
+            expect(pixel).toHaveLength(1) // x-pair dropped
+            const g = pixel[0]
+            expect(g.members).toHaveLength(3)
+            const missing = g.members.find((x: any) => x.id === gone.id)
+            expect(missing).toMatchObject({ missing: true, role: "missing" })
+            expect(g.survivorId).not.toBe(gone.id)
+            expect(g.survivorId).toBe(aIds[1].id)
+            expect(g.reclaimableBytes).toBe(fs.statSync(path.join(rm, aIds[2].filename)).size)
+            expect(rep.groups.some((x: any) => x.members.some((y: any) => y.path.endsWith("x1.png")))).toBe(false)
+        })
+        it("a report with no groups at all is still valid JSON", () => {
+            const rz = path.join(base, "report-empty")
+            fs.mkdirSync(rz)
+            fs.copyFileSync(path.join(root, "a.png"), path.join(rz, "only.png"))
+            expect(lsr(["--root", rz, "--stages", "scan,hash,index,duplicates"]).code).toBe(0)
+            const r = lsr(["--root", rz, "--stages", "report", "--report", path.join(out, "empty"), "--format", "json,csv"], FAKE)
+            expect(r.code).toBe(0)
+            expect(r.stdout).toMatch(/no duplicate groups; written to/)
+            expect(readJson(path.join(out, "empty.json")).groups).toEqual([])
+            expect(fs.readFileSync(path.join(out, "empty.csv"), "utf8").trim().split("\n")).toHaveLength(1)
         })
     })
 
