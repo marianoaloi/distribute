@@ -4,6 +4,7 @@ import * as MediaStore from "../mediaDb/MediaStore";
 import { DetectionBox, DetectMediaRef } from "../types/domain";
 import * as mediaIndexer from "../compareImg/mediaIndexer";
 import * as inFlight from "../system/inFlight";
+import { pushCapped } from "../system/failedPaths";
 import { countMedia, inTransaction, itemRefsForMedia, listMediaPage, type PagedMediaRow } from "../mediaDb/mediaPages";
 import { forEachPage } from "../mediaDb/paging";
 
@@ -49,7 +50,6 @@ export interface DetectionPassStats {
     failedPaths: string[];
 }
 
-export const FAILED_PATHS_CAP = 100;
 
 export const processMediaToDetections = async (sink: DetectionSink, onnxDetector: DetectorLike, classNames: string[], shouldStop: () => boolean, onProgress?: (processed: number, total: number) => void): Promise<DetectionPassStats> => {
 
@@ -239,7 +239,7 @@ export const processMediaToDetections = async (sink: DetectionSink, onnxDetector
         const workerCount = Math.min(DETECTION_CONCURRENCY, groups.length);
         await Promise.all(Array.from({ length: workerCount }, runWorker));
         for (const m of medias) {
-            if (failedMediaIds.delete(m.id) && failedPaths.length < FAILED_PATHS_CAP) failedPaths.push(m.localPath);
+            if (failedMediaIds.delete(m.id)) pushCapped(failedPaths, m.localPath);
         }
     };
 

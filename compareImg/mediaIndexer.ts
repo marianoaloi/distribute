@@ -4,6 +4,7 @@ import { pixelHashFor } from "./pixelHash";
 import { extractFrames, FRAME_POSITIONS } from "./videoFrames";
 import { memoryAwareLimit, TASK_MEMORY_ESTIMATE } from "../system/resourceLimits";
 import * as inFlight from "../system/inFlight";
+import { pushCapped } from "../system/failedPaths";
 
 // Shape accepted by indexImage/indexVideo/indexMediaBackground - built by
 // app.js's rebuildIndex handler from MediaStore rows before calling in here.
@@ -75,7 +76,6 @@ export interface IndexStats {
     failedPaths: string[];
 }
 
-export const FAILED_PATHS_CAP = 100;
 
 const indexImage = async (mediaItem: IndexableMediaItem): Promise<IndexOutcome> => {
     const localPath = mediaItem.item;
@@ -193,7 +193,7 @@ export const indexMediaBackground = async (
                     outcome = await indexImage(mediaItem);
                 }
                 stats[outcome]++;
-                if (outcome === "failed" && stats.failedPaths.length < FAILED_PATHS_CAP) stats.failedPaths.push(mediaItem.item);
+                if (outcome === "failed") pushCapped(stats.failedPaths, mediaItem.item);
             } finally {
                 inFlight.end(mediaItem.item);
             }

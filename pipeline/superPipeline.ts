@@ -13,6 +13,7 @@ import * as mediaIndexer from "../compareImg/mediaIndexer";
 import * as duplicateFinder from "../compareImg/duplicateFinder";
 import { backfillContentMd5, type BackfillResult } from "../mediaDb/backfill";
 import type { IndexStats } from "../compareImg/mediaIndexer";
+import { pushCapped } from "../system/failedPaths";
 import { countMedia, listMediaPage } from "../mediaDb/mediaPages";
 import { forEachPage } from "../mediaDb/paging";
 import { processMediaToDetections, type DetectionFoundEvent, type DetectionPassStats, type DetectorLike as LoopDetector } from "../objectDetection/processImages";
@@ -130,7 +131,7 @@ export const runBuildIndex = async (ctx: SuperContext): Promise<number> => {
                 stats.done += page.done;
                 stats.skipped += page.skipped;
                 stats.failed += page.failed;
-                stats.failedPaths.push(...page.failedPaths.slice(0, Math.max(0, 100 - stats.failedPaths.length)));
+                for (const p of page.failedPaths) pushCapped(stats.failedPaths, p);
             },
             { pageSize: INDEX_PAGE_SIZE, shouldStop: ctx.abort },
         );
