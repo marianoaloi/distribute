@@ -11,10 +11,11 @@ import fs from "fs";
 import * as MediaStore from "../mediaDb/MediaStore";
 import * as mediaIndexer from "../compareImg/mediaIndexer";
 import * as duplicateFinder from "../compareImg/duplicateFinder";
-import { backfillContentMd5 } from "../mediaDb/backfill";
+import { backfillContentMd5, type BackfillResult } from "../mediaDb/backfill";
+import type { IndexStats } from "../compareImg/mediaIndexer";
 import { countMedia, listMediaPage } from "../mediaDb/mediaPages";
 import { forEachPage } from "../mediaDb/paging";
-import { processMediaToDetections, type DetectionFoundEvent, type DetectorLike as LoopDetector } from "../objectDetection/processImages";
+import { processMediaToDetections, type DetectionFoundEvent, type DetectionPassStats, type DetectorLike as LoopDetector } from "../objectDetection/processImages";
 import type { StageDef } from "./PipelineRun";
 
 export type StageKey = "scan" | "hash" | "index" | "detect" | "duplicates";
@@ -46,6 +47,9 @@ export interface SuperEvents {
     detection?(event: DetectionFoundEvent): void; // "detectionFound"
     detectionProgress?(p: { processed: number; total: number }): void; // "detectionProgress"
     detectionsComplete?(result: DetectResult): void; // "detectionsComplete"
+    detectionStats?(stats: DetectionPassStats): void;
+    hashStats?(result: BackfillResult): void;
+    indexStats?(stats: IndexStats): void;
     duplicates?(groups: string[][]): void; // "duplicatesFound"
 }
 
@@ -77,8 +81,9 @@ const failStage = (ctx: SuperContext, stage: StageKey, error: unknown): void => 
 export type DetectResult = "done" | "stopped" | "no-model" | "no-classes";
 
 export const runHash = async (ctx: SuperContext): Promise<void> => {
-    const ok = await backfillContentMd5((processed, total) => ctx.events.progress?.(processed, total), ctx.abort);
-    if (!ok) failStage(ctx, "hash", "content hashing aborted (see the log)");
+    const result = await backfillContentMd5((processed, total) => ctx.events.progress?.(processed, total), ctx.abort);
+    ctx.events.hashStats?.(result);
+    if (!result.ok) failStage(ctx, "hash", "content hashing aborted (see the log)");
 };
 
 // Media per indexMediaBackground call - one page of rows in memory at a time.
@@ -97,6 +102,7 @@ export const runBuildIndex = async (ctx: SuperContext): Promise<number> => {
         const total = countMedia();
         let done = 0;
         let submitted = 0;
+        const stats: IndexStats = { done: 0, skipped: 0, failed: 0 };
         events.indexProgress?.(0, total);
         events.progress?.(0, total);
         await forEachPage(
@@ -108,8 +114,9 @@ export const runBuildIndex = async (ctx: SuperContext): Promise<number> => {
                 const existing = rows.filter(m => fs.existsSync(m.localPath));
                 submitted += existing.length;
                 done += rows.length - existing.length;
+                stats.skipped += rows.length - existing.length;
                 const base = done;
-                await mediaIndexer.indexMediaBackground(existing.map(m => ({
+                const page = await mediaIndexer.indexMediaBackground(existing.map(m => ({
                     item: m.localPath,
                     mime: m.mime,
                     kind: m.kind,
@@ -120,9 +127,13 @@ export const runBuildIndex = async (ctx: SuperContext): Promise<number> => {
                     events.progress?.(base + processed, total);
                 });
                 done += existing.length;
+                stats.done += page.done;
+                stats.skipped += page.skipped;
+                stats.failed += page.failed;
             },
             { pageSize: INDEX_PAGE_SIZE, shouldStop: ctx.abort },
         );
+        events.indexStats?.(stats);
         events.indexDone?.({ success: true, count: submitted });
         return submitted;
     } catch (error) {
@@ -152,8 +163,9 @@ const detectGated = async (ctx: SuperContext): Promise<DetectResult> => {
         progress: (p: { processed: number; total: number }) => events.detectionProgress?.(p),
     };
     try {
-        await processMediaToDetections(sink, detector, classNames, ctx.shouldStop,
+        const stats = await processMediaToDetections(sink, detector, classNames, ctx.shouldStop,
             (processed, total) => events.progress?.(processed, total));
+        events.detectionStats?.(stats);
     } catch (error) {
         console.error("processMediaToDetections failed", error);
         failStage(ctx, "detect", error);

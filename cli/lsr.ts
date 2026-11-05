@@ -13,6 +13,7 @@ import { createReporter, formatDuration } from "./progress";
 import { installStopHandlers, EXIT_INTERRUPTED } from "./signals";
 import { acquireLock } from "./lock";
 import { setActiveFolder } from "../DirectorioCache";
+import * as inFlight from "../system/inFlight";
 
 export const EXIT_OK = 0;
 export const EXIT_ITEM_ERRORS = 1;
@@ -27,6 +28,39 @@ export const MAX_DUPLICATE_BUCKET = 5000;
 const RUN_HINT = "Run it with Electron's bundled Node: ELECTRON_RUN_AS_NODE=1 electron electron-dist/cli/lsr.js ...";
 
 class StageFailure extends Error { }
+
+// The files workers were busy with when an error escaped every handler -
+// most likely the one that caused it (see system/inFlight.ts).
+const inFlightNote = (): string => {
+    const files = inFlight.snapshot();
+    if (files.length === 0) return "";
+    const shown = files.slice(0, 20);
+    return `\n  files in progress: ${shown.join(", ")}${files.length > shown.length ? ` (+${files.length - shown.length} more)` : ""}`;
+};
+
+// Progress watchdog: a run whose progress has not moved for this long is
+// considered hung and exits 3. Override with LSR_STALL_MINUTES.
+export const DEFAULT_STALL_MINUTES = 30;
+export const stallTimeoutMs = (env: NodeJS.ProcessEnv): number => {
+    const minutes = Number(env.LSR_STALL_MINUTES);
+    return (Number.isFinite(minutes) && minutes > 0 ? minutes : DEFAULT_STALL_MINUTES) * 60_000;
+};
+
+// A stage that tried at least this many items and got not one of them
+// through is FAILED (exit 3, later stages skipped): that is almost always
+// system-wide (ffmpeg missing, disk full, read-only database). Fewer
+// failures - one corrupt new file on a re-run, say - stay item errors
+// (exit 1), so a single bad file can never block every future run.
+export const ALL_FAILED_MIN_ITEMS = 5;
+
+export const everyItemFailed = (succeeded: number, failed: number): boolean =>
+    failed >= ALL_FAILED_MIN_ITEMS && succeeded === 0;
+
+const allFailedError = (stage: string, failed: number): StageFailure =>
+    new StageFailure(`every one of the ${failed} items the ${stage} stage tried failed - most likely a system-wide problem (ffmpeg missing, disk full, read-only database); see the log`);
+
+// Called on every progress snapshot (see run); set up in main.
+let onActivity: () => void = () => undefined;
 
 // better-sqlite3 is compiled for Electron's ABI (package.json postinstall);
 // under a plain node it fails to load with NODE_MODULE_VERSION mismatch.
@@ -72,10 +106,10 @@ const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, 
     }
 
     const reporter = createReporter((line) => log.info(line));
-    pipelineRun.configure({ onProgress: reporter.onProgress, onDone: () => undefined });
+    pipelineRun.configure({ onProgress: (snapshot) => { onActivity(); reporter.onProgress(snapshot); }, onDone: () => undefined });
     pipelineRun.begin("LSR CLI", superPipeline.SUPER_STAGES.filter(s => options.stages.includes(s.key)));
 
-    const detections = { media: 0, failed: 0 };
+    const detections = { media: 0, failed: 0, alreadyDone: 0, withoutFrames: 0 };
     const ctx: import("../pipeline/superPipeline").SuperContext = {
         detector,
         shouldStop,
@@ -85,12 +119,14 @@ const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, 
         events: {
             progress: (processed, total) => pipelineRun.updateStage(processed, total),
             detection: (event) => { detections.media++; if (event.error) detections.failed++; },
+            detectionStats: (stats) => { detections.alreadyDone = stats.alreadyDone; detections.withoutFrames = stats.withoutFrames; },
         },
     };
 
     const stageRunners: Record<CliStage, () => Promise<string>> = {
         scan: async () => {
             const stats = await scanTree(options.root, { shouldStop, onProgress: (s) => pipelineRun.updateStage(s.media) });
+            if (stats.folders === 0 && stats.unreadableFolders > 0) throw new StageFailure(`the media folder itself cannot be read: ${options.root}`);
             return `${stats.folders} folders, ${stats.media} media` +
                 (stats.unreadableFolders ? `, ${stats.unreadableFolders} unreadable folders` : "") +
                 (stats.skippedSymlinks ? `, ${stats.skippedSymlinks} symlinks skipped` : "") +
@@ -98,24 +134,35 @@ const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, 
         },
         hash: async () => {
             const missingBefore = MediaStore.countMediaMissingContentMd5();
+            let hashStats = { hashed: 0, failed: 0, missing: 0 };
+            ctx.events.hashStats = (r) => { hashStats = r; };
             await superPipeline.runHash(ctx);
-            return `${missingBefore - MediaStore.countMediaMissingContentMd5()} of ${missingBefore} unhashed files hashed`;
+            if (everyItemFailed(hashStats.hashed, hashStats.failed)) throw allFailedError("hash", hashStats.failed);
+            return `${missingBefore - MediaStore.countMediaMissingContentMd5()} of ${missingBefore} unhashed files hashed` +
+                (hashStats.failed ? `, ${hashStats.failed} unreadable` : "") + (hashStats.missing ? `, ${hashStats.missing} no longer on disk` : "");
         },
         index: async () => {
             let failure: string | undefined;
             ctx.events.indexDone = (result) => { if (!result.success) failure = result.error; };
+            let indexStats = { done: 0, failed: 0 };
+            ctx.events.indexStats = (s) => { indexStats = s; };
             const count = await superPipeline.runBuildIndex(ctx);
             if (failure !== undefined) throw new StageFailure(failure);
-            return `${count} media checked`;
+            if (everyItemFailed(indexStats.done, indexStats.failed)) throw allFailedError("index", indexStats.failed);
+            return `${count} media checked` + (indexStats.failed ? `, ${indexStats.failed} failed` : "");
         },
         detect: async () => {
             const result = await superPipeline.runDetect(ctx);
             if (result === "no-model" || result === "no-classes") throw new StageFailure(result);
-            return `${detections.media} media processed, ${detections.failed} failed${result === "stopped" ? " (stopped)" : ""}`;
+            // Video/GIF media without frames still emit an (empty) result.
+            const processedMedia = detections.media - detections.withoutFrames;
+            if (everyItemFailed(processedMedia - detections.failed, detections.failed)) throw allFailedError("detect", detections.failed);
+            return `${processedMedia} media processed, ${detections.failed} failed, ${detections.alreadyDone} already detected` +
+                (detections.withoutFrames ? `, ${detections.withoutFrames} videos/GIFs without frames skipped` : "");
         },
         duplicates: async () => {
             const groups = await superPipeline.runDuplicates(ctx);
-            if (shouldStop()) return "stopped before the end - the previous duplicate result is kept";
+            if (shouldStop()) return "the previous duplicate result is kept";
             return `${groups.length} duplicate groups`;
         },
     };
@@ -145,13 +192,14 @@ const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, 
     return { code, summaries };
 };
 
-const finish = async (log: RunLog, code: number): Promise<never> => {
+const finish = async (log: RunLog, code: number, beforeExit?: () => void): Promise<never> => {
     try {
         const HashStore = await import("../compareImg/HashStore");
         HashStore.closeConnection();
     } catch { /* never opened */ }
     await log.close();
     // better-sqlite3 handles or ffmpeg children could keep the loop alive.
+    beforeExit?.();
     process.exit(code);
 };
 
@@ -191,21 +239,35 @@ export const main = async (argv: string[]): Promise<void> => {
             lock.release();
         },
     );
-    // An error thrown outside every awaited stage (a worker callback, an
-    // ffmpeg child handler) can leave a stage promise pending forever - so
-    // never limp on: log it, release the lock and exit 3. Everything already
-    // written is resumable.
+    // An uncaught exception can leave a stage promise pending forever: log
+    // it and exit 3 (everything already written is resumable). The lock is
+    // released only right before the exit, while nothing writes any more.
     let fatalExiting = false;
     const fatal = (what: string, reason: unknown): void => {
-        log.writeSync(`${what}: ${reason instanceof Error ? reason.stack || reason.message : String(reason)} - exiting (exit code ${EXIT_STAGE_FAILED})`);
+        log.writeSync(`${what}: ${reason instanceof Error ? reason.stack || reason.message : String(reason)}${inFlightNote()} - exiting (exit code ${EXIT_STAGE_FAILED})`);
         if (fatalExiting) return;
         fatalExiting = true;
-        lock.release();
-        setTimeout(() => process.exit(EXIT_STAGE_FAILED), 5000).unref();
-        finish(log, EXIT_STAGE_FAILED).catch(() => process.exit(EXIT_STAGE_FAILED));
+        setTimeout(() => { lock.release(); process.exit(EXIT_STAGE_FAILED); }, 5000).unref();
+        finish(log, EXIT_STAGE_FAILED, () => lock.release()).catch(() => { lock.release(); process.exit(EXIT_STAGE_FAILED); });
     };
     process.on("uncaughtException", (error) => fatal("uncaught exception", error));
-    process.on("unhandledRejection", (reason) => fatal("unhandled rejection", reason));
+    // A stray rejection (one file's callback failing outside its awaited
+    // promise) is an item error, not a reason to stop: dying on it would
+    // turn one poison file into a crash on every re-run. A run that really
+    // hangs is caught by the stall watchdog below.
+    process.on("unhandledRejection", (reason) => console.error(`unhandled rejection: ${reason instanceof Error ? reason.stack : String(reason)}${inFlightNote()}`));
+    const stallMs = stallTimeoutMs(process.env);
+    let lastActivity = Date.now();
+    onActivity = () => { lastActivity = Date.now(); };
+    // Deliberately NOT unref'd: it also keeps the event loop alive while a
+    // stage awaits a promise that will never settle, so such a hang ends in
+    // the watchdog's exit 3 instead of a silent exit 0 with the lock left.
+    const watchdog = setInterval(() => {
+        if (Date.now() - lastActivity > stallMs) fatal("stalled", new Error(`no progress for ${formatDuration(Date.now() - lastActivity)} (LSR_STALL_MINUTES=${stallMs / 60000})`));
+    }, Math.min(60_000, stallMs));
+    // Belt and braces: the loop draining before main() reaches its own exit
+    // means some stage promise can never settle.
+    process.on("beforeExit", () => fatal("hung", new Error("the event loop drained while a stage was still pending")));
 
     const startedAt = Date.now();
     log.info(`LSR run on ${options.root} - stages: ${options.stages.join(", ")} - log: ${log.path}`);
@@ -227,6 +289,7 @@ export const main = async (argv: string[]): Promise<void> => {
     if (code === EXIT_INTERRUPTED) log.info("  interrupted - re-run the same command to continue");
     log.info(`  exit code ${code}; log: ${log.path}`);
 
+    clearInterval(watchdog);
     stop.dispose();
     lock.release();
     await finish(log, code);

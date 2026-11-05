@@ -26,6 +26,24 @@ export const multiFrameBuckets = (): BucketSize[] => HashStore.getDb()
     `)
     .all() as BucketSize[];
 
+export interface ExactKeyRow {
+    mediaId: string;
+    contentMd5: string | null;
+    baseMd5: string | null;
+}
+
+// The same rows without the pixel buffer or path - all the exact-match-only
+// pass (an over-cap bucket) needs, at a fraction of the memory.
+export const exactKeyRowsForBucket = (key: string | null): ExactKeyRow[] => HashStore.getDb()
+    .prepare(`
+        SELECT media_item.mediaId AS mediaId, media.contentMd5 AS contentMd5, items.baseMd5 AS baseMd5
+        FROM media_item
+        JOIN items ON items.id = media_item.itemId
+        JOIN media ON media.id = media_item.mediaId
+        WHERE items.baseGrey IS NOT NULL AND ${key === null ? "items.baseMd5Blur IS NULL" : "items.baseMd5Blur = ?"}
+    `)
+    .all(...(key === null ? [] : [key])) as ExactKeyRow[];
+
 export const baseGreyRowsForBucket = (key: string | null): HashStore.BaseGreyRow[] => HashStore.getDb()
     .prepare(`
         SELECT media_item.mediaId AS mediaId, items.baseGrey AS baseGrey, media.localPath AS localPath,

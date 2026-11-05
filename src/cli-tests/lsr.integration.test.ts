@@ -106,7 +106,12 @@ const snapshotTreeNoSpecial = (root: string): Record<string, string> => {
 
 const logsOf = (root: string): string[] => {
     const dir = path.join(root, "tmp", "logs")
-    return fs.existsSync(dir) ? fs.readdirSync(dir).filter(f => /^lsr-\d{8}-\d{6}(-\d+)?\.log$/.test(f)).sort() : []
+    // Oldest first: by stamp, then by the -N suffix (a bare name is run 1).
+    const key = (f: string): [string, number] => { const m = /^lsr-(\d{8}-\d{6})(?:-(\d+))?\.log$/.exec(f)!; return [m[1], Number(m[2] ?? 1)] }
+    return fs.existsSync(dir)
+        ? fs.readdirSync(dir).filter(f => /^lsr-\d{8}-\d{6}(-\d+)?\.log$/.test(f))
+            .sort((a, b) => { const [sa, na] = key(a), [sb, nb] = key(b); return sa < sb ? -1 : sa > sb ? 1 : na - nb })
+        : []
 }
 const lockOf = (root: string): string => path.join(root, "tmp", "lsr.lock")
 
@@ -554,7 +559,8 @@ d("lsr CLI (Electron integration)", () => {
             fs.writeFileSync(m, JSON.stringify({ onnx: "x.onnx", classes: "x" }))
             const r = lsr(["--root", n, "--maloi", m, "--stages", "scan,detect"], { NODE_ENV: "test", LSR_FAKE_DETECTOR: "1" })
             expect(r.code).toBe(0)
-            expect(r.stderr).toMatch(/1 video\/GIF media have no extracted frames yet .* run the index stage first/)
+            expect(r.stderr).toMatch(/WARN .*1 video\/GIF media have no extracted frames/)
+            expect(r.stdout).toMatch(/stage detect done in \S+: 1 media processed, 0 failed, 0 already detected, 1 videos\/GIFs without frames skipped/)
             const items = query(n, "select distinct itemId from item_detection").map(x => x.itemId)
             const imageId = query(n, "select id from media where filename = 'a.png'")[0].id
             expect(items).toEqual([imageId])
@@ -642,24 +648,203 @@ d("lsr CLI (Electron integration)", () => {
         })
     })
 
-    describe("stage failure (exit 3)", () => {
-        it("an index stage that cannot write items -> FAILED, exit 3, later stages not run, lock released", () => {
+    describe("stage failure (exit 3) vs item failures (exit 1)", () => {
+        it("index failing on every item is item-level: exit 1, errors counted, later stages still run", () => {
             const r7 = path.join(base, "failidx")
             fs.mkdirSync(r7)
             fs.copyFileSync(path.join(root, "a.png"), path.join(r7, "a.png"))
             fs.copyFileSync(path.join(root, "b.png"), path.join(r7, "b.png"))
-            const prep = lsr(["--root", r7, "--stages", "scan,hash"])
-            expect(prep.code).toBe(0)
+            expect(lsr(["--root", r7, "--stages", "scan,hash"]).code).toBe(0)
             execSql(r7, "CREATE TRIGGER lsr_test_block BEFORE INSERT ON items BEGIN SELECT RAISE(ABORT, 'lsr test: items unwritable'); END;")
-            const before = snapshotTree(r7)
             const r = lsr(["--root", r7, "--stages", "index,duplicates"])
-            expect(r.code).toBe(3)
-            expect(r.stderr).toMatch(/stage index failed/)
-            expect(r.stdout + r.stderr).toMatch(/index\s+\S+\s+FAILED/)
-            expect(stagesDone(r.stdout)).toEqual([])
-            expect(r.stdout).not.toMatch(/\[2\/2 duplicates/)
+            expect(r.code).toBe(1)
+            expect(r.stderr).toMatch(/failed to index image .*a\.png: lsr test: items unwritable/)
+            expect(r.stdout).toMatch(/stage index done in \S+: 2 media checked, 2 failed; 2 errors logged/)
+            expect(stagesDone(r.stdout)).toEqual(["index", "duplicates"])
             expect(fs.existsSync(lockOf(r7))).toBe(false)
-            expect(snapshotTree(r7)).toEqual(before)
+        })
+        it("duplicates unable to persist its groups -> stage FAILED, exit 3, lock released, media untouched", () => {
+            const r8 = path.join(base, "faildup")
+            fs.mkdirSync(path.join(r8, "s"), { recursive: true })
+            fs.copyFileSync(path.join(root, "a.png"), path.join(r8, "a.png"))
+            fs.copyFileSync(path.join(root, "a.png"), path.join(r8, "s", "a-copy.png"))
+            expect(lsr(["--root", r8, "--stages", "scan,hash,index"]).code).toBe(0)
+            execSql(r8, "CREATE TRIGGER lsr_test_block BEFORE INSERT ON items_duplicated BEGIN SELECT RAISE(ABORT, 'lsr test: groups unwritable'); END;")
+            const before = snapshotTree(r8)
+            const r = lsr(["--root", r8, "--stages", "duplicates"])
+            expect(r.code).toBe(3)
+            expect(r.stderr).toMatch(/stage duplicates failed.*lsr test: groups unwritable/s)
+            expect(r.stdout + r.stderr).toMatch(/duplicates\s+\S+\s+FAILED/)
+            expect(stagesDone(r.stdout)).toEqual([])
+            expect(fs.existsSync(lockOf(r8))).toBe(false)
+            const log = fs.readFileSync(path.join(r8, "tmp", "logs", logsOf(r8).pop()!), "utf8")
+            expect(log).toMatch(/exit code 3/)
+            expect(snapshotTree(r8)).toEqual(before)
+        })
+        it("a stage failure stops the chain: stages after it do not run", () => {
+            const r8 = path.join(base, "faildup")
+            const r = lsr(["--root", r8, "--stages", "duplicates"].concat([]))
+            expect(r.code).toBe(3)
+            const r2 = lsr(["--root", r8, "--stages", "scan,hash,index,duplicates"])
+            expect(r2.code).toBe(3)
+            expect(stagesDone(r2.stdout)).toEqual(["scan", "hash", "index"])
+        })
+    })
+
+
+    // Follow-up to 22075c3: done/undone is decided per MEDIA; detect indexes unindexed media itself.
+    describe("detect: per-media redo and indexing inside detect", () => {
+        const FAKE = { NODE_ENV: "test", LSR_FAKE_DETECTOR: "1" }
+        let m: string
+        beforeAll(() => {
+            m = path.join(base, "permedia.maloi")
+            fs.writeFileSync(m, JSON.stringify({ onnx: "x.onnx", classes: "x" }))
+        })
+        it("one undone frame re-runs inference for that frame only; the rest are replayed untouched", async () => {
+            const r9 = path.join(base, "permedia")
+            makeFixture(r9)
+            const first = lsr(["--root", r9, "--maloi", m, "--stages", "scan,hash,index,detect"], FAKE)
+            expect(first.code).toBe(0)
+            const vid = query(r9, "select id from media where filename = 'v.mp4'")[0].id
+            const frames = () => query(r9, `select itemId, detectedAt from item_detection where itemId like '${vid}_%' order by itemId`)
+            const before = frames()
+            expect(before.length).toBeGreaterThanOrEqual(2)
+            const target = before.find(x => x.itemId.endsWith("_pct10")) ?? before[0]
+            const others = () => frames().filter(x => x.itemId !== target.itemId)
+            const othersBefore = others()
+            const imagesBefore = query(r9, `select itemId, detectedAt from item_detection where itemId not like '${vid}_%' order by itemId`)
+            await new Promise(r => setTimeout(r, 1100)) // detectedAt may be second-resolution
+            execSql(r9, `DELETE FROM item_detection_state WHERE itemId = '${target.itemId}'`)
+            const r = lsr(["--root", r9, "--maloi", m, "--stages", "detect"], FAKE)
+            expect(r.code).toBe(0)
+            expect(r.stdout).toMatch(/stage detect done in \S+: 1 media processed, 0 failed, 4 already detected/)
+            const after = frames()
+            expect(after.find(x => x.itemId === target.itemId).detectedAt).toBeGreaterThan(target.detectedAt)
+            expect(others()).toEqual(othersBefore)
+            expect(query(r9, `select itemId, detectedAt from item_detection where itemId not like '${vid}_%' order by itemId`)).toEqual(imagesBefore)
+            expect(query(r9, `select count(*) n from item_detection_state where itemId = '${target.itemId}'`)[0].n).toBe(1)
+            const again = lsr(["--root", r9, "--maloi", m, "--stages", "detect"], FAKE)
+            expect(again.stdout).toMatch(/: 0 media processed, 0 failed, 5 already detected/)
+        })
+        it("scan,hash,detect without the index stage detects videos in the same run", () => {
+            const r10 = path.join(base, "noindexstage")
+            makeFixture(r10)
+            const r = lsr(["--root", r10, "--maloi", m, "--stages", "scan,hash,detect"], FAKE)
+            expect(r.code).toBe(0)
+            expect(r.stdout).toMatch(/stage detect done in \S+: 5 media processed, 0 failed, 0 already detected$/m)
+            expect(r.stderr).not.toMatch(/no extracted frames/)
+            const vid = query(r10, "select id from media where filename = 'v.mp4'")[0].id
+            const items = query(r10, "select distinct itemId from item_detection_state").map(x => x.itemId)
+            expect(items.filter(i => i.startsWith(`${vid}_`)).length).toBeGreaterThanOrEqual(2)
+            expect(items).toEqual(expect.arrayContaining(query(r10, "select distinct itemId from media_item").map(x => x.itemId)))
+            const again = lsr(["--root", r10, "--maloi", m, "--stages", "scan,hash,detect"], FAKE)
+            expect(again.stdout).toMatch(/: 0 media processed, 0 failed, 5 already detected$/m)
+        })
+    })
+
+    describe("stall watchdog", () => {
+        it("no progress for LSR_STALL_MINUTES -> 'stalled', exit 3, lock released", () => {
+            // a.png is hashed, then swapped for a FIFO: index blocks reading it
+            // (in the threadpool, so timers still run) and never progresses.
+            const rs = path.join(base, "stall")
+            fs.mkdirSync(rs)
+            fs.copyFileSync(path.join(root, "a.png"), path.join(rs, "a.png"))
+            expect(lsr(["--root", rs, "--stages", "scan,hash"]).code).toBe(0)
+            fs.unlinkSync(path.join(rs, "a.png"))
+            expect(spawnSync("mkfifo", [path.join(rs, "a.png")]).status).toBe(0)
+            const started = Date.now()
+            const r = spawnSync(ELECTRON, [CLI, "--root", rs, "--stages", "index"], { env: { ...env, LSR_STALL_MINUTES: "0.02" }, encoding: "utf8", timeout: 60_000 })
+            expect(r.signal).toBeNull()
+            expect(r.status).toBe(3)
+            expect(Date.now() - started).toBeLessThan(30_000)
+            expect(r.stderr).toMatch(/stalled: .*no progress for \S+ \(LSR_STALL_MINUTES=0\.02\)/)
+            expect(r.stderr).toMatch(/files in progress: .*a\.png/)
+            expect(fs.existsSync(lockOf(rs))).toBe(false)
+            const log = fs.readFileSync(path.join(rs, "tmp", "logs", logsOf(rs).pop()!), "utf8")
+            expect(log).toMatch(/stalled/)
+            expect(log).toMatch(/exiting \(exit code 3\)/)
+        })
+        it("a healthy run with a short stall limit is not killed", () => {
+            const r = lsr(["--root", root, "--stages", "scan,hash,index,duplicates"], { LSR_STALL_MINUTES: "0.05" })
+            expect(r.code).toBe(0)
+            expect(r.stderr).not.toMatch(/stalled/)
+        })
+    })
+
+
+    // Fake-detector poison hooks (cli/fakeDetector.ts): escaped errors name the in-flight file.
+    describe("errors that escape every handler", () => {
+        const FAKE = { NODE_ENV: "test", LSR_FAKE_DETECTOR: "1" }
+        let m: string
+        const poisonRoot = (name: string, poison: string): string => {
+            const r = path.join(base, name)
+            fs.mkdirSync(r)
+            fs.copyFileSync(path.join(root, "a.png"), path.join(r, "ok.png"))
+            fs.copyFileSync(path.join(root, "b.png"), path.join(r, `x${poison}.png`))
+            return r
+        }
+        const lastLog = (r: string) => fs.readFileSync(path.join(r, "tmp", "logs", logsOf(r).pop()!), "utf8")
+        beforeAll(() => {
+            m = path.join(base, "poison.maloi")
+            fs.writeFileSync(m, JSON.stringify({ onnx: "x.onnx", classes: "x" }))
+        })
+
+        it("poison hooks are inert without NODE_ENV=test (real detector required -> exit 2)", () => {
+            const r = poisonRoot("poison-inert", "__lsr_throw__")
+            const out = lsr(["--root", r, "--maloi", m, "--stages", "scan,hash,detect"], { NODE_ENV: "production", LSR_FAKE_DETECTOR: "1" })
+            expect(out.code).toBe(2)
+            expect(out.stderr).not.toMatch(/uncaught exception/)
+        })
+        it("unhandled rejection: logged with the file in progress, run continues, exit 1", () => {
+            const r = poisonRoot("poison-reject", "__lsr_reject__")
+            const before = snapshotTree(r)
+            const out = lsr(["--root", r, "--maloi", m, "--stages", "scan,hash,detect,duplicates"], FAKE)
+            expect(out.code).toBe(1)
+            expect(out.stderr).toMatch(/unhandled rejection: .*x__lsr_reject__\.png/)
+            const log = lastLog(r)
+            expect(log).toMatch(/files in progress: .*x__lsr_reject__\.png/)
+            expect(out.stdout).toMatch(/stage detect done in \S+: 2 media processed, 0 failed.*1 errors logged/)
+            expect(stagesDone(out.stdout)).toEqual(["scan", "hash", "detect", "duplicates"])
+            expect(out.stdout).toMatch(/exit code 1/)
+            expect(fs.existsSync(lockOf(r))).toBe(false)
+            expect(snapshotTree(r)).toEqual(before)
+        })
+        it("uncaught exception: fatal line names the file, exit 3, no graceful summary, lock released", () => {
+            const r = poisonRoot("poison-throw", "__lsr_throw__")
+            const before = snapshotTree(r)
+            const out = lsr(["--root", r, "--maloi", m, "--stages", "scan,hash,detect,duplicates"], FAKE)
+            expect(out.code).toBe(3)
+            expect(out.stderr).toMatch(/uncaught exception: .*x__lsr_throw__\.png/)
+            expect(out.stderr).toMatch(/files in progress: .*x__lsr_throw__\.png.* - exiting \(exit code 3\)/s)
+            expect(out.stdout).not.toMatch(/==== LSR summary ====/)
+            expect(out.stdout).not.toMatch(/\[\d\/4 duplicates/)
+            expect(fs.existsSync(lockOf(r))).toBe(false)
+            const lines = lastLog(r).trim().split("\n")
+            expect(lines[lines.length - 1]).toMatch(/exiting \(exit code 3\)/)
+            expect(snapshotTree(r)).toEqual(before)
+        })
+        it("a promise that never settles: watchdog -> 'stalled', file named, exit 3, lock released", () => {
+            const r = poisonRoot("poison-hang", "__lsr_hang__")
+            const started = Date.now()
+            const out = spawnSync(ELECTRON, [CLI, "--root", r, "--maloi", m, "--stages", "scan,hash,detect"],
+                { env: { ...env, ...FAKE, LSR_STALL_MINUTES: "0.02" }, encoding: "utf8", timeout: 60_000 })
+            expect(out.signal).toBeNull()
+            expect(out.status).toBe(3)
+            expect(Date.now() - started).toBeLessThan(30_000)
+            expect(out.stderr).toMatch(/stalled: .*no progress for \S+ \(LSR_STALL_MINUTES=0\.02\)/)
+            expect(out.stderr).toMatch(/files in progress: .*x__lsr_hang__\.png/)
+            expect(fs.existsSync(lockOf(r))).toBe(false)
+            expect(lastLog(r)).toMatch(/stalled/)
+        })
+        it("a normal run exits promptly despite the ref'd watchdog interval (default 30m limit)", () => {
+            const r = poisonRoot("poison-none", "-clean")
+            const env2 = { ...FAKE, LSR_STALL_MINUTES: "" }
+            const started = Date.now()
+            const out = lsr(["--root", r, "--maloi", m], env2)
+            expect(out.signal).toBeNull()
+            expect(out.code).toBe(0)
+            expect(Date.now() - started).toBeLessThan(15_000)
+            expect(out.stdout).toMatch(/==== LSR summary ====/)
         })
     })
 
@@ -712,23 +897,30 @@ d("lsr CLI (Electron integration)", () => {
         })
 
         it("a second signal exits at once with 130, releases the lock, and logs a last sync line", async () => {
-            const run = lsrAsync(["--root", big, "--stages", "scan,hash,index"])
-            await waitFor(() => /\[1\/3 scan\]/.test(run.output()))
+            // Distinct frames, scanned+hashed but not indexed: an index page of 500 takes
+            // seconds, so the second signal reliably lands while the first stop is pending.
+            const slow = path.join(base, "slowidx")
+            fs.mkdirSync(slow)
+            ffmpeg("-f", "lavfi", "-i", "testsrc2=s=64x48:r=1:d=600", path.join(slow, "f%04d.png"))
+            expect(lsr(["--root", slow, "--stages", "scan,hash"]).code).toBe(0)
+            const slowPristine = snapshotTree(slow)
+            const run = lsrAsync(["--root", slow, "--stages", "index"])
+            await waitFor(() => /\[1\/1 index/.test(run.output()))
             run.child.kill("SIGINT")
             await waitFor(() => /SIGINT received/.test(run.output()))
             run.child.kill("SIGINT")
             const r = await run.done
             expect(r.code).toBe(130)
             expect(r.stderr).toMatch(/second SIGINT: exiting immediately \(exit code 130\)/)
-            // the forced exit releases the lock and writes its last log line synchronously
-            expect(fs.existsSync(lockOf(big))).toBe(false)
-            const newest = logsOf(big).map(f => path.join(big, "tmp", "logs", f)).sort((a, b) => fs.statSync(a).mtimeMs - fs.statSync(b).mtimeMs).pop()!
+            expect(r.stdout).not.toMatch(/==== LSR summary ====/) // forced: no graceful summary
+            expect(fs.existsSync(lockOf(slow))).toBe(false)
+            const newest = path.join(slow, "tmp", "logs", logsOf(slow).pop()!)
             const lines = fs.readFileSync(newest, "utf8").trim().split("\n")
             expect(lines[lines.length - 1]).toMatch(/second SIGINT/)
-            const again = lsr(["--root", big, "--stages", "scan"])
+            const again = lsr(["--root", slow, "--stages", "index"])
             expect(again.code).toBe(0)
-            expect(fs.existsSync(lockOf(big))).toBe(false)
-            expect(snapshotTree(big)).toEqual(bigPristine)
+            expect(again.stdout).toMatch(/600 media checked$/m)
+            expect(snapshotTree(slow)).toEqual(slowPristine)
         })
     })
 })

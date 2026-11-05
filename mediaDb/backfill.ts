@@ -1,6 +1,8 @@
+import fs from "fs";
 import { fileMd5, FILE_HASH_CONCURRENCY } from "../hashing/fileHash";
 import * as MediaStore from "./MediaStore";
 import { inTransaction } from "./mediaPages";
+import * as inFlight from "../system/inFlight";
 
 const BATCH_SIZE = 200;
 
@@ -14,9 +16,20 @@ const BATCH_SIZE = 200;
 // instead of stalling on rows that fail to hash.
 // shouldStop is polled between batches: the batch in flight finishes (and is
 // written) first, and the next pass resumes from the rows still NULL.
-// Resolves false when the pass itself aborted (a DB failure, not a per-file
-// one) - fire-and-forget callers ignore it, the LSR "hash" stage does not.
-export const backfillContentMd5 = async (onProgress?: (attempted: number, total: number) => void, shouldStop?: () => boolean): Promise<boolean> => {
+// Resolves the pass's outcome counts; ok is false when the pass itself
+// aborted (a DB failure, not a per-file one). Fire-and-forget callers ignore
+// it, the LSR "hash" stage does not.
+export interface BackfillResult {
+    ok: boolean;
+    hashed: number;
+    // The file is there but could not be read/hashed.
+    failed: number;
+    // The file is gone (moved/deleted since it was scanned) - not a failure.
+    missing: number;
+}
+
+export const backfillContentMd5 = async (onProgress?: (attempted: number, total: number) => void, shouldStop?: () => boolean): Promise<BackfillResult> => {
+    const result: BackfillResult = { ok: true, hashed: 0, failed: 0, missing: 0 };
     try {
         MediaStore.ensureReady();
         const total = MediaStore.countMediaMissingContentMd5();
@@ -40,10 +53,12 @@ export const backfillContentMd5 = async (onProgress?: (attempted: number, total:
                 while (cursor < batch.length) {
                     const row = batch[cursor++];
                     try {
-                        const contentMd5 = await fileMd5(row.localPath);
+                        const contentMd5 = await inFlight.track(row.localPath, () => fileMd5(row.localPath));
                         if (contentMd5) hashed.push([row.id, contentMd5]);
-                        else console.log("backfillContentMd5: skipping", row.localPath, "- unreadable or no longer exists");
+                        else if (fs.existsSync(row.localPath)) { result.failed++; console.log("backfillContentMd5: skipping", row.localPath, "- unreadable"); }
+                        else { result.missing++; console.log("backfillContentMd5: skipping", row.localPath, "- no longer exists"); }
                     } catch (error) {
+                        result.failed++;
                         console.error("backfillContentMd5 failed for", row.localPath, "-", (error as Error).message);
                     } finally {
                         attempted++;
@@ -55,17 +70,18 @@ export const backfillContentMd5 = async (onProgress?: (attempted: number, total:
             await Promise.all(Array.from({ length: workerCount }, runWorker));
             try {
                 inTransaction(() => { for (const [id, md5] of hashed) MediaStore.setContentMd5(id, md5); });
+                result.hashed += hashed.length;
             } catch {
                 // One bad write rolled the batch back: redo it row by row so
                 // only that row is lost (it stays NULL for the next pass).
                 for (const [id, md5] of hashed) {
-                    try { MediaStore.setContentMd5(id, md5); } catch (error) { console.error("backfillContentMd5: cannot store hash for", id, "-", (error as Error).message); }
+                    try { MediaStore.setContentMd5(id, md5); result.hashed++; } catch (error) { result.failed++; console.error("backfillContentMd5: cannot store hash for", id, "-", (error as Error).message); }
                 }
             }
         }
     } catch (error) {
         console.error("backfillContentMd5 aborted:", (error as Error).message);
-        return false;
+        result.ok = false;
     }
-    return true;
+    return result;
 };

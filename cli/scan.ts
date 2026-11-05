@@ -39,8 +39,10 @@ export interface ScanOptions {
 
 export const scanTree = async (root: string, options: ScanOptions): Promise<ScanStats> => {
     const stats: ScanStats = { folders: 0, media: 0, skippedSymlinks: 0, skippedSpecial: 0, unreadableFolders: 0, stopped: false };
-    const countItems = (items: StreamMediaItem[]): void => { stats.media += items.length; };
-    const countOne = (): void => { stats.media += 1; };
+    // Reported per item batch, not only per folder: one folder of thousands
+    // of videos can take long, and the run's stall watchdog listens here.
+    const countItems = (items: StreamMediaItem[]): void => { stats.media += items.length; options.onProgress?.(stats); };
+    const countOne = (): void => { stats.media += 1; options.onProgress?.(stats); };
 
     const processChunk = async (dir: string, files: string[]): Promise<void> => {
         if (files.length === 0) return;

@@ -31,13 +31,10 @@ export const listMediaPage = (afterRowid: number, limit: number): PagedMediaRow[
         .prepare(`SELECT ${MEDIA_COLUMNS} FROM media WHERE rowid > ? ORDER BY rowid LIMIT ?`)
         .all(afterRowid, limit) as PagedMediaRow[];
 
-// The rows of findAllItemsExists for one page of media: every media in the
-// page with each of its linked items (a media with no item yet comes back
-// once with itemId null). Paged by MEDIA rowid, so a video's frame items are
-// never split across two pages.
-export const listItemsPage = (afterRowid: number, limit: number): { refs: DetectMediaRef[]; lastRowid: number; mediaCount: number } => {
-    const medias = listMediaPage(afterRowid, limit);
-    if (medias.length === 0) return { refs: [], lastRowid: afterRowid, mediaCount: 0 };
+// The rows of findAllItemsExists for the given media: each media with each of
+// its linked items (a media with no item yet comes back once, itemId null).
+export const itemRefsForMedia = (medias: readonly PagedMediaRow[]): DetectMediaRef[] => {
+    if (medias.length === 0) return [];
     const db = HashStore.getDb();
     const itemsByMedia = new Map<string, Array<{ itemId: string; framePosition: string | null }>>();
     for (let i = 0; i < medias.length; i += ID_CHUNK) {
@@ -67,5 +64,13 @@ export const listItemsPage = (afterRowid: number, limit: number): { refs: Detect
             } as DetectMediaRef);
         }
     }
-    return { refs, lastRowid: medias[medias.length - 1].rowid, mediaCount: medias.length };
+    return refs;
+};
+
+// itemRefsForMedia for one keyset page of media - paged by MEDIA rowid, so
+// a video's frame items are never split across two pages.
+export const listItemsPage = (afterRowid: number, limit: number): { refs: DetectMediaRef[]; lastRowid: number; mediaCount: number } => {
+    const medias = listMediaPage(afterRowid, limit);
+    if (medias.length === 0) return { refs: [], lastRowid: afterRowid, mediaCount: 0 };
+    return { refs: itemRefsForMedia(medias), lastRowid: medias[medias.length - 1].rowid, mediaCount: medias.length };
 };

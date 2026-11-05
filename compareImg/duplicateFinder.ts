@@ -1,5 +1,5 @@
 import * as compareImgStore from "./HashStore";
-import { baseGreyRowsForBucket, multiFrameBuckets } from "./bucketQueries";
+import { baseGreyRowsForBucket, exactKeyRowsForBucket, multiFrameBuckets } from "./bucketQueries";
 import { clustersOf, compareBucket, compareBucketExactOnly, makeDisjointSet, mergeGroups } from "./duplicateMath";
 
 // The pure helpers live in duplicateMath.ts (unit-testable without SQLite);
@@ -115,13 +115,13 @@ export const findIndexDuplicatesBucketed = async (options: BucketedScanOptions =
     };
     for (const { key, n } of buckets) {
         if (shouldStop?.()) return { groups: [], stopped: true, cappedBuckets };
-        const bucket = baseGreyRowsForBucket(key);
         if (maxBucket !== undefined && n > maxBucket) {
             cappedBuckets++;
             console.warn(`compareImg: baseMd5Blur group ${key ?? "(no key)"} has ${n} frames (> ${maxBucket}) - exact matches only, near-duplicates in it are not compared`);
-            compareBucketExactOnly(bucket, markMatch, onRow);
-        } else {
-            compareBucket(bucket, markMatch, onRow);
+            // No pixel buffers needed (or loaded) for the exact pass.
+            compareBucketExactOnly(exactKeyRowsForBucket(key), markMatch, onRow);
+        } else if (!compareBucket(baseGreyRowsForBucket(key), markMatch, onRow, shouldStop)) {
+            return { groups: [], stopped: true, cappedBuckets };
         }
         // The buckets are compared synchronously; yield between them so
         // signals (SIGINT) and IPC are still serviced on a long scan.

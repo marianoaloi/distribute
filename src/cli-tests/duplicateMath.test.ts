@@ -1,7 +1,7 @@
 // compareImg/duplicateMath.ts - pure pieces of the bucketed duplicate finder.
 import {
     clustersOf, ComparableRow, compareBucket, compareBucketExactOnly, makeDisjointSet,
-    meanAbsDiff, MEAN_DIFF_THRESHOLD, mergeGroups,
+    meanAbsDiff, MEAN_DIFF_THRESHOLD, mergeGroups, STOP_POLL_ROWS,
 } from "../../compareImg/duplicateMath"
 
 const grey = (...v: number[]) => Uint8Array.from(v)
@@ -167,5 +167,56 @@ describe("clustersOf", () => {
         const ds = makeDisjointSet()
         ds.union("x", "y")
         expect(clustersOf(new Set(["x", "y"]), ds.find).map(x => x.sort())).toEqual([["x", "y"]])
+    })
+})
+
+describe("compareBucket stop polling", () => {
+    // n rows of distinct media, all identical pixels: every pair matches.
+    const same = (n: number) => Array.from({ length: n }, (_, i) => row(`m${i}`, grey(7, 7)))
+
+    it("polls every STOP_POLL_ROWS rows (256)", () => {
+        expect(STOP_POLL_ROWS).toBe(256)
+        const shouldStop = jest.fn(() => false)
+        expect(compareBucket(same(1000), () => undefined, undefined, shouldStop)).toBe(true)
+        // at rows 256, 512, 768 (never at row 0)
+        expect(shouldStop).toHaveBeenCalledTimes(3)
+    })
+    it("returns true and never polls for a bucket of at most 256 rows", () => {
+        const shouldStop = jest.fn(() => true)
+        expect(compareBucket(same(256), () => undefined, undefined, shouldStop)).toBe(true)
+        expect(shouldStop).not.toHaveBeenCalled()
+    })
+    it("returns false when stopped, after finishing exactly STOP_POLL_ROWS rows", () => {
+        const onRow = jest.fn()
+        let matches = 0
+        expect(compareBucket(same(600), () => { matches++ }, onRow, () => true)).toBe(false)
+        expect(onRow).toHaveBeenCalledTimes(STOP_POLL_ROWS)
+        // rows 0..255 each compared against every later row
+        let expected = 0
+        for (let i = 0; i < STOP_POLL_ROWS; i++) expected += 600 - 1 - i
+        expect(matches).toBe(expected)
+    })
+    it("a stop raised mid-way is seen at the next poll", () => {
+        let rows = 0
+        const r = compareBucket(same(1000), () => undefined, () => { rows++ }, () => rows >= 300)
+        expect(r).toBe(false)
+        expect(rows).toBe(512)
+    })
+    it("without shouldStop it completes and returns true", () => {
+        expect(compareBucket(same(300), () => undefined)).toBe(true)
+    })
+})
+
+describe("compareBucketExactOnly on key-only rows", () => {
+    it("works on rows without baseGrey (capped buckets load only the md5 keys)", () => {
+        const keyRows = [
+            { mediaId: "a", contentMd5: "c", baseMd5: null },
+            { mediaId: "b", contentMd5: "c", baseMd5: null },
+            { mediaId: "x", contentMd5: null, baseMd5: "k" },
+            { mediaId: "y", contentMd5: "z", baseMd5: "k" },
+        ]
+        const out: string[] = []
+        compareBucketExactOnly(keyRows, (p, q) => out.push([p, q].sort().join("+")))
+        expect(out.sort()).toEqual(["a+b", "x+y"])
     })
 })

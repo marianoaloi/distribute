@@ -3,7 +3,8 @@ import fs from "fs";
 import * as MediaStore from "../mediaDb/MediaStore";
 import { DetectionBox, DetectMediaRef } from "../types/domain";
 import * as mediaIndexer from "../compareImg/mediaIndexer";
-import { countMedia, listItemsPage } from "../mediaDb/mediaPages";
+import * as inFlight from "../system/inFlight";
+import { countMedia, itemRefsForMedia, listMediaPage, type PagedMediaRow } from "../mediaDb/mediaPages";
 import { forEachPage } from "../mediaDb/paging";
 
 // Media per page of the detection pass.
@@ -39,7 +40,14 @@ export interface DetectorLike {
 // the "detectionProgress" IPC event).
 // shouldStop is polled before each media is picked up (a callback, not a
 // boolean, so a stop requested mid-run actually reaches the loop).
-export const processMediaToDetections = async (sink: DetectionSink, onnxDetector: DetectorLike, classNames: string[], shouldStop: () => boolean, onProgress?: (processed: number, total: number) => void): Promise<void> => {
+export interface DetectionPassStats {
+    // Media skipped because every item was already detected with this model.
+    alreadyDone: number;
+    // Video/GIF media with no extracted frames (nothing to detect on).
+    withoutFrames: number;
+}
+
+export const processMediaToDetections = async (sink: DetectionSink, onnxDetector: DetectorLike, classNames: string[], shouldStop: () => boolean, onProgress?: (processed: number, total: number) => void): Promise<DetectionPassStats> => {
 
 
     let processed = 0;
@@ -78,7 +86,10 @@ export const processMediaToDetections = async (sink: DetectionSink, onnxDetector
 
 
 
-    const processOne = async (medias: DetectMediaRef[]): Promise<void> => {
+    // detected: items of this media already done for this model/class list -
+    // their stored boxes are replayed instead of re-running the model, so the
+    // event always describes the WHOLE media (all its frames).
+    const processOne = async (medias: DetectMediaRef[], detected: ReadonlySet<string>): Promise<void> => {
 
         const media = medias[0];
         try {
@@ -94,12 +105,16 @@ export const processMediaToDetections = async (sink: DetectionSink, onnxDetector
                         }
                         item.itemId = item.id; // use the media's own item for images
                     }
+                    if (detected.has(item.itemId)) {
+                        perItem.push({ item, boxes: MediaStore.getItemDetections(item.itemId).map(({ modelPath, ...box }) => box) });
+                        continue;
+                    }
                     // Moved/deleted since findAllItemsExists listed it.
                     if (!fs.existsSync(item.media)) {
                         console.log("detectObjects: skipping", item.media, "- file no longer exists");
                         continue;
                     }
-                    const boxes: DetectionBox[] = await onnxDetector.detect(item.media);
+                    const boxes: DetectionBox[] = await inFlight.track(item.media, () => onnxDetector.detect(item.media));
                     MediaStore.replaceItemDetections(item.itemId, boxes, modelPathId);
                     MediaStore.setItemDetectionState(item.itemId, boxes.map(box => box.className).join(","), { modelPathId, classList });
                     perItem.push({ item, boxes });
@@ -139,66 +154,79 @@ export const processMediaToDetections = async (sink: DetectionSink, onnxDetector
         }
     };
 
-    // One page of media (with their items) at a time: memory stays bounded
-    // by the page, and a stop takes effect within the page in flight.
+    // One page of media at a time: memory stays bounded by the page, and a
+    // stop takes effect within the page in flight.
     let videosWithoutFrames = 0;
-    const detectPage = async (refs: DetectMediaRef[]): Promise<void> => {
-        const detected = MediaStore.findDetectedItemIds(refs.map(itemKey), modelPathId, classList);
-        const byMedia = new Map<string, DetectMediaRef[]>();
-        for (const ref of refs) {
-            if (!byMedia.has(ref.id)) byMedia.set(ref.id, []);
-            (byMedia.get(ref.id) as DetectMediaRef[]).push(ref);
+    let alreadyDone = 0;
+    const isFramed = (ref: DetectMediaRef): boolean => ref.kind === "video" || ref.kind === "gif";
+    const detectPage = async (medias: PagedMediaRow[]): Promise<void> => {
+        const plan = (): { groups: DetectMediaRef[][]; detected: Set<string> } => {
+            const refs = itemRefsForMedia(medias);
+            const detected = MediaStore.findDetectedItemIds(refs.map(itemKey), modelPathId, classList);
+            const byMedia = new Map<string, DetectMediaRef[]>();
+            for (const ref of refs) {
+                if (!byMedia.has(ref.id)) byMedia.set(ref.id, []);
+                (byMedia.get(ref.id) as DetectMediaRef[]).push(ref);
+            }
+            // Done or not is decided per MEDIA: one undone item keeps all of
+            // the media's rows (the done ones are replayed in processOne).
+            const groups = [...byMedia.values()].filter(group => group.some(ref => !detected.has(itemKey(ref))));
+            return { groups, detected };
+        };
+
+        let { groups, detected } = plan();
+        if (groups.length > 0) {
+            // Detection is keyed by item (an image's 1 item, or a video/GIF's
+            // up to 4 extracted frame items - compareImg/HashStore.js), the
+            // same content-addressable unit the duplicate finder uses.
+            // indexMediaBackground is idempotent (a no-op for content already
+            // indexed), so this transparently backfills items for any media
+            // never run through "Rebuild index" instead of requiring that first.
+            const pendingIds = new Set(groups.map(([ref]) => ref.id));
+            await mediaIndexer.indexMediaBackground(medias.filter(m => pendingIds.has(m.id)).map(m => ({
+                item: m.localPath,
+                mime: m.mime,
+                kind: m.kind,
+                contentMd5: m.contentMd5,
+                id: m.id,
+            })));
+            // Indexing just created the frame items of videos that had none:
+            // re-read the page so they are detected now, not next run.
+            if (groups.some(group => isFramed(group[0]) && group.every(ref => !ref.itemId))) ({ groups, detected } = plan());
         }
-        const mediaGroups: DetectMediaRef[][] = [];
-        for (const group of byMedia.values()) {
-            const pending = group.filter(ref => !detected.has(itemKey(ref)));
-            if (pending.length > 0) mediaGroups.push(pending);
-            if ((group[0].kind === "video" || group[0].kind === "gif") && group.every(ref => !ref.itemId)) videosWithoutFrames++;
-        }
-        const skipped = byMedia.size - mediaGroups.length;
+        for (const group of groups) if (isFramed(group[0]) && group.every(ref => !ref.itemId)) videosWithoutFrames++;
+
+        const skipped = medias.length - groups.length;
         if (skipped > 0) {
+            alreadyDone += skipped;
             processed += skipped;
             sink.progress({ processed, total });
             if (onProgress) onProgress(processed, total);
         }
-        if (mediaGroups.length === 0) return;
-
-        // Detection is keyed by item (an image's 1 item, or a video/GIF's up
-        // to 4 extracted frame items - compareImg/HashStore.js), the same
-        // content-addressable unit the duplicate finder already uses.
-        // indexMediaBackground is idempotent (a no-op for content already
-        // indexed), so this transparently backfills items for any media never
-        // run through "Rebuild index" instead of requiring that first.
-        await mediaIndexer.indexMediaBackground(mediaGroups.map(([row]) => ({
-            item: row.media,
-            mime: row.mime,
-            kind: row.kind,
-            contentMd5: row.contentMd5,
-            id: row.id,
-        })));
 
         let cursor = 0;
         const runWorker = async (): Promise<void> => {
             // Stop is honoured before picking up each new media - one already
             // in flight is allowed to finish so its already-computed boxes
             // still get persisted and shown.
-            while (cursor < mediaGroups.length && !shouldStop()) {
-                await processOne(mediaGroups[cursor++]);
+            while (cursor < groups.length && !shouldStop()) {
+                await processOne(groups[cursor++], detected);
             }
         };
-        const workerCount = Math.min(DETECTION_CONCURRENCY, mediaGroups.length);
+        const workerCount = Math.min(DETECTION_CONCURRENCY, groups.length);
         await Promise.all(Array.from({ length: workerCount }, runWorker));
     };
 
     await forEachPage(
         (after, limit) => {
-            const page = listItemsPage(after, limit);
-            return { rows: page.refs, next: page.lastRowid };
+            const rows = listMediaPage(after, limit);
+            return { rows, next: rows.length ? rows[rows.length - 1].rowid : after };
         },
         detectPage,
         { pageSize: DETECT_PAGE_SIZE, shouldStop },
     );
     if (videosWithoutFrames > 0) {
-        console.warn(`detectObjects: ${videosWithoutFrames} video/GIF media have no extracted frames yet and were skipped - run the index stage first`);
+        console.warn(`detectObjects: ${videosWithoutFrames} video/GIF media have no extracted frames (frame extraction failed or no content hash yet) and were skipped`);
     }
+    return { alreadyDone, withoutFrames: videosWithoutFrames };
 };

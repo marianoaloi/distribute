@@ -43,11 +43,16 @@ the <mediaRoot>/tmp/lsr.lock lock, so the two would write index.db at once.
 
 Symlinks and special files (fifos, sockets, devices) are skipped.
 
+A run whose progress stops moving for 30 minutes is treated as hung and
+exits with code 3 (set LSR_STALL_MINUTES to change that).
+
 Exit codes:
   0    finished
   1    finished, but some items failed (see the run log)
   2    usage or configuration error
-  3    a stage failed
+  3    a stage failed - including a stage where every item it tried
+       failed (at least 5 tried; later stages are then skipped), or a
+       hung run
   130  interrupted (SIGINT/SIGTERM) - re-run to continue
 `;
 

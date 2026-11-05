@@ -8,6 +8,7 @@ import { hasAudio as videoHasAudio, extractFrames } from "./compareImg/videoFram
 import * as MediaStore from "./mediaDb/MediaStore";
 import { backfillContentMd5 } from "./mediaDb/backfill";
 import { inTransaction } from "./mediaDb/mediaPages";
+import * as inFlight from "./system/inFlight";
 
 import type { MediaKind, MediaRow, StreamMediaItem } from "./types/domain";
 
@@ -147,9 +148,9 @@ const processPathsSlice = async (
     for (let i = 0; i < pending.length; i += groupSize) {
         const group = pending.slice(i, i + groupSize);
         for (const item of group) {
-            const frames = await extractFrames(item.item);
+            const frames = await inFlight.track(item.item, () => extractFrames(item.item));
             item.fileName = frames.find((f) => f.position === "end10s")?.path || getPlaceholderPath();
-            item.hasAudio = await videoHasAudio(item.item);
+            item.hasAudio = await inFlight.track(item.item, () => videoHasAudio(item.item));
             upsertMediaSafe(item);
         }
         onReadyGo(group);

@@ -81,9 +81,14 @@ export interface ComparableRow {
 // The fine comparison inside one coarse bucket: every pair of frames of
 // different media matches on equal contentMd5, else equal baseMd5, else a
 // mean pixel difference within MEAN_DIFF_THRESHOLD. onRow fires once per row
-// once its comparisons are done (progress).
-export const compareBucket = (bucket: readonly ComparableRow[], markMatch: (a: string, b: string) => void, onRow?: () => void): void => {
+// once its comparisons are done (progress). shouldStop is polled every
+// STOP_POLL_ROWS rows (a big bucket is k^2 work); returns false if it
+// stopped before finishing the bucket.
+export const STOP_POLL_ROWS = 256;
+
+export const compareBucket = (bucket: readonly ComparableRow[], markMatch: (a: string, b: string) => void, onRow?: () => void, shouldStop?: () => boolean): boolean => {
     for (let i = 0; i < bucket.length; i++) {
+        if (shouldStop && i % STOP_POLL_ROWS === 0 && i > 0 && shouldStop()) return false;
         const a = bucket[i];
         for (let j = i + 1; j < bucket.length; j++) {
             const b = bucket[j];
@@ -98,12 +103,13 @@ export const compareBucket = (bucket: readonly ComparableRow[], markMatch: (a: s
         }
         onRow?.();
     }
+    return true;
 };
 
 // Linear fallback for a bucket too big for the pairwise pass: only exact
 // matches (equal contentMd5 or equal baseMd5 between different media) - the
 // near-match by pixel distance is skipped. Linear in the bucket size.
-export const compareBucketExactOnly = (bucket: readonly ComparableRow[], markMatch: (a: string, b: string) => void, onRow?: () => void): void => {
+export const compareBucketExactOnly = (bucket: ReadonlyArray<Pick<ComparableRow, "mediaId" | "contentMd5" | "baseMd5">>, markMatch: (a: string, b: string) => void, onRow?: () => void): void => {
     const firstBy = (field: "contentMd5" | "baseMd5"): void => {
         const seen = new Map<string, string>();
         for (const row of bucket) {

@@ -134,13 +134,16 @@ export const findMediaByIds = (ids: string[]): Map<string, MediaRow> => {
 export const findDetectedItemIds = (itemIds: string[], modelPathId: number, classList: string): Set<string> => {
     const db = HashStore.getDb();
     const done = new Set<string>();
+    const sql = (n: number): string => `
+        SELECT itemId FROM item_detection_state
+        WHERE modelPathId = ? AND classList = ? AND itemId IN (${new Array(n).fill("?").join(",")})`;
+    // Full-size chunks share one prepared statement; only the tail differs.
+    const fullChunk = itemIds.length >= ID_CHUNK ? db.prepare(sql(ID_CHUNK)) : null;
     for (let i = 0; i < itemIds.length; i += ID_CHUNK) {
         const chunk = itemIds.slice(i, i + ID_CHUNK);
         if (chunk.length === 0) continue;
-        const rows = db.prepare(`
-            SELECT itemId FROM item_detection_state
-            WHERE modelPathId = ? AND classList = ? AND itemId IN (${chunk.map(() => "?").join(",")})
-        `).all(modelPathId, classList, ...chunk) as Array<{ itemId: string }>;
+        const stmt = chunk.length === ID_CHUNK && fullChunk ? fullChunk : db.prepare(sql(chunk.length));
+        const rows = stmt.all(modelPathId, classList, ...chunk) as Array<{ itemId: string }>;
         for (const row of rows) done.add(row.itemId);
     }
     return done;
