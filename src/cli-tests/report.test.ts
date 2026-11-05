@@ -311,7 +311,7 @@ describe("stale .tmp handling (reviewer L1: never delete a file the report did n
             expect(isStaleReportTmp(w("e.tmp", ""))).toBe(true)
             expect(isStaleReportTmp(w("j.tmp", '{"generatedAt":"x","root":'))).toBe(true)
             expect(isStaleReportTmp(w("c.tmp", `${CSV_HEADER.join(",")}\npixel,abc,ke`))).toBe(true)
-            expect(isStaleReportTmp(w("h.tmp", "algorithm,groupId,ro"))).toBe(true) // killed inside the header line
+            expect(isStaleReportTmp(w("h.tmp", "algorithm,groupId,ro"))).toBe(false) // partial header: refused, never deleted
         })
         it("accepts a symlink (whatever it points to)", () => {
             const target = w("user.txt", "precious")
@@ -331,9 +331,8 @@ describe("stale .tmp handling (reviewer L1: never delete a file the report did n
             expect(isStaleReportTmp(path.join(dir, "dir.tmp"))).toBe(false)
             expect(isStaleReportTmp(path.join(dir, "missing.tmp"))).toBe(false)
         })
-        it("KNOWN EDGE: a file whose whole content is a prefix of the CSV header counts as stale", () => {
-            // Documented behaviour (a run killed inside the header line); e.g. a file holding just "a".
-            expect(isStaleReportTmp(w("tiny.tmp", "a"))).toBe(true)
+        it("a file holding only a prefix of the CSV header is not ours (refused, not deleted)", () => {
+            expect(isStaleReportTmp(w("tiny.tmp", "a"))).toBe(false)
         })
     })
 

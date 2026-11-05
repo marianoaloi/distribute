@@ -126,8 +126,10 @@ export const csvRowsFor = (group: ReportGroup): string[] =>
 const isSymlink = (p: string): boolean => { try { return fs.lstatSync(p).isSymbolicLink(); } catch { return false; } };
 
 // A <target>.tmp the report may replace: a symlink (removed, never followed),
-// an empty file (killed before the first write), or a partial report (the
-// header is written first).
+// an empty file (killed before the first write), or a partial report that
+// already holds a complete header. A file holding only part of the header
+// line is refused (the user deletes it by hand) - never risk deleting a
+// user's own short file.
 export const isStaleReportTmp = (tmpPath: string): boolean => {
     if (isSymlink(tmpPath)) return true;
     let head = "";
@@ -142,7 +144,7 @@ export const isStaleReportTmp = (tmpPath: string): boolean => {
     } catch {
         return false;
     }
-    return head === "" || head.startsWith('{"generatedAt"') || head.startsWith(`${CSV_HEADER.join(",")}\n`) || `${CSV_HEADER.join(",")}\n`.startsWith(head);
+    return head === "" || head.startsWith('{"generatedAt"') || head.startsWith(`${CSV_HEADER.join(",")}\n`);
 };
 
 // Minimal backpressure-aware line writer over a WriteStream. It writes to
