@@ -62,7 +62,38 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         // so MediaPresentation's overflow:auto scrolls over the enlarged frame.
         // Reset per media so the next video doesn't open already zoomed in.
         const [videoZoom, setVideoZoom] = useState(1)
-        useEffect(() => setVideoZoom(1), [mediaWithPreview.id])
+        // CSS zoom of the image, held in state (not a render-local variable)
+        // so Ctrl+wheel and the Zoom slider move the same value and a re-render
+        // never snaps it back to 1. Same per-media reset as videoZoom.
+        const [imageZoom, setImageZoom] = useState(1)
+        useEffect(() => { setVideoZoom(1); setImageZoom(1) }, [mediaWithPreview.id])
+
+        // Floor of 0.001 rather than 0, same as minVolume: a 0 would be
+        // persisted (saveVideoVolume) and open every next video silent.
+        const stepVolume = (step: number): void => {
+            const video = videoRef.current
+            if (!video) return
+            video.volume = Math.min(1, Math.max(0.001, video.volume + step))
+        }
+
+        // Main-row + / - step a zoomed video's volume. The numpad +/- (same
+        // ev.key, told apart by ev.code) and Ctrl+'+' / Ctrl+'-' are left alone -
+        // those are the grid thumbnail zoom menu accelerators (app.ts) - and so
+        // is typing in a text field (e.g. FoldersZoom's new-folder name).
+        useEffect(() => {
+            if (!openModal || !mediaWithPreview.mime.includes('video')) return
+            const onKeyDown = (ev: KeyboardEvent) => {
+                if (ev.ctrlKey || ev.altKey || ev.metaKey) return
+                if (ev.key !== '+' && ev.key !== '-') return
+                if (ev.code.startsWith('Numpad')) return
+                const target = ev.target as HTMLElement | null
+                if (target?.closest?.('input:not([type="checkbox"]), textarea, [contenteditable="true"]')) return
+                stepVolume(ev.key === '+' ? 0.05 : -0.05)
+                ev.preventDefault()
+            }
+            window.addEventListener('keydown', onKeyDown)
+            return () => window.removeEventListener('keydown', onKeyDown)
+        }, [openModal, mediaWithPreview.mime])
 
         const copyPathToClipboard = (): void => {
             navigator.clipboard.writeText(mediaWithPreview.path).then(() => {
@@ -112,14 +143,33 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
 
 
 
-        var zoonNow = 1
-        function zoomImg(event: any): void {
-            const imgInZoom: any = imgRef.current
-            if (!imgInZoom)
-                return
-            zoonNow += event.deltaY > 0 ? zoonNow > 0.3 ? -0.2 : 0 : 0.2
-            imgInZoom.style.zoom = (zoonNow).toString()
+        // One 0.2 wheel notch, rounded to the sliders' 0.1 step and clamped to
+        // their range (image 0.3-10, video 1-10).
+        const stepZoom = (zoom: number, deltaY: number, min: number): number =>
+            Math.min(10, Math.max(min, Math.round((zoom + (deltaY > 0 ? -0.2 : 0.2)) * 10) / 10))
 
+        // Ctrl+wheel zooms whichever media is open - on the media itself and on
+        // the controls bar alike. A plain wheel is left to scroll.
+        const zoomMedia = (event: any): void => {
+            if (!event.ctrlKey)
+                return
+            if (mediaWithPreview.mime.includes('video'))
+                setVideoZoom(zoom => stepZoom(zoom, event.deltaY, 1))
+            else
+                setImageZoom(zoom => stepZoom(zoom, event.deltaY, 0.3))
+            event.stopPropagation();
+        }
+
+        // Shift+wheel steps the volume, Ctrl+wheel zooms. Chromium turns a
+        // Shift+wheel into a horizontal scroll, so the notch arrives in deltaX.
+        const wheelOnVideo = (event: any): void => {
+            if (event.shiftKey) {
+                const delta = event.deltaY || event.deltaX
+                if (delta) stepVolume(delta > 0 ? -0.05 : 0.05)
+                event.stopPropagation();
+                return
+            }
+            zoomMedia(event)
         }
 
 
@@ -208,31 +258,8 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             videoInZoom.controls = !videoInZoom.controls
         }
 
-        const zoomImage = (event: any, imgInZoom: any): void => {
-            if (!imgInZoom)
-                return
-            if (event.ctrlKey) {
-                zoonNow += event.deltaY > 0 ? zoonNow > 0.3 ? -0.2 : 0 : 0.2
-                imgInZoom.style.zoom = (zoonNow).toString()
-                event.stopPropagation();
-            }
-        }
-
-        const controlVolumeByAltPresed = (event: any): void => {
-            const videoInZoom: any = videoRef.current
-            if (!videoInZoom)
-                return
-            if (event.ctrlKey) {
-                if (event.deltaY > 0 && videoInZoom.volume > 0.001) {
-                    videoInZoom.volume -= videoInZoom.volume <= 0.01 ? 0.001 : 0.01
-                } else if (event.deltaY < 0 && videoInZoom.volume < 0.99) {
-                    videoInZoom.volume += videoInZoom.volume <= 0.01 ? 0.001 : 0.01
-                }
-                event.stopPropagation();
-            }
-        }
         const MediaControllers = () => {
-            return <MediaControllersCSS onWheel={(ev) => zoomImg(ev)}>
+            return <MediaControllersCSS onWheel={zoomMedia}>
 
 
                 {mediaWithPreview.mime.includes('video') ?
@@ -255,19 +282,14 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                         <IconButton onClick={imageUnset}><CleaningServices /></IconButton>
                         <Slider
                             aria-label="Zoom"
-                            defaultValue={1}
+                            value={imageZoom}
                             //   getAriaValueText={valuetext}
                             valueLabelDisplay="auto"
                             shiftStep={0.5}
                             step={0.1}
                             min={0.3}
                             max={10}
-                            onChange={(event: Event, newValue: number | number[]) => {
-                                const imgInZoom: any = imgRef.current
-                                if (!imgInZoom)
-                                    return
-                                imgInZoom.style.zoom = (newValue).toString()
-                            }}
+                            onChange={(event: Event, newValue: number | number[]) => setImageZoom(newValue as number)}
                         />
                         <Slider
                             aria-label="Contrast"
@@ -337,7 +359,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                         <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
                     </ZoomHeader>
                     {mediaWithPreview.mime.includes('video') &&
-                        <VideoProgress variant="determinate" value={duration > 0 ? (currentTime / duration) * 100 : 0} />
+                        <VideoProgress  value={duration > 0 ? (currentTime / duration) * 100 : 0} />
                     }
                     {showFramesPanel &&
                         <FramesPanel>
@@ -361,7 +383,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                     <VideoPresentation ref={videoRef} src={toMediaUrl(mediaWithPreview.path)}
                                         onLoadedMetadata={startVid}
                                         onDoubleClick={changeCheckbox}
-                                        onWheel={controlVolumeByAltPresed}
+                                        onWheel={wheelOnVideo}
                                         onVolumeChange={saveVideoVolume}
                                         onTimeUpdate={updateVideoTime}
                                         style={{ transform: `scale(${videoZoom})`, transformOrigin: 'top left' }}
@@ -380,7 +402,8 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                         <ImgPresentation
                                             onDoubleClick={changeCheckbox}
                                             draggable={false}
-                                            onWheel={(ev) => zoomImage(ev, imgRef.current)}
+                                            onWheel={zoomMedia}
+                                            style={{ zoom: imageZoom }}
                                             ref={imgRef} src={toMediaUrl(mediaWithPreview.path)}
                                             alt={mediaWithPreview.path} title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></ImgPresentation>
                                         {showDetections && detectedObjects.map((box, idx) => (

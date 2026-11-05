@@ -64,11 +64,10 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
     const uncheckedCount = splitScreenMedias.filter(m => !m.checked && !m.deleted && !m.imported).length
     const checkedCount = splitScreenMedias.filter(m => m.checked && !m.deleted && !m.imported).length
 
-    const handleClickOpenSplitMove = (ev: React.MouseEvent) => {
+    const handleClickOpenSplitMove = (ev: { ctrlKey: boolean }) => {
         // The moved tiles vanish from the grid, so leave the user at the top
         // of what remains rather than mid-page. gridImg's debounced scroll
         // listener persists the new 0 position on its own.
-        window.scrollTo({ top: 0, behavior: 'auto' });
         if (ev.ctrlKey && uncheckedDestFolder && checkedDestFolder) {
             handleSplitMove();
             return;
@@ -87,6 +86,7 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
     // item is only marked deleted once app.js's "fileProcessed" event (see
     // electron.action.ts) confirms the physical move actually succeeded.
     const handleSplitMove = () => {
+        window.scrollTo({ top: 0, behavior: 'auto' });
         // Both halves share one batch id: this is a single user action, so
         // undoing it must take a single Ctrl+Z rather than one press per half
         // (see undo/UndoStack.ts).
@@ -109,6 +109,28 @@ export const Folders: React.FC<{ mediaOnlyCopy?: Media, handleExternalClose?: an
 
         handleCloseSplitMove();
     };
+
+    // Ctrl+Shift+A = Ctrl+click on the split-move button: moves straight away
+    // when both destinations are remembered, otherwise opens the dialog. Only
+    // the grid/duplicates instance (the one with the split button) listens, and
+    // never while a dialog or the zoom modal is open (both are MUI modals) - the
+    // move would act on the page behind it. The ref keeps the window listener
+    // calling the latest handler without re-binding on every render.
+    const splitMoveShortcut = React.useRef(handleClickOpenSplitMove)
+    splitMoveShortcut.current = handleClickOpenSplitMove
+    const hasSplitButton = !mediaOnlyCopy && !!screenMedias
+    React.useEffect(() => {
+        if (!hasSplitButton) return
+        const onKeyDown = (ev: KeyboardEvent) => {
+            if (!ev.ctrlKey || !ev.shiftKey || ev.altKey || ev.metaKey || ev.code !== "KeyA") return
+            // A held key repeats keydown - one press must be one move.
+            if (ev.repeat || document.querySelector(".MuiModal-root")) return
+            ev.preventDefault()
+            splitMoveShortcut.current(ev)
+        }
+        window.addEventListener("keydown", onKeyDown)
+        return () => window.removeEventListener("keydown", onKeyDown)
+    }, [hasSplitButton])
 
 
     const handleClickOpenDelete = (fol: string) => {

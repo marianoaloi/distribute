@@ -1,4 +1,4 @@
-import { createSlice } from "@reduxjs/toolkit";
+import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import type { DetectionBox } from "../detections/detections.reduce";
 
 interface IndexRebuildProgress {
@@ -6,7 +6,15 @@ interface IndexRebuildProgress {
     total: number
 }
 
+// pixel: perceptual frame comparison (persisted scan); objects: media sharing
+// the same detection box; frames: video/GIF media whose extracted frames have
+// the identical signature of frame position + frame second + detected classes;
+// blurFrames: video/GIF media of the same length sharing the blur hash on at
+// least 2 frames at the same positions.
+export type DuplicateAlgorithm = 'pixel' | 'objects' | 'frames' | 'blurFrames'
+
 interface DuplicatesState {
+    algorithm: DuplicateAlgorithm
     groups: string[][]
     indexRebuilding: boolean
     indexRebuildError: string | null
@@ -30,6 +38,7 @@ interface DuplicatesState {
 }
 
 const initialState: DuplicatesState = {
+    algorithm: 'pixel',
     groups: [],
     indexRebuilding: false,
     indexRebuildError: null,
@@ -48,6 +57,10 @@ const duplicatesSlice = createSlice({
     name: "duplicates",
     initialState,
     reducers: {
+        setDuplicateAlgorithm: (state, action: PayloadAction<DuplicateAlgorithm>) => ({
+            ...state,
+            algorithm: action.payload
+        }),
         setDuplicateGroups: (state, action) => ({
             ...state,
             groups: action.payload
@@ -115,5 +128,5 @@ const duplicatesSlice = createSlice({
     }
 })
 
-export const { setDuplicateGroups, clearDuplicateGroups, startIndexRebuild, setIndexRebuildProgress, indexRebuildFinished, startDatabaseExport, databaseExportFinished, startDatabaseImport, databaseImportFinished, setMediaFrames } = duplicatesSlice.actions;
+export const { setDuplicateAlgorithm, setDuplicateGroups, clearDuplicateGroups, startIndexRebuild, setIndexRebuildProgress, indexRebuildFinished, startDatabaseExport, databaseExportFinished, startDatabaseImport, databaseImportFinished, setMediaFrames } = duplicatesSlice.actions;
 export default duplicatesSlice.reducer;

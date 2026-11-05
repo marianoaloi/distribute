@@ -303,6 +303,203 @@ export const itemsForMedia = (mediaId: string): MediaItemRow[] => db!
     `)
     .all(mediaId) as MediaItemRow[];
 
+// Decimal places detection boxes (item_detection x/y/w/h) are rounded to when
+// deciding two media "share" a box. The detector's normalised coordinates are
+// floats, so exact equality would almost never match; 4 places (~1/10000 of
+// the frame) absorbs float noise while staying far tighter than any real
+// difference between two distinct objects.
+export const BOX_ROUND_DECIMALS = 2;
+
+// Groups of media whose object detections match with score > min_score:
+//   1) ROUND filter : each frame gets a rounded "centre of mass" of its boxes; frames of
+//                     different media in the same or a neighbouring rounded cell are candidates
+//   2) seed         : a candidate frame pair is a seed if >= 50% of its boxes overlap (IoU)
+//   3) score        : seeded media pairs are scored on ALL their frames: share of boxes
+//                     with a same-class box at IoU >= iou_min
+//   4) groups       : pairs above min_score are chained into groups (A~B, B~C -> [A,B,C])
+// json_group_array rather than GROUP_CONCAT so ids are never split on a comma.
+// n_media/min_score/max_score are selected but not used yet - only mediaIds is.
+export const mediaIdGroupsBySharedBox = (): string[][] => {
+    // Rounding step for frame centres derived from BOX_ROUND_DECIMALS (2 -> 0.01 = 1% of width/height).
+    const r = 10 ** -BOX_ROUND_DECIMALS;
+    const rows = db!
+        .prepare(`
+            WITH RECURSIVE params(r, area_tol, n_tol, iou_min, min_score) AS (
+              VALUES (${r},   -- rounding step for frame centres
+                      0.15,   -- max relative difference of total box area between two frames
+                      2,      -- max difference in box count between two frames
+                      0.6,    -- IoU for two boxes to count as the same object
+                      0.6)    -- media score needed to be the same media
+            ),
+            det AS MATERIALIZED (            -- MATERIALIZED keeps the fast plan with or without an itemId index
+              SELECT mi.mediaId, d.itemId, d.rowid AS detId, d.classId, d.x, d.y, d.w, d.h
+              FROM item_detection d
+              JOIN media_item mi ON mi.itemId = d.itemId
+            ),
+            frame AS (                        -- one row per frame (item) of each media
+              SELECT d.mediaId, d.itemId, COUNT(*) AS n, SUM(d.w * d.h) AS area,
+                     SUM((d.x + d.w / 2) * d.w * d.h) / SUM(d.w * d.h)                AS cx,
+                     SUM((d.y + d.h / 2) * d.w * d.h) / SUM(d.w * d.h)                AS cy,
+                     ROUND(SUM((d.x + d.w / 2) * d.w * d.h) / SUM(d.w * d.h) / p.r) AS bx,
+                     ROUND(SUM((d.y + d.h / 2) * d.w * d.h) / SUM(d.w * d.h) / p.r) AS by
+              FROM det d, params p
+              GROUP BY d.mediaId, d.itemId
+            ),
+            media_frames AS (SELECT mediaId, COUNT(*) AS nf FROM frame GROUP BY mediaId),
+            off(o) AS (VALUES (-1), (0), (1)),
+            -- 1) ROUND filter: same or neighbouring cell, then exact tolerance checks
+            cand AS (
+              SELECT a.mediaId AS ma, a.itemId AS ia, b.mediaId AS mb, b.itemId AS ib, a.n + b.n AS nn
+              FROM frame a
+              CROSS JOIN off ox
+              CROSS JOIN off oy
+              JOIN frame b ON b.bx = a.bx + ox.o AND b.by = a.by + oy.o
+              CROSS JOIN params p
+              WHERE a.mediaId < b.mediaId
+                AND ABS(a.cx - b.cx) <= p.r
+                AND ABS(a.cy - b.cy) <= p.r
+                AND ABS(a.area - b.area) <= p.area_tol * MAX(a.area, b.area)
+                AND ABS(a.n - b.n) <= p.n_tol
+            ),
+            -- 2) seed: candidate frame pairs whose boxes really overlap
+            -- (inter >= t/(1+t) * (areaA + areaB)  is  IoU >= t  written without a division)
+            cand_sim AS (
+              SELECT c.ma, c.mb, 1.0 * (COUNT(DISTINCT a.detId) + COUNT(DISTINCT b.detId)) / c.nn AS sim
+              FROM cand c
+              JOIN det a ON a.itemId = c.ia AND a.mediaId = c.ma
+              JOIN det b ON b.itemId = c.ib AND b.mediaId = c.mb AND b.classId = a.classId
+              CROSS JOIN params p
+              WHERE MAX(0, MIN(a.x + a.w, b.x + b.w) - MAX(a.x, b.x)) *
+                    MAX(0, MIN(a.y + a.h, b.y + b.h) - MAX(a.y, b.y))
+                    >= p.iou_min / (1 + p.iou_min) * (a.w * a.h + b.w * b.h)
+              GROUP BY c.ma, c.mb, c.ia, c.ib
+            ),
+            seed AS (SELECT DISTINCT ma, mb FROM cand_sim WHERE sim >= 0.5),
+            -- 3) score seeded media pairs on every frame pair
+            frame_sim AS (
+              SELECT s.ma, s.mb, fa.itemId AS ia, fb.itemId AS ib,
+                     1.0 * (COUNT(DISTINCT a.detId) + COUNT(DISTINCT b.detId)) / (fa.n + fb.n) AS sim
+              FROM seed s
+              JOIN frame fa ON fa.mediaId = s.ma
+              JOIN frame fb ON fb.mediaId = s.mb
+              JOIN det a ON a.itemId = fa.itemId AND a.mediaId = s.ma
+              JOIN det b ON b.itemId = fb.itemId AND b.mediaId = s.mb AND b.classId = a.classId
+              CROSS JOIN params p
+              WHERE MAX(0, MIN(a.x + a.w, b.x + b.w) - MAX(a.x, b.x)) *
+                    MAX(0, MIN(a.y + a.h, b.y + b.h) - MAX(a.y, b.y))
+                    >= p.iou_min / (1 + p.iou_min) * (a.w * a.h + b.w * b.h)
+              GROUP BY s.ma, s.mb, fa.itemId, fb.itemId
+            ),
+            frame_best AS (                   -- every frame keeps its best counterpart in the other media
+              SELECT ma, mb, MAX(sim) AS sim FROM frame_sim GROUP BY ma, mb, ia
+              UNION ALL
+              SELECT ma, mb, MAX(sim)        FROM frame_sim GROUP BY ma, mb, ib
+            ),
+            pair_score AS (                   -- frames without any match count as 0
+              SELECT x.ma, x.mb, SUM(x.sim) / (fa.nf + fb.nf) AS score
+              FROM frame_best x
+              JOIN media_frames fa ON fa.mediaId = x.ma
+              JOIN media_frames fb ON fb.mediaId = x.mb
+              GROUP BY x.ma, x.mb
+              HAVING SUM(x.sim) / (fa.nf + fb.nf) > (SELECT min_score FROM params)
+            ),
+            -- 4) chain matching pairs into groups
+            edge(u, v) AS (
+              SELECT ma, mb FROM pair_score
+              UNION ALL
+              SELECT mb, ma FROM pair_score
+            ),
+            reach(root, node) AS (
+              SELECT u, u FROM edge
+              UNION
+              SELECT r.root, e.v FROM reach r JOIN edge e ON e.u = r.node
+            ),
+            grp AS (SELECT node AS mediaId, MIN(root) AS gid FROM reach GROUP BY node)
+            SELECT json_group_array(DISTINCT g.mediaId) AS mediaIds,
+                   COUNT(DISTINCT g.mediaId)            AS n_media,
+                   ROUND(MIN(s.score), 3)               AS min_score,
+                   ROUND(MAX(s.score), 3)               AS max_score
+            FROM grp g
+            JOIN pair_score s ON g.mediaId IN (s.ma, s.mb)
+            GROUP BY g.gid
+            ORDER BY n_media DESC, max_score DESC
+        `)
+        .all() as Array<{ mediaIds: string; n_media: number; min_score: number; max_score: number }>;
+    return rows.map(row => JSON.parse(row.mediaIds) as string[]);
+};
+
+// One signature per media = the sorted set of (frame position, frame second)
+// over its extracted frames, plus the number of distinct detected classes on
+// those frames; media with the same frames and class count are grouped.
+// Video/GIF only: images have no framePositionSeconds, so they are excluded
+// (their key would be NULL). GROUP_CONCAT's own ORDER BY makes identical sets
+// build identical strings.
+export const mediaIdGroupsByFrameSignature = (): string[][] => {
+    const rows = db!
+        .prepare(`
+            WITH baseItem AS (
+              SELECT DISTINCT mi.mediaId, id.classId, i.framePosition, i.framePositionSeconds
+              FROM media_item mi
+              JOIN items i ON mi.itemId = i.id
+              LEFT JOIN item_detection id ON mi.itemId = id.itemId
+              WHERE i.framePositionSeconds IS NOT NULL
+            ),
+            counterClass AS (
+              SELECT mediaId, COUNT(classId) AS cClass,
+                     ':' || framePosition || ':' || framePositionSeconds AS k
+              FROM baseItem
+              GROUP BY mediaId, k
+            ),
+            sig AS (
+              SELECT mediaId, SUM(cClass) AS cClass, COUNT(*) AS groupCount,
+                     GROUP_CONCAT(k, ';' ORDER BY k) AS signature
+              FROM counterClass
+              GROUP BY mediaId
+            )
+            SELECT json_group_array(DISTINCT s.mediaId) AS mediaIds, COUNT(*) AS mediaCount
+            FROM sig s
+            GROUP BY s.signature, s.groupCount, s.cClass
+            HAVING COUNT(*) > 1
+            ORDER BY s.groupCount DESC, mediaCount DESC
+        `)
+        .all() as Array<{ mediaIds: string; mediaCount: number }>;
+    return rows.map(row => JSON.parse(row.mediaIds) as string[]);
+};
+
+// Tolerances for mediaIdPairsBySharedBlurFrames: how far apart (seconds) two
+// frames at the same position may sit, how far apart two media lengths may be,
+// and how many frames must match for the pair to count.
+export const BLUR_FRAME_SECOND_TOLERANCE = 0.1;
+export const BLUR_LENGTH_TOLERANCE = 0.2;
+export const BLUR_MIN_SAME_FRAMES = 2;
+
+// [mediaA, mediaB] pairs of video/GIF media of (nearly) the same length that
+// share baseMd5Blur on at least BLUR_MIN_SAME_FRAMES frames at the same frame
+// position and (nearly) the same second. Length is twice the pct50 frame's
+// second. Pairs, not groups: the caller chains them transitively.
+export const mediaIdPairsBySharedBlurFrames = (): string[][] => {
+    const rows = db!
+        .prepare(`
+            WITH f AS (
+              SELECT mi.mediaId, i.framePosition AS pos, i.framePositionSeconds AS sec, i.baseMd5Blur AS blur
+              FROM media_item mi
+              JOIN items i ON i.id = mi.itemId
+              WHERE i.framePositionSeconds IS NOT NULL AND i.baseMd5Blur IS NOT NULL
+            ),
+            dur AS (SELECT mediaId, sec * 2 AS dur FROM f WHERE pos = 'pct50')
+            SELECT a.mediaId AS ma, b.mediaId AS mb
+            FROM f a
+            JOIN f b ON b.blur = a.blur AND b.pos = a.pos AND b.mediaId > a.mediaId
+                    AND ABS(a.sec - b.sec) <= @secTol
+            JOIN dur da ON da.mediaId = a.mediaId
+            JOIN dur db ON db.mediaId = b.mediaId AND ABS(da.dur - db.dur) <= @lengthTol
+            GROUP BY a.mediaId, b.mediaId
+            HAVING COUNT(*) >= @minFrames
+        `)
+        .all({ secTol: BLUR_FRAME_SECOND_TOLERANCE, lengthTol: BLUR_LENGTH_TOLERANCE, minFrames: BLUR_MIN_SAME_FRAMES }) as Array<{ ma: string; mb: string }>;
+    return rows.map(row => [row.ma, row.mb]);
+};
+
 // Overwrites the stored duplicate-group result with a freshly computed one.
 // Each call to duplicateFinder.findIndexDuplicates() re-scans the whole
 // library, so its result is a complete snapshot, not an incremental delta -

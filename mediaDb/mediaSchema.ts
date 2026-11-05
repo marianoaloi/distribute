@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { formatClassExpr, legacyGroupToExpr } from "./classExpr";
 
 // Duplicated from HashStore.js rather than imported: this file is DDL-only
 // and must stay requirable with no dependencies, so HashStore can require it
@@ -66,15 +67,40 @@ export const createMediaSchema = (database: Database.Database): void => {
     `);
 
     // Predefined class-filter groups from the picked .maloi, one row per
-    // group in file order. classes is a JSON array of raw class ids (negative
-    // = NOT) rather than names, so renaming a class doesn't break a group -
-    // the renderer resolves ids to names against the current class list.
+    // group in file order. expr is canonical boolean text over raw class ids
+    // (e.g. "(6 || 7) && !(1 || 2)") rather than names, so renaming a class
+    // doesn't break a group - the AST is rebuilt from it on read
+    // (MediaStore.getDetectionGroups) and the renderer resolves ids to names
+    // against the current class list.
+    //
+    // One-time migration: the first version stored (classes JSON, joinType).
+    // Rows are converted to expr text, then the table is rebuilt (older
+    // SQLite can't drop NOT NULL columns in place) in one transaction.
+    const groupColumns = database.pragma("table_info(detection_group)") as Array<{ name: string }>;
+    if (groupColumns.length > 0 && !groupColumns.some((c) => c.name === "expr")) {
+        const oldRows = database.prepare("SELECT position, name, classes, joinType FROM detection_group ORDER BY position ASC")
+            .all() as Array<{ position: number; name: string; classes: string; joinType: string }>;
+        const migrate = database.transaction(() => {
+            database.exec("DROP TABLE detection_group;");
+            database.exec("CREATE TABLE detection_group (position INTEGER PRIMARY KEY, name TEXT NOT NULL, expr TEXT NOT NULL);");
+            const insert = database.prepare("INSERT INTO detection_group (position, name, expr) VALUES (?, ?, ?)");
+            for (const r of oldRows) {
+                try {
+                    const classes = (JSON.parse(r.classes) as number[]).map((id) => id || 0);
+                    const join = String(r.joinType).toUpperCase() === "AND" ? "AND" : "OR";
+                    insert.run(r.position, r.name, formatClassExpr(legacyGroupToExpr(classes, join)));
+                } catch (e) {
+                    console.warn(`[detection_group] dropping unreadable legacy group "${r.name}":`, e);
+                }
+            }
+        });
+        migrate();
+    }
     database.exec(`
         CREATE TABLE IF NOT EXISTS detection_group (
             position INTEGER PRIMARY KEY,
             name     TEXT NOT NULL,
-            classes  TEXT NOT NULL,
-            joinType TEXT NOT NULL
+            expr     TEXT NOT NULL
         );
     `);
 

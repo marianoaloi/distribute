@@ -1,9 +1,9 @@
-import { addListinActualArray, addOnceMedia, confirmFileMoved, confirmFileUnmoved, orderByFolder, orderByName, orderBySize, orderBySizeInverted, populateArray, purgeArray, updateArrayItem } from './media.reduce';
+import { addListinActualArray, addOnceMedia, confirmFileMoved, confirmFileUnmoved, orderByFolder, orderByName, orderBySize, orderBySizeInverted, orderByType, populateArray, purgeArray, updateArrayItem } from './media.reduce';
 import { example } from './populateExample';
 import { Media } from '../../../../entity/Media';
 import { addFolder, resetFolders } from '../folders';
 import { mediaLoadComplete, mediaLoadStart, zoomIn, zoomOut } from '../configurations';
-import { setDuplicateGroups, indexRebuildFinished, setIndexRebuildProgress, databaseExportFinished, databaseImportFinished, setMediaFrames } from '../duplicates';
+import { DuplicateAlgorithm, setDuplicateAlgorithm, setDuplicateGroups, indexRebuildFinished, setIndexRebuildProgress, databaseExportFinished, databaseImportFinished, setMediaFrames } from '../duplicates';
 import { setDetectionResult, mergeDetections, rekeyDetections, setDetectionProgress, detectingFinished, setModelPath, setDetectionClasses, setDetectionSize, DetectionGroup } from '../detections';
 import { setPipelineProgress, pipelineFinished, pipelineRejected, PipelineSnapshot } from '../pipeline';
 import { setUndoAvailable, undoFinished, sortByKindFinished, UndoSkipped, SortByKindResult } from '../undo';
@@ -24,7 +24,7 @@ export const ElectronConnection = () => {
     }
 
 
-    return (dispatch: any) => {
+    return (dispatch: any, getState: () => any) => {
         if (ipcRender) {
             const channels = ['directoryOpen', 'loadMedias', 'addOneMedia', 'delete', 'zoom', 'sort', 'menuOpen', 'resetFolders', 'cleanGrid', 'duplicatesFound', 'indexRebuilt', 'indexRebuildProgress', 'mediaLoadStart', 'mediaLoadComplete', 'detectionFound', 'detectionProgress', 'detectionsComplete', 'onnxModelChosen', 'databaseExported', 'databaseImported', 'detectionClassesLoaded', 'detectionsLoaded', 'fileProcessed', 'mediaFramesFound', 'detectionSizeLoaded', 'pipelineProgress', 'pipelineFinished', 'pipelineRejected', 'fileUnmoved', 'undoAvailable', 'undoFinished', 'sortByKindFinished'];
             channels.forEach(ch => ipcRender.removeAllListeners(ch));
@@ -106,6 +106,7 @@ export const ElectronConnection = () => {
                     case 'sortBySize': dispatch(orderBySize()); break;
                     case 'sortBySizeInverted': dispatch(orderBySizeInverted()); break;
                     case 'sortByFolder': dispatch(orderByFolder()); break;
+                    case 'sortByType': dispatch(orderByType()); break;
 
                     default:
                         break;
@@ -120,7 +121,11 @@ export const ElectronConnection = () => {
             ipcRender.on('cleanGrid', () => {
                 dispatch(purgeArray())
             })
-            ipcRender.on('duplicatesFound', (e: any, groups: string[][]) => {
+            ipcRender.on('duplicatesFound', (e: any, groups: string[][], algorithm?: DuplicateAlgorithm) => {
+                // Untagged replies are pixel results (scan, persisted read, DB import).
+                // A tagged reply for an algorithm the user has since left is stale.
+                if (algorithm && algorithm !== getState().duplicates.algorithm) return
+                if (!algorithm) dispatch(setDuplicateAlgorithm('pixel'))
                 dispatch(setDuplicateGroups(groups))
             })
             ipcRender.on('indexRebuilt', (e: any, result: { success: boolean, error?: string }) => {
@@ -212,6 +217,20 @@ export const OpenDirectoryRecursive = () => {
     return (dispatch: any) => {
         if (ipcRender)
             ipcRender.send('openRecursive', new Date().toISOString());
+    }
+}
+
+// Same scan as OpenDirectoryRecursive, for a folder dropped from the OS -
+// the path is already known, so the main process skips the folder picker.
+export const OpenDroppedFolderRecursive = (folderPath: string) => {
+
+    if (!isElectronApp) {
+        return (dispatch: any) => { }
+    }
+
+    return (dispatch: any) => {
+        if (ipcRender)
+            ipcRender.send('openRecursivePath', folderPath);
     }
 }
 

@@ -20,6 +20,49 @@ export const FindIndexDuplicates = () => {
     }
 }
 
+// Media sharing the same object-detection box (classId + rounded x,y,w,h).
+// Fast on-demand SQL in the main process, not persisted; replies on duplicatesFound.
+export const FindObjectDuplicates = () => {
+
+    if (!isElectronApp) {
+        return (dispatch: any) => { }
+    }
+
+    return (dispatch: any) => {
+        if (ipcRender) {
+            ipcRender.send('findObjectDuplicates', undefined);
+        }
+    }
+}
+
+// Video/GIF media whose extracted frames share a signature. Same contract as FindObjectDuplicates.
+export const FindFrameDuplicates = () => {
+
+    if (!isElectronApp) {
+        return (dispatch: any) => { }
+    }
+
+    return (dispatch: any) => {
+        if (ipcRender) {
+            ipcRender.send('findFrameDuplicates', undefined);
+        }
+    }
+}
+
+// Video/GIF media of the same length sharing the blur hash on several frames. Same contract as FindObjectDuplicates.
+export const FindBlurFrameDuplicates = () => {
+
+    if (!isElectronApp) {
+        return (dispatch: any) => { }
+    }
+
+    return (dispatch: any) => {
+        if (ipcRender) {
+            ipcRender.send('findBlurFrameDuplicates', undefined);
+        }
+    }
+}
+
 // Loads whatever the last scan persisted (items_duplicated table) instead of
 // re-running the slow O(n^2) comparison - call this when the duplicates view
 // opens so it can show its last result immediately.

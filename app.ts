@@ -28,6 +28,7 @@ import * as dbImport from "./compareImg/dbImport";
 import { hashFor } from "./thumbnails/cache";
 import * as onnxDetector from "./objectDetection/onnxDetector";
 import * as MediaStore from "./mediaDb/MediaStore";
+import { parseClassExpr, formatClassExpr, legacyGroupToExpr, type ParseResult } from "./mediaDb/classExpr";
 import { backfillContentMd5 } from "./mediaDb/backfill";
 import * as pipelineRun from "./pipeline/PipelineRun";
 import * as ThumbnailService from "./thumbnails/ThumbnailService";
@@ -76,8 +77,10 @@ interface MaloiFile {
     // bakes a Reshape op sized for a specific input resolution other than
     // the 640 default.
     reshape?: number;
-    // Predefined class-filter groups, untrusted until parseMaloiGroups. classes
-    // are 0-based positions in the "classes" list, negative = NOT that class.
+    // Predefined class-filter groups, untrusted until parseMaloiGroups. Each is
+    // { name, expr } with expr a boolean expression over 0-based positions in
+    // the "classes" list, e.g. "(6 || 7) && !(1 || 2)". The legacy
+    // { name, classes, join } form is still accepted (negative id = NOT).
     group?: unknown;
 }
 
@@ -86,18 +89,28 @@ const splitClassNames = (raw: string): string[] =>
 
 // Boundary validation for a .maloi's "group" array: a malformed entry is
 // skipped (never throws) so a bad group can't break model loading.
+const parseMaloiGroupAst = (entry: any, classCount: number): ParseResult => {
+    if (typeof entry?.expr === "string") return parseClassExpr(entry.expr, classCount);
+    const join = typeof entry?.join === "string" ? entry.join.trim().toUpperCase() : "";
+    const classes = entry?.classes;
+    const validIds = Array.isArray(classes) && classes.length > 0
+        && classes.every((id: unknown) => Number.isInteger(id) && Math.abs(id as number) < classCount);
+    if (!validIds || (join !== "OR" && join !== "AND")) return { ok: false, error: "needs an \"expr\" string (or legacy \"classes\" + \"join\")" };
+    return { ok: true, ast: legacyGroupToExpr(classes.map((id: number) => id || 0), join) };
+};
+
 const parseMaloiGroups = (raw: unknown, classCount: number): MediaStore.DetectionGroup[] => {
     if (!Array.isArray(raw)) return [];
     const groups: MediaStore.DetectionGroup[] = [];
+    const seen = new Set<string>();
     for (const entry of raw) {
         const name = typeof entry?.name === "string" ? entry.name.trim() : "";
-        const join = typeof entry?.join === "string" ? entry.join.trim().toUpperCase() : "";
-        const classes = entry?.classes;
-        const validIds = Array.isArray(classes) && classes.length > 0
-            && classes.every((id: unknown) => Number.isInteger(id) && Math.abs(id as number) < classCount);
-        if (name && validIds && (join === "OR" || join === "AND")) {
-            groups.push({ name, classes: classes.map((id: number) => id || 0), join });
-        }
+        if (!name) { console.warn("[maloi] skipping group without a name"); continue; }
+        if (seen.has(name)) { console.warn(`[maloi] skipping duplicate group "${name}"`); continue; }
+        const parsed = parseMaloiGroupAst(entry, classCount);
+        if (!parsed.ok) { console.warn(`[maloi] skipping group "${name}": ${parsed.error}`); continue; }
+        seen.add(name);
+        groups.push({ name, expr: formatClassExpr(parsed.ast), ast: parsed.ast });
     }
     return groups;
 };
@@ -123,6 +136,7 @@ const menuTemplate = (): MenuItemConstructorOptions[] => [
         submenu: [
             { label: 'Load recursive', enabled: !pipelineRun.isRunning(), click: () => { if (!rejectIfBusy()) loadRecursive(); } },
             { label: 'Load super recursive', enabled: !pipelineRun.isRunning(), click: loadSuperRecursive },
+            { label: 'Load super background', enabled: !pipelineRun.isRunning(), click: loadSuperBackground },
         ]
     },
     {
@@ -157,13 +171,19 @@ const menuTemplate = (): MenuItemConstructorOptions[] => [
             {
                 label: 'Zoom In',
                 click: () => zoomImg(+1),
-                accelerator: "numadd"
+                accelerator: "CommandOrControl+Plus"
             },
             {
                 label: 'Zoom Out',
                 click: () => zoomImg(-1),
-                accelerator: "numsub"
+                accelerator: "CommandOrControl+-"
             },
+            // A menu item takes one accelerator, so the numpad +/- aliases for
+            // the two above are hidden duplicates (their accelerators still
+            // fire on Windows/Linux). modalZoom.tsx leaves the numpad keys to
+            // these and uses only the main-row +/- for video volume.
+            { label: 'Zoom In (numpad)', click: () => zoomImg(+1), accelerator: "numadd", visible: false },
+            { label: 'Zoom Out (numpad)', click: () => zoomImg(-1), accelerator: "numsub", visible: false },
             { label: 'Clean', click: cleanGrid },
             {
                 label: 'Send filed media back into kind folders…',
@@ -182,6 +202,7 @@ const menuTemplate = (): MenuItemConstructorOptions[] => [
             { label: "Sort by Size", click: sortBySize },
             { label: "Sort by Size Inverted", click: sortBySizeInverted },
             { label: "Sort by Folder", click: sortByFolder },
+            { label: "Order by Type", click: sortByType },
         ]
     },
 
@@ -376,6 +397,28 @@ const findIndexDuplicates = async (onProgress?: (comparedRows: number, totalRows
     }
 };
 ipcMain.on("findIndexDuplicates", () => { if (!rejectIfBusy()) findIndexDuplicates(); });
+
+// On-demand, non-persisted duplicate scans (shared object-detection box /
+// identical per-frame signature / shared blurred frames). Same "duplicatesFound" reply as findIndexDuplicates.
+// The algorithm tag lets the renderer drop a reply that arrives after the user
+// switched to a different algorithm (untagged replies are the pixel results).
+const replyWithDuplicates = (algorithm: "objects" | "frames" | "blurFrames", find: () => string[][]): void => {
+    try {
+        mainWindow!.webContents.send("duplicatesFound", find(), algorithm);
+    } catch (error) {
+        console.error(`${algorithm} duplicates failed`, error);
+        mainWindow!.webContents.send("duplicatesFound", [], algorithm);
+    }
+};
+ipcMain.on("findObjectDuplicates", () => {
+    if (!rejectIfBusy()) replyWithDuplicates("objects", duplicateFinder.findObjectDuplicates);
+});
+ipcMain.on("findFrameDuplicates", () => {
+    if (!rejectIfBusy()) replyWithDuplicates("frames", duplicateFinder.findFrameDuplicates);
+});
+ipcMain.on("findBlurFrameDuplicates", () => {
+    if (!rejectIfBusy()) replyWithDuplicates("blurFrames", duplicateFinder.findBlurFrameDuplicates);
+});
 
 // Reads back whatever the last findIndexDuplicates scan persisted
 // (compareImg/HashStore.js's items_duplicated table) instead of re-running
@@ -699,6 +742,35 @@ const SUPER_STAGES: pipelineRun.StageDef[] = [
     { key: "duplicates", label: "Finding visual duplicates" },
 ];
 
+// pipelineRun kind of the "Load super background" run. The renderer recognizes
+// the background run by this exact string (the frontend uses the same
+// literal), so keep both in sync.
+const SUPER_BACKGROUND_KIND = "Load super background";
+
+// Media scanned during a "Load super background" run, held back from the
+// renderer until flushBackgroundMedia. null for every other run (including
+// plain "Load recursive"), in which case streamingMedia sends straight through.
+let backgroundMediaBuffer: StreamMediaItem[] | null = null;
+
+// Max items per "loadMedias" send when flushing the background buffer
+// ("loadMedias" appends in the renderer, so chunking is safe).
+const BACKGROUND_FLUSH_CHUNK = 500;
+
+// Hands the buffered background-run media to the renderer, then signals
+// "mediaLoadComplete" (withheld by notifyMediaLoadComplete meanwhile). Called
+// right before pipelineRun.finish()/fail() so the grid already holds the
+// media when the renderer's background screen closes. No-op outside a
+// background run.
+const flushBackgroundMedia = (): void => {
+    const buffer = backgroundMediaBuffer;
+    if (buffer === null) return;
+    backgroundMediaBuffer = null;
+    for (let i = 0; i < buffer.length; i += BACKGROUND_FLUSH_CHUNK) {
+        mainWindow!.webContents.send("loadMedias", buffer.slice(i, i + BACKGROUND_FLUSH_CHUNK));
+    }
+    mainWindow!.webContents.send("mediaLoadComplete");
+};
+
 // Runs after a recursive scan finishes: hashes any not-yet-hashed content
 // (see backfillContentMd5's doc below), then the same pair "Rebuild index"
 // already runs (buildIndex + findIndexDuplicates), then detectObjects - all
@@ -732,9 +804,11 @@ const runSuperExecutionPipeline = async (): Promise<void> => {
         pipelineRun.startStage("duplicates");
         await findIndexDuplicates((processed, total) => pipelineRun.updateStage(processed, total));
 
+        flushBackgroundMedia();
         pipelineRun.finish();
     } catch (error) {
         console.error("super execution pipeline failed", error);
+        flushBackgroundMedia();
         pipelineRun.fail((error as Error).message);
     }
 };
@@ -992,15 +1066,26 @@ const openfile = (): void => {
 };
 
 
+// A background run's scan stage has no media arriving in the grid to show it
+// is making progress, so the running count of buffered media is reported as
+// the "scan" stage's processed number instead (total stays 0 - the folder
+// walk's size is never known upfront - so no ETA is derived from it).
+const bufferBackgroundMedia = (buffer: StreamMediaItem[], items: StreamMediaItem[]): void => {
+    buffer.push(...items);
+    pipelineRun.updateStage(buffer.length);
+};
+
 const streamingMedia = (data: string[], root: string, complete: () => void): void => {
     transformDataStreaming(
         data,
         root,
         (mediaReady: StreamMediaItem[]) => {
+            if (backgroundMediaBuffer) { bufferBackgroundMedia(backgroundMediaBuffer, mediaReady); return; }
             mainWindow!.webContents.send("loadMedias", mediaReady);
         },
         (mediaLazy: StreamMediaItem) => {
             // console.log("Video found", video.id);
+            if (backgroundMediaBuffer) { bufferBackgroundMedia(backgroundMediaBuffer, [mediaLazy]); return; }
             mainWindow!.webContents.send("addOneMedia", mediaLazy);
         },
         complete
@@ -1070,19 +1155,7 @@ const loadRecursive = async (): Promise<void> => {
     if (fileGlobal) options.defaultPath = fileGlobal;
     dialog.showOpenDialog(options).then(file => {
         if (!file.canceled) {
-            setActiveFolder(file.filePaths[0]);
-            redirectToActiveFolder();
-            fileGlobal = file.filePaths[0]; // path.join(file.filePaths[0], TMP_FOLDER_NAME);
-            compareImgStore.closeConnection();
-            resetUndoForNewFolder();
-
-
-            mainWindow!.webContents.send("cleanGrid");
-            mainWindow!.webContents.send("mediaLoadStart");
-            // A previous scan that never finished must not block this one.
-            processedFolders = {};
-            openfileRecursive(file.filePaths[0]);
-
+            startRecursiveScan(file.filePaths[0]);
         } else {
             // Dialog cancelled: a super execution that already picked its
             // model has nothing left to scan, so don't leave the flag (or
@@ -1096,15 +1169,48 @@ const loadRecursive = async (): Promise<void> => {
     });
 };
 
-// File > "Load super recursive": picks the ONNX/.maloi model up front (the
-// same dialog "Choose ONNX model" uses - detectObjects, the last stage of
-// this chain, refuses to run without one, so better to ask before the whole
-// recursive scan+index+dup-scan runs than after). If the user cancels with
-// no model configured at all, the chain never starts. Otherwise it opens the
-// recursive-folder dialog exactly like "Load recursive" - the rest of the
-// chain (buildIndex -> findIndexDuplicates -> detectObjects) picks up once
-// the scan itself finishes, see notifyMediaLoadComplete.
-const loadSuperRecursive = async (): Promise<void> => {
+// Shared by the "Load recursive" dialog and a folder dropped from the OS onto
+// the window: makes rootFolder the active folder and scans it recursively.
+const startRecursiveScan = (rootFolder: string): void => {
+    setActiveFolder(rootFolder);
+    redirectToActiveFolder();
+    fileGlobal = rootFolder;
+    compareImgStore.closeConnection();
+    resetUndoForNewFolder();
+
+    mainWindow!.webContents.send("cleanGrid");
+    mainWindow!.webContents.send("mediaLoadStart");
+    // A previous scan that never finished must not block this one.
+    processedFolders = {};
+    openfileRecursive(rootFolder);
+};
+
+// A folder dragged from the OS file manager. The path comes from the
+// renderer, so it is only trusted once it resolves to an existing directory.
+ipcMain.on("openRecursivePath", (event: IpcMainEvent, folderPath: unknown) => {
+    if (typeof folderPath !== "string" || !folderPath) return;
+    const resolved = path.resolve(folderPath);
+    let isDirectory = false;
+    try { isDirectory = fs.statSync(resolved).isDirectory(); } catch { /* missing or unreadable */ }
+    if (!isDirectory) {
+        console.error("Dropped path is not a folder", resolved);
+        return;
+    }
+    if (rejectIfBusy()) return;
+    startRecursiveScan(resolved);
+});
+
+// Shared body of "Load super recursive" and "Load super background": picks the
+// ONNX/.maloi model up front (the same dialog "Choose ONNX model" uses -
+// detectObjects, the last stage of this chain, refuses to run without one, so
+// better to ask before the whole recursive scan+index+dup-scan runs than
+// after). If the user cancels with no model configured at all, the chain
+// never starts. Otherwise it opens the recursive-folder dialog exactly like
+// "Load recursive" - the rest of the chain (buildIndex -> findIndexDuplicates
+// -> detectObjects) picks up once the scan itself finishes, see
+// notifyMediaLoadComplete. `background` additionally buffers the scanned media
+// instead of streaming it to the renderer, see backgroundMediaBuffer.
+const startSuperExecution = async (kind: string, background: boolean): Promise<void> => {
     if (rejectIfBusy()) return;
     const modelAvailable = await chooseOnnxModelDialog();
     if (!modelAvailable) {
@@ -1115,22 +1221,31 @@ const loadSuperRecursive = async (): Promise<void> => {
     // so rejectIfBusy above already covers "double-click Load super
     // recursive while the first click's model dialog is still open" - not
     // just the scan/index/detect/duplicates stages that follow it.
-    if (!pipelineRun.begin("Load super recursive", SUPER_STAGES)) return;
+    if (!pipelineRun.begin(kind, SUPER_STAGES)) return;
+    if (background) backgroundMediaBuffer = [];
     pipelineRun.startStage("scan");
     updateMenu();
     superExecutionInProgress = true;
     await loadRecursive();
 };
 
-// Shared by loadRecursive's cancel/catch branches: undoes loadSuperRecursive's
+// File > "Load super recursive".
+const loadSuperRecursive = (): Promise<void> => startSuperExecution("Load super recursive", false);
+
+// File > "Load super background": same chain as loadSuperRecursive, but the
+// renderer gets no media until the whole pipeline is done.
+const loadSuperBackground = (): Promise<void> => startSuperExecution(SUPER_BACKGROUND_KIND, true);
+
+// Shared by loadRecursive's cancel/catch branches: undoes startSuperExecution's
 // claim on the pipeline slot (and re-enables the menu) when the folder-choose
 // dialog it opened gets cancelled or errors before any real work started -
 // otherwise pipelineRun would stay "running" forever with nothing left to
 // finish it. A no-op for a plain "Load recursive" (superExecutionInProgress
-// is only ever true mid-loadSuperRecursive).
+// is only ever true mid-startSuperExecution).
 const cancelSuperExecutionIfPending = (): void => {
     if (!superExecutionInProgress) return;
     superExecutionInProgress = false;
+    backgroundMediaBuffer = null;
     pipelineRun.cancel("No folder chosen");
     updateMenu();
 };
@@ -1141,7 +1256,9 @@ let processedFolders: Record<string, boolean> = {};
 // loadSuperRecursive can chain into buildIndex+detectObjects right as it
 // fires, instead of the renderer needing to trigger each stage itself.
 const notifyMediaLoadComplete = (): void => {
-    mainWindow!.webContents.send("mediaLoadComplete");
+    // A background run holds "mediaLoadComplete" back too - flushBackgroundMedia
+    // sends it after the buffered items, once the whole pipeline is done.
+    if (backgroundMediaBuffer === null) mainWindow!.webContents.send("mediaLoadComplete");
     if (superExecutionInProgress) {
         superExecutionInProgress = false;
         // chooseOnnxModelDialog (called by loadSuperRecursive) persists the
@@ -1225,6 +1342,11 @@ const sortBySizeInverted = async (): Promise<void> => {
 const sortByFolder = async (): Promise<void> => {
     if (mainWindow) {
         mainWindow.webContents.send("sort", "sortByFolder");
+    }
+};
+const sortByType = async (): Promise<void> => {
+    if (mainWindow) {
+        mainWindow.webContents.send("sort", "sortByType");
     }
 };
 

@@ -1,5 +1,6 @@
 import { ReduxState } from "../../store";
 
+export const selectDuplicateAlgorithm = (state: ReduxState) => state.duplicates.algorithm;
 export const selectDuplicateGroups = (state: ReduxState) => state.duplicates.groups;
 export const selectIndexRebuilding = (state: ReduxState) => state.duplicates.indexRebuilding;
 export const selectIndexRebuildError = (state: ReduxState) => state.duplicates.indexRebuildError;

@@ -20,7 +20,15 @@ const addOnceMediaHelper = (medias: Media[], media: Media): Media[] => {
     const auxMedias = [...medias]
     auxMedias.push(media)
     return auxMedias
-}   
+}
+
+// Sort rank for orderByType: image < gif < video (anything else last).
+const mediaTypeRank = (mime: string = ''): number => {
+    if (mime.includes('gif')) return 1
+    if (mime.includes('video')) return 2
+    if (mime.includes('image')) return 0
+    return 3
+}
 
 
 const itemsSlice = createSlice({
@@ -113,6 +121,11 @@ const itemsSlice = createSlice({
         orderByFolder:(state) => {
             state.medias.sort((a:Media,b:Media) => a.path.localeCompare(b.path))
         },
+        // Images first, then GIFs, then videos; Array.sort is stable, so the
+        // previous order is kept inside each group.
+        orderByType:(state) => {
+            state.medias.sort((a:Media,b:Media) => mediaTypeRank(a.mime) - mediaTypeRank(b.mime))
+        },
     }
 })
 
@@ -135,7 +148,7 @@ export const mediasApi = createApi({
 }); 
 
 
-export const { populateArray, updateArrayItem, updateManyArrayItem, confirmFileMoved, confirmFileUnmoved, addOnceMedia , addListinActualArray, purgeArray ,orderByName, orderBySize, orderBySizeInverted, orderByFolder} = itemsSlice.actions;
+export const { populateArray, updateArrayItem, updateManyArrayItem, confirmFileMoved, confirmFileUnmoved, addOnceMedia , addListinActualArray, purgeArray ,orderByName, orderBySize, orderBySizeInverted, orderByFolder, orderByType} = itemsSlice.actions;
 export default itemsSlice.reducer;
 
 // Export hooks for usage in functional components, which are

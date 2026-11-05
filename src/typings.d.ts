@@ -1,6 +1,7 @@
 interface Window {
     electron: {
         ipcRenderer: IpRenderer;
+        getPathForFile: (file: File) => string;
     };
 }
 
