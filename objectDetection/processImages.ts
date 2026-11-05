@@ -96,6 +96,9 @@ export const processMediaToDetections = async (sink: DetectionSink, onnxDetector
     const processOne = async (medias: DetectMediaRef[], detected: ReadonlySet<string>): Promise<void> => {
 
         const media = medias[0];
+        // The item being detected right now - the only one an error below
+        // can concern (medias[0] is just the media's first row).
+        let current: DetectMediaRef | null = null;
         try {
             const items = medias || [];
             if (items.length === 0) {
@@ -118,6 +121,7 @@ export const processMediaToDetections = async (sink: DetectionSink, onnxDetector
                         console.log("detectObjects: skipping", item.media, "- file no longer exists");
                         continue;
                     }
+                    current = item;
                     const boxes: DetectionBox[] = await inFlight.track(item.media, () => onnxDetector.detect(item.media));
                     // One transaction: boxes and the "done with this model"
                     // record can never disagree (a kill between the two would
@@ -154,7 +158,13 @@ export const processMediaToDetections = async (sink: DetectionSink, onnxDetector
                 sink.found({ id: media.id, boxes: [], classes: [], classScores: {} });
                 return;
             }
-            MediaStore.replaceItemDetections(media.itemId, [], modelPathId);
+            // Only the failed item's stale boxes go, and only when it is not
+            // recorded as done for this model (its boxes + state are written
+            // in one transaction, so a failure leaves neither). Never touch
+            // the media's other items - they may be done and get replayed.
+            if (current?.itemId && !MediaStore.findDetectedItemIds([current.itemId], modelPathId, classList).has(current.itemId)) {
+                MediaStore.replaceItemDetections(current.itemId, [], modelPathId);
+            }
             failedMediaIds.add(media.id);
             console.error("detectObjects failed for", media.media, error);
             sink.found({ id: media.id, boxes: [], classes: [], classScores: {}, error: (error as Error).message });

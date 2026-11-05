@@ -104,6 +104,11 @@ const snapshotTreeNoSpecial = (root: string): Record<string, string> => {
     return out
 }
 
+// Live extraDups child processes working on <root> (ps, so no pgrep self-match).
+const extraChildrenOf = (root: string): string[] =>
+    spawnSync("ps", ["-eo", "pid=,args="], { encoding: "utf8" }).stdout.split("\n")
+        .filter(l => l.includes("extraDupsChild.js") && l.includes(root))
+
 const logsOf = (root: string): string[] => {
     const dir = path.join(root, "tmp", "logs")
     // Oldest first: by stamp, then by the -N suffix (a bare name is run 1).
@@ -404,7 +409,7 @@ d("lsr CLI (Electron integration)", () => {
             const before = snapshotTree(dr)
             const r = lsr(["--root", dr, "--maloi", fakeMaloi], FAKE)
             expect(r.code).toBe(0)
-            expect(stagesDone(r.stdout)).toEqual(["scan", "hash", "index", "detect", "duplicates"])
+            expect(stagesDone(r.stdout)).toEqual(["scan", "hash", "index", "detect", "duplicates", "extraDups"])
             expect(snapshotTree(dr)).toEqual(before)
         })
         it("resume works past the 400-id lookup chunk", () => {
@@ -970,7 +975,25 @@ d("lsr CLI (Electron integration)", () => {
                 for (const f of files) expect(log).toContain(f)
             } finally { for (const f of files) fs.chmodSync(f, 0o644) }
         })
-        it("detection boxes and done-state are written in one transaction (a failed state write keeps the old boxes)", () => {
+        it.each(["pct10", "pct50"])("a failing video frame (_%s) does not wipe the boxes of another frame that stays 'done'", (pos) => {
+            const rv = path.join(base, `vfail-${pos}`)
+            fs.mkdirSync(rv)
+            fs.copyFileSync(path.join(root, "v.mp4"), path.join(rv, "v.mp4"))
+            const m = path.join(base, "vfail.maloi")
+            fs.writeFileSync(m, JSON.stringify({ onnx: "x.onnx", classes: "x" }))
+            expect(lsr(["--root", rv, "--maloi", m, "--stages", "scan,hash,index,detect"], FAKE).code).toBe(0)
+            const vid = query(rv, "select id from media")[0].id
+            const failing = `${vid}_${pos}`
+            execSql(rv, `DELETE FROM item_detection_state WHERE itemId = '${failing}';` +
+                `CREATE TRIGGER lsr_test_block BEFORE INSERT ON item_detection_state WHEN NEW.itemId = '${failing}' BEGIN SELECT RAISE(ABORT, 'lsr test: state unwritable'); END;`)
+            const r = lsr(["--root", rv, "--maloi", m, "--stages", "detect"], FAKE)
+            expect(r.code).toBe(1)
+            // Every frame still marked done must keep its (fake: exactly 1) box.
+            const doneFrames = query(rv, "select s.itemId, (select count(*) from item_detection d where d.itemId = s.itemId) boxes from item_detection_state s")
+            expect(doneFrames.length).toBeGreaterThanOrEqual(1)
+            for (const f of doneFrames) expect({ itemId: f.itemId, boxes: f.boxes }).toEqual({ itemId: f.itemId, boxes: 1 })
+        })
+        it("detection boxes and done-state are written in one transaction (a failed state write leaves no new boxes)", () => {
             const rt = path.join(base, "atomic")
             fs.mkdirSync(rt)
             frames(rt, 3, "f")
@@ -990,8 +1013,10 @@ d("lsr CLI (Electron integration)", () => {
             expect(r.stdout).toMatch(/1 media processed, 1 failed, 2 already detected/)
             expect(r.stderr).toMatch(/lsr test: state unwritable/)
             expect(summaryOf(r.stdout)).toContain(path.join(rt, "f02.png"))
-            // rolled back: the box rows are exactly the marked ones, not replaced
-            expect(query(rt, `select * from item_detection where itemId = '${target}'`)).toEqual(marked)
+            // Rolled back: never NEW boxes without a state row. (The error handler then
+            // clears the failed item's boxes, which is consistent: no boxes, not done.)
+            const after = query(rt, `select * from item_detection where itemId = '${target}'`)
+            expect(after.length === 0 || JSON.stringify(after) === JSON.stringify(marked)).toBe(true)
             expect(query(rt, `select count(*) n from item_detection_state where itemId = '${target}'`)[0].n).toBe(0)
             // once writable again, the next run redoes it
             execSql(rt, "DROP TRIGGER lsr_test_block")
@@ -999,6 +1024,150 @@ d("lsr CLI (Electron integration)", () => {
             expect(again.code).toBe(0)
             expect(again.stdout).toMatch(/1 media processed, 0 failed, 2 already detected/)
             expect(query(rt, `select detectedAt from item_detection where itemId = '${target}'`)[0].detectedAt).toBeGreaterThan(1)
+        })
+    })
+
+
+    // Reviewer B1 scenario + detect re-run with permanently failing files (964ee1f).
+    describe("permanently bad files never fail a re-run", () => {
+        const FAKE = { NODE_ENV: "test", LSR_FAKE_DETECTOR: "1" }
+        it("6 unreadable of 9: both the first run and the re-run are exit 1, all stages run, files listed", () => {
+            const rb = path.join(base, "b1")
+            fs.mkdirSync(rb)
+            ffmpeg("-f", "lavfi", "-i", "testsrc2=s=32x24:r=1:d=9", path.join(rb, "f%02d.png"))
+            expect(lsr(["--root", rb, "--stages", "scan"]).code).toBe(0)
+            const bad = ["f01", "f02", "f03", "f04", "f05", "f06"].map(n => path.join(rb, `${n}.png`))
+            for (const f of bad) fs.chmodSync(f, 0o000)
+            try {
+                const args = ["--root", rb, "--stages", "scan,hash,index,duplicates"]
+                const first = lsr(args)
+                expect(first.code).toBe(1)
+                expect(first.stdout).toMatch(/3 of 9 unhashed files hashed, 6 unreadable; 6 errors logged/)
+                expect(stagesDone(first.stdout)).toEqual(["scan", "hash", "index", "duplicates"])
+                const second = lsr(args)
+                expect(second.code).toBe(1)
+                expect(second.stdout).toMatch(/0 of 6 unhashed files hashed, 6 unreadable/)
+                expect(second.stdout).not.toMatch(/FAILED/)
+                expect(stagesDone(second.stdout)).toEqual(["scan", "hash", "index", "duplicates"])
+                const summary = second.stdout.slice(second.stdout.indexOf("==== LSR summary ===="))
+                expect(summary).toMatch(/failed files \(6\):/)
+                for (const f of bad) expect(summary).toContain(f)
+            } finally { for (const f of bad) fs.chmodSync(f, 0o644) }
+        })
+        it("detect: 6 items failing (POISON_FAIL) next to 3 good: exit 1 on both runs, re-run counts earlier work", () => {
+            const rd = path.join(base, "b1-detect")
+            fs.mkdirSync(rd)
+            ffmpeg("-f", "lavfi", "-i", "testsrc2=s=32x24:r=1:d=3", path.join(rd, "good%02d.png"))
+            ffmpeg("-f", "lavfi", "-i", "testsrc2=s=40x30:r=1:d=6", path.join(rd, "x__lsr_fail__%02d.png"))
+            const m = path.join(base, "b1.maloi")
+            fs.writeFileSync(m, JSON.stringify({ onnx: "x.onnx", classes: "x" }))
+            const args = ["--root", rd, "--maloi", m, "--stages", "scan,hash,index,detect,duplicates"]
+            const first = lsr(args, FAKE)
+            expect(first.code).toBe(1)
+            expect(first.stdout).toMatch(/stage detect done in \S+: 9 media processed, 6 failed, 0 already detected/)
+            expect(stagesDone(first.stdout)).toEqual(["scan", "hash", "index", "detect", "duplicates"])
+            const second = lsr(args, FAKE)
+            expect(second.code).toBe(1)
+            expect(second.stdout).toMatch(/stage detect done in \S+: 6 media processed, 6 failed, 3 already detected/)
+            expect(second.stdout).not.toMatch(/FAILED/)
+            expect(stagesDone(second.stdout)).toEqual(["scan", "hash", "index", "detect", "duplicates"])
+            const summary = second.stdout.slice(second.stdout.indexOf("==== LSR summary ===="))
+            expect(summary).toMatch(/failed files \(6\):/)
+            expect((summary.match(/x__lsr_fail__\d\d\.png/g) || []).length).toBe(6)
+        })
+        it("detect: 6 failing and nothing ever succeeded -> FAILED, exit 3", () => {
+            const rd = path.join(base, "b1-detect-all")
+            fs.mkdirSync(rd)
+            ffmpeg("-f", "lavfi", "-i", "testsrc2=s=40x30:r=1:d=6", path.join(rd, "x__lsr_fail__%02d.png"))
+            const m = path.join(base, "b1.maloi")
+            const r = lsr(["--root", rd, "--maloi", m, "--stages", "scan,hash,index,detect,duplicates"], FAKE)
+            expect(r.code).toBe(3)
+            expect(r.stdout).toMatch(/detect\s+\S+\s+FAILED: every one of the 6 items the detect stage tried failed/)
+            expect(stagesDone(r.stdout)).toEqual(["scan", "hash", "index"])
+        })
+    })
+
+    // E4: the extraDups stage (GUI's other three algorithms, each in a child process).
+    describe("extraDups stage", () => {
+        const FAKE = { NODE_ENV: "test", LSR_FAKE_DETECTOR: "1" }
+        let m: string
+        let slow: string
+        beforeAll(() => {
+            m = path.join(base, "xd.maloi")
+            fs.writeFileSync(m, JSON.stringify({ onnx: "x.onnx", classes: "x" }))
+            // 400 byte-identical copies: identical fake boxes -> the objects query is very slow.
+            slow = path.join(base, "xd-slow")
+            fs.mkdirSync(slow)
+            for (let i = 0; i < 400; i++) fs.copyFileSync(path.join(root, "b.png"), path.join(slow, `c${i}.png`))
+            const prep = lsr(["--root", slow, "--maloi", m, "--stages", "scan,hash,index,detect"], FAKE)
+            if (prep.code !== 0) throw new Error(prep.stdout + prep.stderr)
+        })
+
+        it("runs objects, frames and blurFrames on the fake-detector fixture, persists nothing, exit 0", () => {
+            const rx = path.join(base, "xd-small")
+            makeFixture(rx)
+            const prep = lsr(["--root", rx, "--maloi", m, "--stages", "scan,hash,index,detect,duplicates"], FAKE)
+            expect(prep.code).toBe(0)
+            const dupBefore = query(rx, "select * from items_duplicated order by groupId, mediaId")
+            const before = snapshotTree(rx)
+            const r = lsr(["--root", rx, "--stages", "extraDups"], FAKE)
+            expect(r.code).toBe(0)
+            expect(r.stdout).toMatch(/stage extraDups done in \S+: objects: \d+ groups, frames: \d+ groups, blurFrames: \d+ groups$/m)
+            // a.png and sub/a-copy.png are byte-identical: identical fake boxes -> at least one objects group
+            expect(Number(/objects: (\d+) groups/.exec(r.stdout)![1])).toBeGreaterThanOrEqual(1)
+            expect(query(rx, "select * from items_duplicated order by groupId, mediaId")).toEqual(dupBefore)
+            expect(extraChildrenOf(rx)).toEqual([])
+            expect(snapshotTree(rx)).toEqual(before)
+        })
+        it("over budget (LSR_EXTRA_DUPS_MINUTES=0.01): objects FAILED (timed out), others still run, exit 1, child killed", () => {
+            const started = Date.now()
+            const r = lsr(["--root", slow, "--stages", "extraDups"], { ...FAKE, LSR_EXTRA_DUPS_MINUTES: "0.01" })
+            expect(r.code).toBe(1)
+            expect(Date.now() - started).toBeLessThan(20_000)
+            expect(r.stdout).toMatch(/objects: FAILED \(timed out after \S+ \(LSR_EXTRA_DUPS_MINUTES\)\), frames: \d+ groups, blurFrames: \d+ groups; 1 errors logged/)
+            expect(r.stderr).toMatch(/lsr extraDups: objects failed - timed out/)
+            expect(extraChildrenOf(slow)).toEqual([])
+            expect(fs.existsSync(lockOf(slow))).toBe(false)
+        })
+        it("SIGINT during extraDups -> exit 130 promptly, no child left", async () => {
+            const run = lsrAsync(["--root", slow, "--stages", "extraDups"])
+            await waitFor(() => /\[1\/1 extraDups/.test(run.output()))
+            await waitFor(() => extraChildrenOf(slow).length > 0, 10_000)
+            await new Promise(r => setTimeout(r, 300))
+            const sent = Date.now()
+            run.child.kill("SIGINT")
+            const r = await run.done
+            expect(r.code).toBe(130)
+            expect(Date.now() - sent).toBeLessThan(5_000)
+            expect(r.stdout).toMatch(/stage extraDups done in \S+: .*\(stopped early\)/)
+            expect(r.stdout).toMatch(/exit code 130/)
+            await new Promise(res => setTimeout(res, 200))
+            expect(extraChildrenOf(slow)).toEqual([])
+            expect(fs.existsSync(lockOf(slow))).toBe(false)
+        })
+        it("a forced second SIGINT also kills the child", async () => {
+            const run = lsrAsync(["--root", slow, "--stages", "extraDups"])
+            await waitFor(() => extraChildrenOf(slow).length > 0, 10_000)
+            run.child.kill("SIGINT")
+            await waitFor(() => /SIGINT received/.test(run.output()))
+            run.child.kill("SIGINT")
+            const r = await run.done
+            expect(r.code).toBe(130)
+            await new Promise(res => setTimeout(res, 200))
+            expect(extraChildrenOf(slow)).toEqual([])
+            expect(fs.existsSync(lockOf(slow))).toBe(false)
+        })
+        it("SIGKILL of the runner (no exit handlers) - documents whether the child outlives it", async () => {
+            const run = lsrAsync(["--root", slow, "--stages", "extraDups"])
+            await waitFor(() => extraChildrenOf(slow).length > 0, 10_000)
+            run.child.kill("SIGKILL")
+            await run.done
+            await new Promise(res => setTimeout(res, 500))
+            const orphans = extraChildrenOf(slow)
+            // clean up regardless, so later tests are not disturbed
+            for (const l of orphans) { try { process.kill(Number(l.trim().split(/\s+/)[0]), "SIGKILL") } catch { /* gone */ } }
+            fs.rmSync(lockOf(slow), { force: true })
+            expect(orphans).toEqual([])
         })
     })
 
