@@ -85,6 +85,42 @@ describe("createRunLog", () => {
     })
 })
 
+describe("createRunLog rotation under a synchronous burst", () => {
+    it("rotates even when every write happens in one tick, without stacking streams", async () => {
+        const s = sinks()
+        const log = createRunLog(root, { rotateBytes: 300, ...s })
+        for (let i = 0; i < 20; i++) log.detail(`line-${String(i).padStart(2, "0")}-${"x".repeat(30)}`)
+        await log.close()
+        await new Promise(r => setTimeout(r, 50))
+        const files = fs.readdirSync(path.dirname(log.path)).sort()
+        expect(files).toEqual([path.basename(log.path), `${path.basename(log.path)}.1`])
+        const cur = fs.readFileSync(log.path, "utf8")
+        const prev = fs.readFileSync(`${log.path}.1`, "utf8")
+        const lineBytes = Buffer.byteLength(cur.split("\n")[0] + "\n")
+        expect(Buffer.byteLength(cur)).toBeLessThanOrEqual(300 + lineBytes)
+        expect(Buffer.byteLength(prev)).toBeLessThanOrEqual(300 + lineBytes)
+        // the newest line ends up in <log>; every line is whole, in order, none duplicated
+        expect(cur).toMatch(/line-19-x{30}\n$/)
+        const lines = (prev + cur).trim().split("\n")
+        for (const l of lines) expect(l).toMatch(/ DEBUG line-\d{2}-x{30}$/)
+        const ids = lines.map(l => Number(/line-(\d{2})/.exec(l)![1]))
+        expect(ids).toEqual([...ids].sort((a, b) => a - b))
+        expect(new Set(ids).size).toBe(ids.length)
+        expect(ids[ids.length - 1]).toBe(19)
+    })
+    it("counts bytes, not characters (multi-byte text rotates by size on disk)", async () => {
+        const s = sinks()
+        const log = createRunLog(root, { rotateBytes: 400, ...s })
+        for (let i = 0; i < 10; i++) log.detail(`${i}-${"é".repeat(40)}`) // ~80 chars, ~120 bytes per line
+        await log.close()
+        await new Promise(r => setTimeout(r, 50))
+        const cur = fs.readFileSync(log.path)
+        const lineBytes = Buffer.byteLength(cur.toString("utf8").split("\n")[0] + "\n")
+        expect(cur.length).toBeLessThanOrEqual(400 + lineBytes)
+        expect(fs.existsSync(`${log.path}.1`)).toBe(true)
+    })
+})
+
 describe("formatArgs", () => {
     it("joins strings, JSON-encodes objects and uses stacks for errors", () => {
         const e = new Error("boom")
