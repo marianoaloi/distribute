@@ -5,7 +5,7 @@ import fs from "fs";
 import path from "path";
 
 // Canonical execution order; --stages is re-sorted into it.
-export const STAGE_ORDER = ["scan", "hash", "index", "detect", "duplicates"] as const;
+export const STAGE_ORDER = ["scan", "hash", "index", "detect", "duplicates", "extraDups"] as const;
 export type CliStage = typeof STAGE_ORDER[number];
 
 export interface CliOptions {
@@ -34,6 +34,12 @@ Options:
                       the "detect" stage runs.
   --stages <list>     Comma-separated subset of: ${STAGE_ORDER.join(",")}
                       (default: all, always run in that order).
+                      duplicates = pixel comparison (persisted, as in the
+                      GUI); extraDups = the GUI's other three algorithms
+                      (shared detection boxes, frame signature, blurred
+                      frames), computed on demand and not persisted; each
+                      gets LSR_EXTRA_DUPS_MINUTES (default 60) before it
+                      is abandoned and reported as timed out.
   --verbose           Also print per-item log lines to stdout (they always go
                       to the run log under <mediaRoot>/tmp/logs/).
   --help              Show this help.

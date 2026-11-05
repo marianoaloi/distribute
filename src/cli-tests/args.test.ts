@@ -43,8 +43,12 @@ describe("parseStages", () => {
         expect(r.ok).toBe(false)
         if (!r.ok) expect(r.error).toMatch(/unknown stage\(s\): foo, Hash/)
     })
+    it("extraDups sorts after duplicates and is accepted on its own", () => {
+        expect(parseStages("extraDups,scan,duplicates")).toEqual({ ok: true, stages: ["scan", "duplicates", "extraDups"] })
+        expect(parseStages("extradups").ok).toBe(false) // case-sensitive
+    })
     it("STAGE_ORDER is the documented order", () => {
-        expect([...STAGE_ORDER]).toEqual(["scan", "hash", "index", "detect", "duplicates"])
+        expect([...STAGE_ORDER]).toEqual(["scan", "hash", "index", "detect", "duplicates", "extraDups"])
     })
 })
 

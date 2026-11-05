@@ -13,6 +13,8 @@ import { createReporter, formatDuration } from "./progress";
 import { installStopHandlers, EXIT_INTERRUPTED } from "./signals";
 import { acquireLock } from "./lock";
 import { setActiveFolder } from "../DirectorioCache";
+import type { StageDef } from "../pipeline/PipelineRun";
+import type { ExtraResult } from "./extraDups";
 import * as inFlight from "../system/inFlight";
 
 export const EXIT_OK = 0;
@@ -28,6 +30,14 @@ export const MAX_DUPLICATE_BUCKET = 5000;
 const RUN_HINT = "Run it with Electron's bundled Node: ELECTRON_RUN_AS_NODE=1 electron electron-dist/cli/lsr.js ...";
 
 class StageFailure extends Error { }
+
+// Stages the GUI chain does not have.
+const CLI_ONLY_STAGES: StageDef[] = [
+    { key: "extraDups", label: "Running the other duplicate algorithms" },
+];
+
+// The last extraDups results of this run (they are not persisted).
+let extraResults: ExtraResult[] | null = null;
 
 // The files workers were busy with when an error escaped every handler -
 // most likely the one that caused it (see system/inFlight.ts).
@@ -96,6 +106,7 @@ const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, 
     const { scanTree } = await import("./scan");
     const { countMedia } = await import("../mediaDb/mediaPages");
     const failedFiles: Partial<Record<CliStage, FailedFiles>> = {};
+    const { runExtraDuplicates, runInChild, extraDupsBudgetMs, formatExtraSummary } = await import("./extraDups");
 
     MediaStore.ensureReady();
     if (options.maloi) {
@@ -117,7 +128,8 @@ const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, 
 
     const reporter = createReporter((line) => log.info(line));
     pipelineRun.configure({ onProgress: (snapshot) => { onActivity(); reporter.onProgress(snapshot); }, onDone: () => undefined });
-    pipelineRun.begin("LSR CLI", superPipeline.SUPER_STAGES.filter(s => options.stages.includes(s.key)));
+    const stageDefs: StageDef[] = [...superPipeline.SUPER_STAGES, ...CLI_ONLY_STAGES];
+    pipelineRun.begin("LSR CLI", stageDefs.filter(s => (options.stages as readonly string[]).includes(s.key)));
 
     const detections = { media: 0, failed: 0, alreadyDone: 0, withoutFrames: 0, failedPaths: [] as string[] };
     const ctx: import("../pipeline/superPipeline").SuperContext = {
@@ -174,6 +186,23 @@ const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, 
             if (everyItemFailed(processedMedia - detections.failed, detections.failed, detections.alreadyDone)) throw allFailedError("detect", detections.failed);
             return `${processedMedia} media processed, ${detections.failed} failed, ${detections.alreadyDone} already detected` +
                 (detections.withoutFrames ? `, ${detections.withoutFrames} videos/GIFs without frames skipped` : "");
+        },
+        extraDups: async () => {
+            const budgetMs = extraDupsBudgetMs(process.env);
+            let done = 0;
+            const { results, stopped } = await runExtraDuplicates({
+                shouldStop,
+                run: (algorithm) => runInChild(options.root, algorithm, {
+                    budgetMs,
+                    shouldStop,
+                    onTick: () => pipelineRun.updateStage(done, 3),
+                }),
+                onStep: (n, total) => { done = n; pipelineRun.updateStage(n, total); },
+            });
+            extraResults = stopped ? null : results;
+            const failed = results.filter(r => r.error);
+            if (results.length > 0 && failed.length === results.length) throw new StageFailure(`every duplicate algorithm failed: ${formatExtraSummary(results)}`);
+            return formatExtraSummary(results);
         },
         duplicates: async () => {
             const groups = await superPipeline.runDuplicates(ctx);

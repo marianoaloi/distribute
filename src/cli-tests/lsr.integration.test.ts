@@ -1157,12 +1157,12 @@ d("lsr CLI (Electron integration)", () => {
             expect(extraChildrenOf(slow)).toEqual([])
             expect(fs.existsSync(lockOf(slow))).toBe(false)
         })
-        it("SIGKILL of the runner (no exit handlers) - documents whether the child outlives it", async () => {
+        it("SIGKILL of the runner (no exit handlers run): the child notices and kills itself within 3s", async () => {
             const run = lsrAsync(["--root", slow, "--stages", "extraDups"])
             await waitFor(() => extraChildrenOf(slow).length > 0, 10_000)
             run.child.kill("SIGKILL")
             await run.done
-            await new Promise(res => setTimeout(res, 500))
+            await waitFor(() => extraChildrenOf(slow).length === 0, 3_000).catch(() => undefined)
             const orphans = extraChildrenOf(slow)
             // clean up regardless, so later tests are not disturbed
             for (const l of orphans) { try { process.kill(Number(l.trim().split(/\s+/)[0]), "SIGKILL") } catch { /* gone */ } }
