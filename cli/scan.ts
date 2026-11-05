@@ -22,7 +22,12 @@ export const FILE_CHUNK = 5000;
 export interface ScanStats {
     folders: number;
     media: number;
-    skippedSymlinkDirs: number;
+    // Symlinks are never followed nor scanned: a link to a folder can loop,
+    // and a link to a file would form a "duplicate" of its own target in
+    // which the decision report could mark the real file as removable.
+    skippedSymlinks: number;
+    // FIFOs, sockets, devices: reading one can block forever.
+    skippedSpecial: number;
     unreadableFolders: number;
     stopped: boolean;
 }
@@ -33,13 +38,14 @@ export interface ScanOptions {
 }
 
 export const scanTree = async (root: string, options: ScanOptions): Promise<ScanStats> => {
-    const stats: ScanStats = { folders: 0, media: 0, skippedSymlinkDirs: 0, unreadableFolders: 0, stopped: false };
+    const stats: ScanStats = { folders: 0, media: 0, skippedSymlinks: 0, skippedSpecial: 0, unreadableFolders: 0, stopped: false };
     const countItems = (items: StreamMediaItem[]): void => { stats.media += items.length; };
     const countOne = (): void => { stats.media += 1; };
 
     const processChunk = async (dir: string, files: string[]): Promise<void> => {
         if (files.length === 0) return;
-        await transformDataStreaming(files, dir, countItems, countOne);
+        // backfill: false - the "hash" stage runs that pass once, afterwards.
+        await transformDataStreaming(files, dir, countItems, countOne, undefined, {}, { backfill: false });
         options.onProgress?.(stats);
     };
 
@@ -55,21 +61,23 @@ export const scanTree = async (root: string, options: ScanOptions): Promise<Scan
                 // Same rule as the GUI: the app's own tmp/ folder is skipped
                 // at every depth.
                 if (entry.name === TMP_FOLDER_NAME) continue;
-                if (entry.isDirectory()) {
+                // Some filesystems report no entry type (DT_UNKNOWN): every
+                // is*() is then false, so ask lstat instead of guessing.
+                let kind: { isSymbolicLink(): boolean; isDirectory(): boolean; isFile(): boolean } = entry;
+                if (!entry.isSymbolicLink() && !entry.isDirectory() && !entry.isFile()
+                    && !entry.isFIFO() && !entry.isSocket() && !entry.isCharacterDevice() && !entry.isBlockDevice()) {
+                    try { kind = fs.lstatSync(path.join(dir, entry.name)); } catch { continue; /* vanished */ }
+                }
+                if (kind.isSymbolicLink()) {
+                    stats.skippedSymlinks++;
+                    console.log("lsr scan: skipping symlink", path.join(dir, entry.name));
+                } else if (kind.isDirectory()) {
                     subdirs.push(path.join(dir, entry.name));
-                } else if (entry.isSymbolicLink()) {
-                    // A symlink to a folder could loop forever; one to a file
-                    // is handed on like any file (it is stat'ed there).
-                    let target: fs.Stats | null = null;
-                    try { target = fs.statSync(path.join(dir, entry.name)); } catch { /* dangling */ }
-                    if (target?.isDirectory()) {
-                        stats.skippedSymlinkDirs++;
-                        console.warn("lsr scan: skipping symlinked folder", path.join(dir, entry.name));
-                    } else {
-                        files.push(entry.name);
-                    }
-                } else {
+                } else if (kind.isFile()) {
                     files.push(entry.name);
+                } else {
+                    stats.skippedSpecial++;
+                    console.warn("lsr scan: skipping special file (fifo/socket/device)", path.join(dir, entry.name));
                 }
                 if (files.length >= FILE_CHUNK) {
                     await processChunk(dir, files);

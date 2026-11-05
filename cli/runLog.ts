@@ -19,6 +19,10 @@ export interface RunLog {
     warn(line: string): void;
     error(line: string): void;
     detail(line: string): void;
+    // Appends one line synchronously, bypassing the stream - for the last
+    // words before a forced process.exit (lines still buffered in the
+    // stream may then be lost, this one is not).
+    writeSync(line: string): void;
     close(): Promise<void>;
 }
 
@@ -87,6 +91,10 @@ export const createRunLog = (root: string, options: RunLogOptions = {}): RunLog 
         warn: (line) => { toFile("WARN ", line); stderr(`WARN ${line}\n`); },
         error: (line) => { toFile("ERROR", line); stderr(`ERROR ${line}\n`); },
         detail: (line) => { toFile("DEBUG", line); if (options.verbose) stdout(`${line}\n`); },
+        writeSync: (line) => {
+            try { fs.appendFileSync(logPath, `${now().toISOString()} ERROR ${line}\n`); } catch { /* nothing left to report to */ }
+            stderr(`${line}\n`);
+        },
         close: () => new Promise<void>((resolve) => {
             if (closed) { resolve(); return; }
             closed = true;

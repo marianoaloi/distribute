@@ -7,6 +7,7 @@ import { getPlaceholderPath } from "./thumbnails/providers/placeholder";
 import { hasAudio as videoHasAudio, extractFrames } from "./compareImg/videoFrames";
 import * as MediaStore from "./mediaDb/MediaStore";
 import { backfillContentMd5 } from "./mediaDb/backfill";
+import { inTransaction } from "./mediaDb/mediaPages";
 
 import type { MediaKind, MediaRow, StreamMediaItem } from "./types/domain";
 
@@ -41,6 +42,19 @@ const upsertMediaSafe = (item: StreamMediaItem): void => {
     }
 };
 
+// One commit for a whole slice instead of one per row. upsertMediaSafe
+// catches per-row failures, so one bad row never rolls back the others; if
+// the transaction itself cannot run, fall back to plain per-row writes.
+const upsertAllSafe = (items: StreamMediaItem[]): void => {
+    if (items.length === 0) return;
+    try {
+        inTransaction(() => { for (const item of items) upsertMediaSafe(item); });
+    } catch (error) {
+        console.error("upsertMedia batch failed, retrying row by row -", (error as Error).message);
+        for (const item of items) upsertMediaSafe(item);
+    }
+};
+
 // A raw item mid-pipeline: mime hasn't been confirmed present/relevant yet
 // (mime.lookup can return false), unlike the StreamMediaItem the renderer
 // ultimately receives.
@@ -53,15 +67,14 @@ const hasUsableMime = (item: RawStreamItem): item is RawStreamItem & { mime: str
 
 // One PATH_SLICE_SIZE-sized slice of transformDataStreaming's path list run
 // through the full business pipeline: stat/mime detection, image vs video/gif
-// split, cache-hit check against `cached` (looked up once up front by the
-// caller - it reflects rows already in the DB before this run started, so
-// re-querying it per slice would just repeat the same work), and - for
-// whatever isn't already cached - frame extraction. onReadyGo maps to the
+// split, cache-hit check against the media rows already stored for exactly
+// this slice's ids (one indexed IN lookup per slice - never the whole media
+// table, which on a big library is millions of rows per folder opened), and
+// - for whatever isn't already cached - frame extraction. onReadyGo maps to the
 // "loadMedias" channel, which appends (addListinActualArray) rather than
 // replacing - safe to call multiple times per slice, and once per slice.
 const processPathsSlice = async (
     paths: string[],
-    cached: Map<string, MediaRow>,
     onReadyGo: (items: StreamMediaItem[]) => void,
     extraFields: Partial<StreamMediaItem>,
 ): Promise<void> => {
@@ -88,15 +101,22 @@ const processPathsSlice = async (
         })
         .filter(hasUsableMime);
 
+    // Any DB failure here must never stop the folder from opening - fall
+    // through to the slow path (frame extraction) for every framed item.
+    let cached = new Map<string, MediaRow>();
+    try {
+        cached = MediaStore.findMediaByIds(withMeta.filter(i => i.kind !== 'image').map(i => i.id));
+    } catch (error) {
+        console.error("transformDataStreaming: media DB lookup failed, falling back to slow path:", (error as Error).message);
+    }
+
     // GIFs are many-frame media like video (see compareImg/mediaIndexer.js),
     // not a single still like a plain image, so they're routed through the
     // thumbnail pipeline instead of being emitted as-is.
     const images: StreamMediaItem[] = withMeta.filter(i => i.kind === 'image');
     const framed: StreamMediaItem[] = withMeta.filter(i => i.kind === 'video' || i.kind === 'gif');
 
-    for (const item of images) {
-        upsertMediaSafe(item);
-    }
+    upsertAllSafe(images);
     onReadyGo(images);
 
     const ready: StreamMediaItem[] = [];
@@ -120,9 +140,7 @@ const processPathsSlice = async (
         }
     }
 
-    for (const item of ready) {
-        upsertMediaSafe(item);
-    }
+    upsertAllSafe(ready);
     onReadyGo(ready);
 
     const groupSize = 10;
@@ -162,31 +180,22 @@ export const transformDataStreaming = async (
     onSendOneMedia: (item: StreamMediaItem) => void,
     onDone?: () => void,
     extraFields: Partial<StreamMediaItem> = {},
+    // backfill: false skips the trailing fire-and-forget content-hash pass -
+    // for a caller (the headless LSR) that runs that pass itself, once,
+    // instead of one overlapping pass per folder.
+    options: { backfill?: boolean } = {},
 ): Promise<void> => {
     const allPaths = folderOpened ? data.map(item => path.join(folderOpened, item)) : data;
     console.log("transformDataStreaming: processing", allPaths.length, "items in", folderOpened || "absolute paths");
 
-    // Batched indexed lookup against the media table so a video/gif whose
-    // thumbnail is already cached can skip the slow per-item ffmpeg loop in
-    // processPathsSlice entirely. Any DB failure here must never stop the
-    // folder from opening - fall through to the slow path for every framed
-    // item. Computed once, not per slice below - see processPathsSlice's doc.
-    let cached = new Map<string, MediaRow>();
     try {
         MediaStore.ensureReady();
-        cached = MediaStore.findAllMediaThatExists()
-            .reduce((map, row) => {
-                map.set(row.id, row);
-                return map;
-            }, new Map<string, MediaRow>());
-
         for (let i = 0; i < allPaths.length; i += PATH_SLICE_SIZE) {
             console.log("transformDataStreaming: processing slice", i / PATH_SLICE_SIZE + 1 , "of", Math.ceil(allPaths.length / PATH_SLICE_SIZE));
-            await processPathsSlice(allPaths.slice(i, i + PATH_SLICE_SIZE), cached, onReadyGo, extraFields);
+            await processPathsSlice(allPaths.slice(i, i + PATH_SLICE_SIZE), onReadyGo, extraFields);
         }
     } catch (error) {
-        console.error("transformDataStreaming: media DB lookup failed, falling back to slow path:", (error as Error).message);
-        cached = new Map();
+        console.error("transformDataStreaming: failed:", (error as Error).message);
     } finally {
         if (onDone) onDone();
     }
@@ -194,5 +203,5 @@ export const transformDataStreaming = async (
     // Never blocks the load path: content hashing happens off to the side so
     // subsequent loads can read the memoised contentMd5 instead of touching
     // file bytes again.
-    backfillContentMd5();
+    if (options.backfill !== false) backfillContentMd5();
 };

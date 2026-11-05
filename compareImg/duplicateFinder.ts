@@ -1,66 +1,10 @@
 import * as compareImgStore from "./HashStore";
+import { baseGreyRowsForBucket, multiFrameBuckets } from "./bucketQueries";
+import { clustersOf, compareBucket, compareBucketExactOnly, makeDisjointSet, mergeGroups } from "./duplicateMath";
 
-interface DisjointSet {
-    find: (x: string) => string;
-    union: (a: string, b: string) => void;
-}
-
-// Minimal union-find so a match on any one of HASH_FIELDS merges two media
-// ids into the same duplicate cluster, even if they didn't match on others.
-const makeDisjointSet = (): DisjointSet => {
-    const parent = new Map<string, string>();
-    const find = (x: string): string => {
-        if (!parent.has(x)) parent.set(x, x);
-        let root = x;
-        while (parent.get(root) !== root) root = parent.get(root) as string;
-        let cur = x;
-        while (parent.get(cur) !== root) {
-            const next = parent.get(cur) as string;
-            parent.set(cur, root);
-            cur = next;
-        }
-        return root;
-    };
-    const union = (a: string, b: string): void => {
-        const rootA = find(a);
-        const rootB = find(b);
-        if (rootA !== rootB) parent.set(rootA, rootB);
-    };
-    return { find, union };
-};
-
-// Mean absolute pixel difference (0-255 scale) between two same-length
-// greyscale buffers. Different length means the rows were indexed under
-// different crop/blur constants (imageTransform.js's SQUARE_SIZE/CROP_MARGIN
-// changed since one of them was indexed) - not comparable, so treat as
-// infinitely far apart rather than throwing or false-matching.
-export const meanAbsDiff = (a: Buffer, b: Buffer): number => {
-    if (a.length !== b.length) return Infinity;
-    let sum = 0;
-    for (let i = 0; i < a.length; i++) sum += Math.abs(a[i] - b[i]);
-    return sum / a.length;
-};
-
-// Merges overlapping id groups into clusters: ids that appear together in any
-// one group end up in the same cluster, transitively. Clusters of fewer than 2
-// ids are dropped.
-const mergeGroups = (groups: string[][]): string[][] => {
-    const { find, union } = makeDisjointSet();
-    const ids = new Set<string>();
-    for (const group of groups) {
-        for (const id of group) {
-            ids.add(id);
-            union(group[0], id);
-        }
-    }
-    const clusters = new Map<string, string[]>();
-    for (const id of ids) {
-        const root = find(id);
-        if (!clusters.has(root)) clusters.set(root, []);
-        (clusters.get(root) as string[]).push(id);
-    }
-    return [...clusters.values()].filter(cluster => cluster.length > 1);
-};
+// The pure helpers live in duplicateMath.ts (unit-testable without SQLite);
+// re-exported for existing importers (dbImport.ts).
+export { meanAbsDiff, MEAN_DIFF_THRESHOLD } from "./duplicateMath";
 
 // Media that share an object-detection box (same class, coordinates equal to
 // BOX_ROUND_DECIMALS places) are duplicate candidates. A media sharing ANY box
@@ -87,13 +31,6 @@ export const findBlurFrameDuplicates = (): string[][] => {
     compareImgStore.ensureReady();
     return mergeGroups(compareImgStore.mediaIdPairsBySharedBlurFrames());
 };
-
-// Two frames count as visual duplicates when their cropped/greyscale pixels
-// differ, on average, by no more than this many levels out of 255. Picked
-// from measuring real near-duplicate frame pairs (re-encoded/re-cropped
-// re-uploads of the same video): those consistently landed around 0.3;
-// unrelated frames land far higher. See scripts/debugCompareVideos.js.
-export const MEAN_DIFF_THRESHOLD = 3;
 
 // Two-stage scan, coarse then fine:
 //
@@ -123,11 +60,36 @@ export const MEAN_DIFF_THRESHOLD = 3;
 // their own - meanAbsDiff already treats such buffers as infinitely far
 // from everything, so nothing is lost by not comparing them further afield.
 //
+// Memory: the coarse grouping is done in SQL (bucketQueries.ts), and only
+// one bucket's rows are loaded at a time; singleton buckets are never read.
+//
+// maxBucket: a bucket bigger than this (e.g. thousands of all-black frames)
+// only gets the linear exact-match pass (equal contentMd5/baseMd5), not the
+// O(k^2) pixel-distance pass - logged as a warning. Unset = no cap.
+//
+// shouldStop: polled between buckets; a stopped scan persists nothing (the
+// previous complete snapshot stays) and reports stopped.
+//
 // onProgress (comparedRows, totalRows) - fires once per row after its
-// group's comparisons for that row are done, so pipeline/PipelineRun.js's
-// "duplicates" stage can show a real percentage/ETA.
-export const findIndexDuplicates = async (onProgress?: (comparedRows: number, totalRows: number) => void): Promise<string[][]> => {
+// bucket's comparisons for that row are done, so pipeline/PipelineRun.js's
+// "duplicates" stage can show a real percentage/ETA. totalRows counts rows
+// in multi-frame buckets only.
+export interface BucketedScanOptions {
+    onProgress?: (comparedRows: number, totalRows: number) => void;
+    maxBucket?: number;
+    shouldStop?: () => boolean;
+}
+
+export interface BucketedScanResult {
+    groups: string[][];
+    stopped: boolean;
+    // Buckets that exceeded maxBucket and got the exact-match pass only.
+    cappedBuckets: number;
+}
+
+export const findIndexDuplicatesBucketed = async (options: BucketedScanOptions = {}): Promise<BucketedScanResult> => {
     compareImgStore.ensureReady();
+    const { onProgress, maxBucket, shouldStop } = options;
 
     const { find, union } = makeDisjointSet();
     const matchedIds = new Set<string>();
@@ -137,53 +99,42 @@ export const findIndexDuplicates = async (onProgress?: (comparedRows: number, to
         union(a, b);
     };
 
-    const rows = compareImgStore.allBaseGreyRows();
-    if (onProgress) onProgress(0, rows.length);
+    // Stage 1: coarse grouping by baseMd5Blur, in SQL.
+    const buckets = multiFrameBuckets();
+    const totalRows = buckets.reduce((sum, b) => sum + b.n, 0);
+    const largest = [...buckets].sort((a, b) => b.n - a.n).slice(0, 5);
+    console.log(`compareImg: ${totalRows} frames in ${buckets.length} multi-frame baseMd5Blur groups (largest: ${largest.map(b => b.n).join(", ") || "none"})`);
+    if (onProgress) onProgress(0, totalRows);
 
-    // Stage 1: coarse grouping by baseMd5Blur.
-    const NO_KEY = "";
-    const buckets = new Map<string, compareImgStore.BaseGreyRow[]>();
-    for (const row of rows) {
-        const key = row.baseMd5Blur ?? NO_KEY;
-        const bucket = buckets.get(key);
-        if (bucket) bucket.push(row);
-        else buckets.set(key, [row]);
-    }
-    let largest = 0;
-    for (const bucket of buckets.values()) largest = Math.max(largest, bucket.length);
-    console.log(`compareImg: ${rows.length} frames in ${buckets.size} baseMd5Blur groups (largest ${largest})`);
-
-    // Stage 2: the fine comparison, only within a group.
+    // Stage 2: the fine comparison, one bucket in memory at a time.
     let compared = 0;
-    for (const bucket of buckets.values()) {
-        for (let i = 0; i < bucket.length; i++) {
-            const a = bucket[i];
-            for (let j = i + 1; j < bucket.length; j++) {
-                const b = bucket[j];
-                if (a.mediaId === b.mediaId) continue;
-                if (a.contentMd5 && b.contentMd5 && a.contentMd5 === b.contentMd5) {
-                    markMatch(a.mediaId, b.mediaId);
-                } else if (a.baseMd5 && b.baseMd5 && a.baseMd5 === b.baseMd5) {
-                    markMatch(a.mediaId, b.mediaId);
-                } else if (meanAbsDiff(a.baseGrey, b.baseGrey) <= MEAN_DIFF_THRESHOLD) {
-                    markMatch(a.mediaId, b.mediaId);
-                }
-            }
-            compared++;
-            if (onProgress) onProgress(compared, rows.length);
+    let cappedBuckets = 0;
+    const onRow = (): void => {
+        compared++;
+        if (onProgress) onProgress(compared, totalRows);
+    };
+    for (const { key, n } of buckets) {
+        if (shouldStop?.()) return { groups: [], stopped: true, cappedBuckets };
+        const bucket = baseGreyRowsForBucket(key);
+        if (maxBucket !== undefined && n > maxBucket) {
+            cappedBuckets++;
+            console.warn(`compareImg: baseMd5Blur group ${key ?? "(no key)"} has ${n} frames (> ${maxBucket}) - exact matches only, near-duplicates in it are not compared`);
+            compareBucketExactOnly(bucket, markMatch, onRow);
+        } else {
+            compareBucket(bucket, markMatch, onRow);
         }
+        // The buckets are compared synchronously; yield between them so
+        // signals (SIGINT) and IPC are still serviced on a long scan.
+        await new Promise<void>(resolve => setImmediate(resolve));
     }
 
-    const groups = new Map<string, string[]>();
-    for (const id of matchedIds) {
-        const root = find(id);
-        if (!groups.has(root)) groups.set(root, []);
-        (groups.get(root) as string[]).push(id);
-    }
-
-    const result = [...groups.values()].filter(group => group.length > 1);
+    const result = clustersOf(matchedIds, find);
     // Persist the result (items_duplicated table) so it survives an app
     // restart instead of only living in this function's return value.
     compareImgStore.replaceDuplicateGroups(result);
-    return result;
+    return { groups: result, stopped: false, cappedBuckets };
 };
+
+// The GUI's entry point: no cap, never stopped.
+export const findIndexDuplicates = async (onProgress?: (comparedRows: number, totalRows: number) => void): Promise<string[][]> =>
+    (await findIndexDuplicatesBucketed({ onProgress })).groups;

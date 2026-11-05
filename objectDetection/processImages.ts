@@ -3,6 +3,11 @@ import fs from "fs";
 import * as MediaStore from "../mediaDb/MediaStore";
 import { DetectionBox, DetectMediaRef } from "../types/domain";
 import * as mediaIndexer from "../compareImg/mediaIndexer";
+import { countMedia, listItemsPage } from "../mediaDb/mediaPages";
+import { forEachPage } from "../mediaDb/paging";
+
+// Media per page of the detection pass.
+export const DETECT_PAGE_SIZE = 200;
 
 export interface DetectionFoundEvent {
     id: string;
@@ -42,8 +47,9 @@ export const processMediaToDetections = async (sink: DetectionSink, onnxDetector
     MediaStore.ensureReady();
     const modelPathId = MediaStore.getOrCreateModelPath(onnxDetector.getModelPath() as string);
     const classList = MediaStore.classListKey(classNames);
-    const medias = MediaStore.findAllItemsExists() || [];
-    const total = medias.length;
+    // Media count - progress is per media (already-detected ones are counted
+    // as they are skipped, one page at a time).
+    const total = countMedia();
 
     // Done-check per ITEM: a video/GIF has one item per extracted frame and
     // its itemId differs from the media id (checking the media id never
@@ -51,35 +57,6 @@ export const processMediaToDetections = async (sink: DetectionSink, onnxDetector
     // counts as done only when it was detected by this same model against
     // this same class list - switching .maloi model re-detects.
     const itemKey = (media: DetectMediaRef): string => media.itemId || media.id;
-    const detected = MediaStore.findDetectedItemIds(medias.map(itemKey), modelPathId, classList);
-
-    const mediaState = medias.filter(media => !detected.has(itemKey(media))).reduce((map, row) => {
-        const state = map.get(row.id);
-        if (!state) {
-            map.set(row.id, [row]);
-        } else {
-            state.push(row);
-        }
-        return map;
-    }, new Map<string, DetectMediaRef[]>());
-
-    // Detection is keyed by item (an image's 1 item, or a video/GIF's up to 4
-    // extracted frame items - compareImg/HashStore.js), the same content-
-    // addressable unit the duplicate finder already uses, so two media
-    // sharing identical content only ever get detected once. indexMediaBackground
-    // is idempotent (a no-op for content already indexed), so this
-    // transparently backfills items for any media never run through
-    // "Rebuild index" instead of requiring that as a separate step first.
-    await mediaIndexer.indexMediaBackground([...mediaState.values()].map((mapper) => {
-        const row = mapper[0];
-        return {
-            item: row.media,
-            mime: row.mime,
-            kind: row.kind,
-            contentMd5: row.contentMd5,
-            id: row.id,
-        }
-    }));
 
     // Same continuous worker-pool pattern as compareImg/mediaIndexer.ts's
     // indexMediaBackground (ITEM_CONCURRENCY): a fixed number of workers
@@ -162,17 +139,66 @@ export const processMediaToDetections = async (sink: DetectionSink, onnxDetector
         }
     };
 
-    const mediaGroups = [...mediaState.values()];
-    let cursor = 0;
-    const runWorker = async (): Promise<void> => {
-        // Stop is honoured before picking up each new media - one already
-        // in flight is allowed to finish so its already-computed boxes
-        // still get persisted and shown.
-        while (cursor < mediaGroups.length && !shouldStop()) {
-            await processOne(mediaGroups[cursor++]);
+    // One page of media (with their items) at a time: memory stays bounded
+    // by the page, and a stop takes effect within the page in flight.
+    let videosWithoutFrames = 0;
+    const detectPage = async (refs: DetectMediaRef[]): Promise<void> => {
+        const detected = MediaStore.findDetectedItemIds(refs.map(itemKey), modelPathId, classList);
+        const byMedia = new Map<string, DetectMediaRef[]>();
+        for (const ref of refs) {
+            if (!byMedia.has(ref.id)) byMedia.set(ref.id, []);
+            (byMedia.get(ref.id) as DetectMediaRef[]).push(ref);
         }
-    };
-    const workerCount = Math.min(DETECTION_CONCURRENCY, mediaGroups.length);
-    await Promise.all(Array.from({ length: workerCount }, runWorker));
+        const mediaGroups: DetectMediaRef[][] = [];
+        for (const group of byMedia.values()) {
+            const pending = group.filter(ref => !detected.has(itemKey(ref)));
+            if (pending.length > 0) mediaGroups.push(pending);
+            if ((group[0].kind === "video" || group[0].kind === "gif") && group.every(ref => !ref.itemId)) videosWithoutFrames++;
+        }
+        const skipped = byMedia.size - mediaGroups.length;
+        if (skipped > 0) {
+            processed += skipped;
+            sink.progress({ processed, total });
+            if (onProgress) onProgress(processed, total);
+        }
+        if (mediaGroups.length === 0) return;
 
-}
+        // Detection is keyed by item (an image's 1 item, or a video/GIF's up
+        // to 4 extracted frame items - compareImg/HashStore.js), the same
+        // content-addressable unit the duplicate finder already uses.
+        // indexMediaBackground is idempotent (a no-op for content already
+        // indexed), so this transparently backfills items for any media never
+        // run through "Rebuild index" instead of requiring that first.
+        await mediaIndexer.indexMediaBackground(mediaGroups.map(([row]) => ({
+            item: row.media,
+            mime: row.mime,
+            kind: row.kind,
+            contentMd5: row.contentMd5,
+            id: row.id,
+        })));
+
+        let cursor = 0;
+        const runWorker = async (): Promise<void> => {
+            // Stop is honoured before picking up each new media - one already
+            // in flight is allowed to finish so its already-computed boxes
+            // still get persisted and shown.
+            while (cursor < mediaGroups.length && !shouldStop()) {
+                await processOne(mediaGroups[cursor++]);
+            }
+        };
+        const workerCount = Math.min(DETECTION_CONCURRENCY, mediaGroups.length);
+        await Promise.all(Array.from({ length: workerCount }, runWorker));
+    };
+
+    await forEachPage(
+        (after, limit) => {
+            const page = listItemsPage(after, limit);
+            return { rows: page.refs, next: page.lastRowid };
+        },
+        detectPage,
+        { pageSize: DETECT_PAGE_SIZE, shouldStop },
+    );
+    if (videosWithoutFrames > 0) {
+        console.warn(`detectObjects: ${videosWithoutFrames} video/GIF media have no extracted frames yet and were skipped - run the index stage first`);
+    }
+};

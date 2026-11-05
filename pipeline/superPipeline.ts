@@ -7,10 +7,13 @@
 // The "scan" stage itself is NOT here - the GUI's scan streams media to the
 // renderer as it walks (app.ts's openfileRecursive), the CLI has its own
 // sequential walker (cli/scan.ts).
+import fs from "fs";
 import * as MediaStore from "../mediaDb/MediaStore";
 import * as mediaIndexer from "../compareImg/mediaIndexer";
 import * as duplicateFinder from "../compareImg/duplicateFinder";
 import { backfillContentMd5 } from "../mediaDb/backfill";
+import { countMedia, listMediaPage } from "../mediaDb/mediaPages";
+import { forEachPage } from "../mediaDb/paging";
 import { processMediaToDetections, type DetectionFoundEvent, type DetectorLike as LoopDetector } from "../objectDetection/processImages";
 import type { StageDef } from "./PipelineRun";
 
@@ -48,40 +51,84 @@ export interface SuperEvents {
 
 export interface SuperContext {
     events: SuperEvents;
-    // Polled by the detection loop before each media.
+    // Polled by the detection loop before each media (the GUI's "stop
+    // detection" button).
     shouldStop(): boolean;
+    // Polled between pages/batches of the hash, index and duplicates stages
+    // and between chain stages: true ends the run early, leaving everything
+    // finished so far persisted (the headless runner's SIGINT). The GUI
+    // leaves it unset - its stop button only ever meant detection.
+    abort?(): boolean;
+    // Pixel-duplicate buckets larger than this skip the O(k^2) near-match
+    // comparison (exact hash matches only). Unset = no cap (GUI default).
+    maxDuplicateBucket?: number;
+    // true: a stage that fails as a whole (DB error, crash in the loop)
+    // throws instead of being reported as an empty/finished result - the
+    // headless runner turns that into exit code 3. The GUI leaves it unset
+    // and keeps showing an empty result.
+    strict?: boolean;
     detector: DetectorLike;
 }
+
+const failStage = (ctx: SuperContext, stage: StageKey, error: unknown): void => {
+    if (ctx.strict) throw error instanceof Error ? error : new Error(`${stage} stage failed: ${String(error)}`);
+};
 
 export type DetectResult = "done" | "stopped" | "no-model" | "no-classes";
 
 export const runHash = async (ctx: SuperContext): Promise<void> => {
-    await backfillContentMd5((processed, total) => ctx.events.progress?.(processed, total));
+    const ok = await backfillContentMd5((processed, total) => ctx.events.progress?.(processed, total), ctx.abort);
+    if (!ok) failStage(ctx, "hash", "content hashing aborted (see the log)");
 };
 
-// (Re)indexes every media still on disk into the compareImg index. Returns
-// how many media were submitted; never throws (reports through indexDone).
+// Media per indexMediaBackground call - one page of rows in memory at a time.
+export const INDEX_PAGE_SIZE = 500;
+
+// (Re)indexes every media still on disk into the compareImg index, one
+// keyset page of the media table at a time (never the whole table in
+// memory). Already-indexed items are skipped inside mediaIndexer, so a
+// re-run only pays a lookup per item. Returns how many media were submitted
+// (on disk); never throws (reports through indexDone).
 export const runBuildIndex = async (ctx: SuperContext): Promise<number> => {
     const { events } = ctx;
     try {
-        const medias = MediaStore.findAllMediaThatExists() || [];
-        events.indexProgress?.(0, medias.length);
-        events.progress?.(0, medias.length);
-        await mediaIndexer.indexMediaBackground(medias.map(m => ({
-            item: m.localPath,
-            mime: m.mime,
-            kind: m.kind,
-            contentMd5: m.contentMd5,
-            id: m.id,
-        })), (processed, total) => {
-            events.indexProgress?.(processed, total);
-            events.progress?.(processed, total);
-        });
-        events.indexDone?.({ success: true, count: medias.length });
-        return medias.length;
+        MediaStore.ensureReady();
+        // Upper bound: rows whose file vanished are dropped page by page.
+        const total = countMedia();
+        let done = 0;
+        let submitted = 0;
+        events.indexProgress?.(0, total);
+        events.progress?.(0, total);
+        await forEachPage(
+            (after, limit) => {
+                const rows = listMediaPage(after, limit);
+                return { rows, next: rows.length ? rows[rows.length - 1].rowid : after };
+            },
+            async (rows) => {
+                const existing = rows.filter(m => fs.existsSync(m.localPath));
+                submitted += existing.length;
+                done += rows.length - existing.length;
+                const base = done;
+                await mediaIndexer.indexMediaBackground(existing.map(m => ({
+                    item: m.localPath,
+                    mime: m.mime,
+                    kind: m.kind,
+                    contentMd5: m.contentMd5,
+                    id: m.id,
+                })), (processed) => {
+                    events.indexProgress?.(base + processed, total);
+                    events.progress?.(base + processed, total);
+                });
+                done += existing.length;
+            },
+            { pageSize: INDEX_PAGE_SIZE, shouldStop: ctx.abort },
+        );
+        events.indexDone?.({ success: true, count: submitted });
+        return submitted;
     } catch (error) {
         console.error("rebuildIndex failed", error);
         events.indexDone?.({ success: false, error: (error as Error).message });
+        failStage(ctx, "index", error);
         return 0;
     }
 };
@@ -104,10 +151,13 @@ const detectGated = async (ctx: SuperContext): Promise<DetectResult> => {
         found: (event: DetectionFoundEvent) => events.detection?.(event),
         progress: (p: { processed: number; total: number }) => events.detectionProgress?.(p),
     };
-    await processMediaToDetections(sink, detector, classNames, ctx.shouldStop,
-        (processed, total) => events.progress?.(processed, total)).catch(error => {
+    try {
+        await processMediaToDetections(sink, detector, classNames, ctx.shouldStop,
+            (processed, total) => events.progress?.(processed, total));
+    } catch (error) {
         console.error("processMediaToDetections failed", error);
-    });
+        failStage(ctx, "detect", error);
+    }
     return ctx.shouldStop() ? "stopped" : "done";
 };
 
@@ -115,26 +165,27 @@ const detectGated = async (ctx: SuperContext): Promise<DetectResult> => {
 // failure reports (and returns) an empty group list.
 export const runDuplicates = async (ctx: SuperContext): Promise<string[][]> => {
     try {
-        const groups = await duplicateFinder.findIndexDuplicates((processed, total) => ctx.events.progress?.(processed, total));
-        ctx.events.duplicates?.(groups);
-        return groups;
+        const result = await duplicateFinder.findIndexDuplicatesBucketed({
+            onProgress: (processed, total) => ctx.events.progress?.(processed, total),
+            maxBucket: ctx.maxDuplicateBucket,
+            shouldStop: ctx.abort,
+        });
+        // Stopped part-way: the previous persisted result is left in place
+        // and nothing is announced.
+        if (result.stopped) return [];
+        ctx.events.duplicates?.(result.groups);
+        return result.groups;
     } catch (error) {
         console.error("findIndexDuplicates failed", error);
         ctx.events.duplicates?.([]);
+        failStage(ctx, "duplicates", error);
         return [];
     }
 };
 
-export interface ChainOptions {
-    // Checked between stages: true skips every remaining stage. Separate from
-    // ctx.shouldStop (the detection stop button) so the GUI's "stop
-    // detection" doesn't also cancel the duplicate scan that follows it.
-    abort?: () => boolean;
-}
-
 // Runs the selected post-scan stages in canonical order. Stage functions
 // report their own item-level failures; an unexpected throw propagates.
-export const runSuperChain = async (ctx: SuperContext, stages: readonly StageKey[], options: ChainOptions = {}): Promise<void> => {
+export const runSuperChain = async (ctx: SuperContext, stages: readonly StageKey[]): Promise<void> => {
     const steps: [StageKey, () => Promise<unknown>][] = [
         ["hash", () => runHash(ctx)],
         ["index", () => runBuildIndex(ctx)],
@@ -143,7 +194,7 @@ export const runSuperChain = async (ctx: SuperContext, stages: readonly StageKey
     ];
     for (const [key, run] of steps) {
         if (!stages.includes(key)) continue;
-        if (options.abort?.()) return;
+        if (ctx.abort?.()) return;
         ctx.events.stageStarted?.(key);
         await run();
     }

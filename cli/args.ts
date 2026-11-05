@@ -38,6 +38,11 @@ Options:
                       to the run log under <mediaRoot>/tmp/logs/).
   --help              Show this help.
 
+Do not run the GUI on the same folder while this runs: only CLI runs take
+the <mediaRoot>/tmp/lsr.lock lock, so the two would write index.db at once.
+
+Symlinks and special files (fifos, sockets, devices) are skipped.
+
 Exit codes:
   0    finished
   1    finished, but some items failed (see the run log)
@@ -45,6 +50,9 @@ Exit codes:
   3    a stage failed
   130  interrupted (SIGINT/SIGTERM) - re-run to continue
 `;
+
+// Kernel pseudo-filesystems: never media, and reading some entries blocks.
+const PSEUDO_FS = ["/proc", "/sys", "/dev"];
 
 const VALUE_FLAGS = new Set(["--root", "--maloi", "--stages"]);
 const BOOL_FLAGS = new Set(["--verbose", "--help", "-h"]);
@@ -95,6 +103,8 @@ export const parseArgs = (argv: readonly string[]): ParseOutcome => {
     if (!values["--root"]) return { ok: false, error: "--root is required" };
     const root = path.resolve(values["--root"]);
     if (!isDirectory(root)) return { ok: false, error: `--root is not an existing folder: ${root}` };
+    if (path.parse(root).root === root) return { ok: false, error: `--root cannot be the filesystem root (${root})` };
+    if (PSEUDO_FS.some(p => root === p || root.startsWith(p + path.sep))) return { ok: false, error: `--root cannot be a pseudo-filesystem (${root})` };
     const appTmp = insideAppTmp(root);
     if (appTmp) return { ok: false, error: `--root is inside an app data folder (${appTmp}); point it at the media folder itself` };
 

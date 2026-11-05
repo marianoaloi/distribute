@@ -19,6 +19,11 @@ export const EXIT_ITEM_ERRORS = 1;
 export const EXIT_USAGE = 2;
 export const EXIT_STAGE_FAILED = 3;
 
+// Pixel-duplicate buckets above this many frames get exact matches only (see
+// duplicateFinder.findIndexDuplicatesBucketed): one degenerate bucket - all
+// black frames, say - would otherwise cost k^2 pixel comparisons.
+export const MAX_DUPLICATE_BUCKET = 5000;
+
 const RUN_HINT = "Run it with Electron's bundled Node: ELECTRON_RUN_AS_NODE=1 electron electron-dist/cli/lsr.js ...";
 
 class StageFailure extends Error { }
@@ -74,6 +79,9 @@ const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, 
     const ctx: import("../pipeline/superPipeline").SuperContext = {
         detector,
         shouldStop,
+        abort: shouldStop,
+        maxDuplicateBucket: MAX_DUPLICATE_BUCKET,
+        strict: true,
         events: {
             progress: (processed, total) => pipelineRun.updateStage(processed, total),
             detection: (event) => { detections.media++; if (event.error) detections.failed++; },
@@ -85,7 +93,8 @@ const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, 
             const stats = await scanTree(options.root, { shouldStop, onProgress: (s) => pipelineRun.updateStage(s.media) });
             return `${stats.folders} folders, ${stats.media} media` +
                 (stats.unreadableFolders ? `, ${stats.unreadableFolders} unreadable folders` : "") +
-                (stats.skippedSymlinkDirs ? `, ${stats.skippedSymlinkDirs} symlinked folders skipped` : "");
+                (stats.skippedSymlinks ? `, ${stats.skippedSymlinks} symlinks skipped` : "") +
+                (stats.skippedSpecial ? `, ${stats.skippedSpecial} special files skipped` : "");
         },
         hash: async () => {
             const missingBefore = MediaStore.countMediaMissingContentMd5();
@@ -106,6 +115,7 @@ const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, 
         },
         duplicates: async () => {
             const groups = await superPipeline.runDuplicates(ctx);
+            if (shouldStop()) return "stopped before the end - the previous duplicate result is kept";
             return `${groups.length} duplicate groups`;
         },
     };
@@ -118,7 +128,7 @@ const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, 
         const started = Date.now();
         const errorsBefore = errorCount();
         try {
-            const note = await stageRunners[stage]();
+            const note = (await stageRunners[stage]()) + (shouldStop() ? " (stopped early)" : "");
             reporter.flush();
             const errors = errorCount() - errorsBefore;
             summaries.push({ stage, elapsedMs: Date.now() - started, note: errors ? `${note}; ${errors} errors logged` : note });
@@ -173,11 +183,29 @@ export const main = async (argv: string[]): Promise<void> => {
     setActiveFolder(options.root);
     const log = createRunLog(options.root, { verbose: options.verbose });
     const { counters } = patchConsole(log);
-    const stop = installStopHandlers((signal) =>
-        log.warn(`${signal} received: stopping after the current items (signal again to quit immediately; re-run to continue)`));
-    let unexpected = 0;
-    process.on("uncaughtException", (error) => { unexpected++; log.error(`uncaught exception: ${error.stack || error.message}`); });
-    process.on("unhandledRejection", (reason) => { unexpected++; log.error(`unhandled rejection: ${reason instanceof Error ? reason.stack : String(reason)}`); });
+    const stop = installStopHandlers(
+        (signal) => log.warn(`${signal} received: stopping after the current items (signal again to quit immediately; re-run to continue)`),
+        process,
+        (signal) => {
+            log.writeSync(`second ${signal}: exiting immediately (exit code ${EXIT_INTERRUPTED}); re-run the same command to continue`);
+            lock.release();
+        },
+    );
+    // An error thrown outside every awaited stage (a worker callback, an
+    // ffmpeg child handler) can leave a stage promise pending forever - so
+    // never limp on: log it, release the lock and exit 3. Everything already
+    // written is resumable.
+    let fatalExiting = false;
+    const fatal = (what: string, reason: unknown): void => {
+        log.writeSync(`${what}: ${reason instanceof Error ? reason.stack || reason.message : String(reason)} - exiting (exit code ${EXIT_STAGE_FAILED})`);
+        if (fatalExiting) return;
+        fatalExiting = true;
+        lock.release();
+        setTimeout(() => process.exit(EXIT_STAGE_FAILED), 5000).unref();
+        finish(log, EXIT_STAGE_FAILED).catch(() => process.exit(EXIT_STAGE_FAILED));
+    };
+    process.on("uncaughtException", (error) => fatal("uncaught exception", error));
+    process.on("unhandledRejection", (reason) => fatal("unhandled rejection", reason));
 
     const startedAt = Date.now();
     log.info(`LSR run on ${options.root} - stages: ${options.stages.join(", ")} - log: ${log.path}`);
@@ -191,7 +219,7 @@ export const main = async (argv: string[]): Promise<void> => {
         code = EXIT_STAGE_FAILED;
     }
     if (code === EXIT_OK && stop.shouldStop()) code = EXIT_INTERRUPTED;
-    if (code === EXIT_OK && (counters.errors > 0 || unexpected > 0)) code = EXIT_ITEM_ERRORS;
+    if (code === EXIT_OK && counters.errors > 0) code = EXIT_ITEM_ERRORS;
 
     log.info("==== LSR summary ====");
     for (const s of summaries) log.info(`  ${s.stage.padEnd(10)} ${formatDuration(s.elapsedMs).padStart(7)}  ${s.note}`);
