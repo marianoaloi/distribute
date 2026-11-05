@@ -121,6 +121,37 @@ describe("createRunLog rotation under a synchronous burst", () => {
     })
 })
 
+describe("writeSync", () => {
+    it("appends synchronously to the log (visible before close) and writes stderr", () => {
+        const s = sinks()
+        const log = createRunLog(root, { ...s })
+        log.writeSync("second SIGINT: exiting")
+        // no await: the line must already be on disk
+        expect(fs.readFileSync(log.path, "utf8")).toMatch(/^\S+Z ERROR second SIGINT: exiting\n$/)
+        expect(s.err).toEqual(["second SIGINT: exiting\n"])
+        return log.close()
+    })
+    it("lands after the lines already flushed by the stream", async () => {
+        const s = sinks()
+        const log = createRunLog(root, { ...s })
+        log.info("first")
+        await new Promise(r => setTimeout(r, 30))
+        log.writeSync("last")
+        const lines = fs.readFileSync(log.path, "utf8").trim().split("\n")
+        expect(lines[lines.length - 1]).toMatch(/ERROR last$/)
+        await log.close()
+    })
+    it("never throws even if the log folder is gone", async () => {
+        const s = sinks()
+        const log = createRunLog(root, { ...s })
+        await log.close()
+        fs.rmSync(path.join(root, "tmp"), { recursive: true, force: true })
+        fs.writeFileSync(path.join(root, "tmp"), "now a file") // appendFileSync -> ENOTDIR
+        expect(() => log.writeSync("x")).not.toThrow()
+        expect(s.err).toEqual(["x\n"])
+    })
+})
+
 describe("formatArgs", () => {
     it("joins strings, JSON-encodes objects and uses stacks for errors", () => {
         const e = new Error("boom")

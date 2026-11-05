@@ -48,4 +48,22 @@ describe("installStopHandlers", () => {
         proc.emit("SIGINT", "SIGINT")
         expect(s.shouldStop()).toBe(false)
     })
+    it("onForced runs synchronously before exit(130) on the second signal only", () => {
+        const proc = fakeProc()
+        const order: string[] = []
+        proc.exit.mockImplementation(() => { order.push("exit") })
+        installStopHandlers(() => order.push("first"), proc as any, (sig) => order.push(`forced:${sig}`))
+        proc.emit("SIGINT", "SIGINT")
+        expect(order).toEqual(["first"])
+        proc.emit("SIGTERM", "SIGTERM")
+        expect(order).toEqual(["first", "forced:SIGTERM", "exit"])
+        expect(proc.exit).toHaveBeenCalledWith(130)
+    })
+    it("a throwing onForced still exits with 130", () => {
+        const proc = fakeProc()
+        installStopHandlers(() => undefined, proc as any, () => { throw new Error("disk full") })
+        proc.emit("SIGINT", "SIGINT")
+        expect(() => proc.emit("SIGINT", "SIGINT")).not.toThrow()
+        expect(proc.exit).toHaveBeenCalledWith(130)
+    })
 })

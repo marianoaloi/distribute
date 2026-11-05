@@ -120,6 +120,18 @@ describe("parseArgs", () => {
         expect(err(["--root", root, "--maloi", path.join(dir, "x.maloi")])).toMatch(/--maloi file not found/)
         expect(err(["--root", root, "--maloi", root])).toMatch(/--maloi file not found/)
     })
+    it("rejects the filesystem root", () => {
+        expect(err(["--root", "/", "--stages", "scan"])).toMatch(/cannot be the filesystem root/)
+        expect(err(["--root", "/..", "--stages", "scan"])).toMatch(/cannot be the filesystem root/)
+    })
+    it.each(["/proc", "/proc/self", "/sys", "/sys/kernel", "/dev"])("rejects pseudo-filesystem %s", (p) => {
+        expect(err(["--root", p, "--stages", "scan"])).toMatch(/cannot be a pseudo-filesystem/)
+    })
+    it("only rejects pseudo-filesystems by path prefix, not by name similarity", () => {
+        const look = path.join(dir, "proc")
+        fs.mkdirSync(look, { recursive: true })
+        expect(ok(["--root", look, "--stages", "scan"]).root).toBe(look)
+    })
     it("propagates --stages errors", () => {
         expect(err(["--root", root, "--stages", "scan,nope"])).toMatch(/unknown stage/)
         expect(err(["--root", root, "--stages="])).toMatch(/--stages is empty/)
