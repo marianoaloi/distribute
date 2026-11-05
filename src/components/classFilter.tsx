@@ -8,14 +8,58 @@ import { FilterAlt, FilterAltOffOutlined, Add, Delete, RestartAlt, Clear } from 
 import { LoadDetectionClasses, LoadDetections, selectDetectionClassNames, selectDetectionGroups, useSelector } from "../lib/redux"
 import { configurationsSelector, setClassFilter, setClassPresence } from "../lib/redux/slices/configurations"
 import { ClassFilterBar } from "./classFilter.styled"
-import { ClassFilter as ClassFilterExpr, ClassFilterGroup, ClassFilterTerm, ClassPresence } from "../entity/FilterMedia"
+import { ClassExpr, ClassFilter as ClassFilterExpr, ClassFilterGroup, ClassFilterTerm, ClassPresence } from "../entity/FilterMedia"
 import { DetectionGroup, MediaDetections } from "../lib/redux/slices/detections/detections.reduce"
 
-// Drops half-built terms (no class picked yet) and any group left empty by
-// that - a row mid-edit must never silently hide the whole grid.
-export function normalizeClassFilter(filter: ClassFilterExpr): ClassFilterGroup[] {
+// Evaluates a parsed .maloi expression; `has` says whether class id is present.
+export function evalClassExpr(ast: ClassExpr, has: (id: number) => boolean): boolean {
+    switch (ast.op) {
+        case 'class': return has(ast.id)
+        case 'not': return !evalClassExpr(ast.arg, has)
+        case 'and': return ast.args.every(arg => evalClassExpr(arg, has))
+        case 'or': return ast.args.some(arg => evalClassExpr(arg, has))
+    }
+}
+
+function maxClassId(ast: ClassExpr): number {
+    switch (ast.op) {
+        case 'class': return ast.id
+        case 'not': return maxClassId(ast.arg)
+        default: return Math.max(-1, ...ast.args.map(maxClassId))
+    }
+}
+
+// A group whose ids no longer fit the class list (e.g. classes were edited
+// after the .maloi was picked) is stale: hidden from the Select and never
+// matched, rather than evaluated against the wrong classes.
+export function isStaleGroup(group: DetectionGroup, classNames: string[]): boolean {
+    return maxClassId(group.ast) >= classNames.length
+}
+
+// Group name -> matcher over a media's class names; undefined when the group
+// is unknown or stale.
+export type GroupResolver = (groupName: string) => ((classes: string[]) => boolean) | undefined
+
+export function groupResolver(groups: DetectionGroup[], classNames: string[]): GroupResolver {
+    const byName = new Map(groups
+        .filter(group => !isStaleGroup(group, classNames))
+        .map(group => [group.name, group.ast] as const))
+    return name => {
+        const ast = byName.get(name)
+        return ast && ((classes: string[]) => evalClassExpr(ast, id => classes.includes(classNames[id])))
+    }
+}
+
+// Drops half-built terms (nothing picked yet) and any group left empty by
+// that - a row mid-edit must never silently hide the whole grid. With a
+// resolver, group terms it can't resolve (unknown/stale, e.g. persisted
+// before another .maloi was picked) are dropped too, for the same reason.
+export function normalizeClassFilter(filter: ClassFilterExpr, resolve?: GroupResolver): ClassFilterGroup[] {
+    const keep = (term: ClassFilterTerm) => term.group
+        ? !resolve || resolve(term.group) !== undefined
+        : term.className !== ''
     return filter
-        .map(group => group.filter(term => term.className !== ''))
+        .map(group => group.filter(keep))
         .filter(group => group.length > 0)
 }
 
@@ -32,15 +76,24 @@ function termHolds(term: ClassFilterTerm, detection: MediaDetections | undefined
     return term.score >= 0 ? range.max >= threshold : range.min <= threshold
 }
 
+// A group term holds when its expression is true over the media's classes
+// (none for media without detections, so "!(1)" holds). Score is ignored. No
+// matcher (unknown/stale group, or no resolver) -> doesn't hold.
+function groupTermHolds(term: ClassFilterTerm, detection: MediaDetections | undefined, resolve?: GroupResolver): boolean {
+    const matcher = resolve?.(term.group ?? '')
+    return matcher ? matcher(detection?.classes ?? []) : false
+}
+
 // `groups` must already be normalized. `detection` carries the union of
 // classes (and per-class score range) across every item linked to the media
 // (all 4 video/GIF frames, not just the thumbnail one - see
 // detections.reduce.ts's MediaDetections). Media with no detections fails
 // every positive term and satisfies every negated one; NOT inverts the whole
-// term, score condition included.
-export function matchesClassFilter(detection: MediaDetections | undefined, groups: ClassFilterGroup[]): boolean {
+// term, score condition included (for a group term: the whole expression).
+export function matchesClassFilter(detection: MediaDetections | undefined, groups: ClassFilterGroup[], resolve?: GroupResolver): boolean {
     if (groups.length === 0) return true
-    return groups.some(group => group.every(term => termHolds(term, detection) !== term.negate))
+    const holds = (term: ClassFilterTerm) => term.group ? groupTermHolds(term, detection, resolve) : termHolds(term, detection)
+    return groups.some(group => group.every(term => holds(term) !== term.negate))
 }
 
 // Has the media any detected class at all? Media never run through detection
@@ -55,7 +108,8 @@ export function matchesClassPresence(withClass: boolean, presence: ClassPresence
     return presence === '' || withClass === (presence === 'with')
 }
 
-// Select values starting with this are group picks, never class names.
+// Select values starting with this are group picks (prefix + group name),
+// never class names.
 const GROUP_PREFIX = '▸group:'
 
 const blankTerm = (): ClassFilterTerm => ({ className: '', negate: false, score: null })
@@ -63,16 +117,6 @@ const blankTerm = (): ClassFilterTerm => ({ className: '', negate: false, score:
 // The dialog always shows at least one row, so the class Select (which also
 // lists the groups) is reachable even when the filter is empty.
 const withBlankRow = (filter: ClassFilterExpr): ClassFilterExpr => filter.length > 0 ? filter : [[blankTerm()]]
-
-// Group -> filter expression: OR = one single-term group per class (groups are
-// ORed), AND = one group holding every term. Negative id = NOT that class.
-// Null when an id no longer fits the class list (e.g. classes were edited
-// after the .maloi was picked), so a stale group is hidden, not misapplied.
-function groupToFilter(group: DetectionGroup, classNames: string[]): ClassFilterExpr | null {
-    if (group.classes.some(id => Math.abs(id) >= classNames.length)) return null
-    const terms = group.classes.map((id): ClassFilterTerm => ({ className: classNames[Math.abs(id)], negate: id < 0, score: null }))
-    return group.join === 'AND' ? [terms] : terms.map(term => [term])
-}
 
 // Empty -> null (ignore score); anything that isn't an integer in -100..100
 // is rejected (undefined) so the field keeps its previous value.
@@ -98,10 +142,14 @@ export const ClassFilter = (() => {
     const [preTryFilter, setPreTryFilter] = useState<ClassFilterExpr>([])
     // Same for the Has/Without class selector, which always applies live.
     const [preTryPresence, setPreTryPresence] = useState<ClassPresence>('')
-    const active = normalizeClassFilter(config.classFilter).length > 0 || config.classPresence !== ''
-    const groupFilters = detectionGroups
-        .map((group, index) => ({ index, name: group.name, filter: groupToFilter(group, classNames) }))
-        .filter(g => g.filter !== null)
+    const resolve = groupResolver(detectionGroups, classNames)
+    const active = normalizeClassFilter(config.classFilter, resolve).length > 0 || config.classPresence !== ''
+    const validGroups = detectionGroups.filter(group => !isStaleGroup(group, classNames))
+    const validGroupNames = new Set(validGroups.map(group => group.name))
+    // A row naming a group that is unknown/stale right now (groups not loaded
+    // yet, or another .maloi is active) gets a disabled placeholder option, so
+    // the Select shows what the row holds instead of a blank, out-of-range value.
+    const unavailableGroup = (term: ClassFilterTerm) => !!term.group && !validGroupNames.has(term.group)
 
     // index.db is per-folder: both the class list the dropdown offers and the
     // persisted detections the filter matches against must be re-fetched every
@@ -114,6 +162,11 @@ export const ClassFilter = (() => {
     }, [config.mediaLoading, dispatch])
 
     const openDialog = () => { setDraft(withBlankRow(config.classFilter)); setPreTryFilter(config.classFilter); setPreTryPresence(config.classPresence); setOpen(true) }
+    // The stored (persisted) filter is normalized WITHOUT the resolver: a group
+    // term that can't be resolved right now (groups not loaded yet, another
+    // .maloi active) must survive Cancel/Try/Apply, not be deleted for good.
+    // The grids normalize with the resolver on read, so it's ignored there.
+    //
     // Discards whatever "Try" applied live and restores what was active
     // before the dialog opened - Cancel must undo Try's preview, not just
     // close the dialog on top of it.
@@ -139,21 +192,15 @@ export const ClassFilter = (() => {
         )
     }
 
-    // Picking a group replaces the whole filter with its expression and applies
-    // it right away (dialog stays open for tweaking); it is never stored as a
-    // term's className.
-    const applyGroup = (index: number) => {
-        const filter = groupFilters.find(g => g.index === index)?.filter
-        if (!filter) return
-        setDraft(filter)
-        dispatch(setClassFilter(normalizeClassFilter(filter)))
-    }
-
-    const setClassName = (groupIndex: number, termIndex: number, className: string) => {
-        if (className.startsWith(GROUP_PREFIX)) return applyGroup(Number(className.slice(GROUP_PREFIX.length)))
+    // Picking a group fills only this row (it becomes a group condition, score
+    // dropped); like any row edit it takes effect on Try/Apply, never on pick.
+    const setClassName = (groupIndex: number, termIndex: number, picked: string) => {
+        const update = (term: ClassFilterTerm): ClassFilterTerm => picked.startsWith(GROUP_PREFIX)
+            ? { ...term, className: '', group: picked.slice(GROUP_PREFIX.length), score: null }
+            : { ...term, className: picked, group: undefined }
         setDraft(prev =>
             prev.map((group, gi) => gi === groupIndex
-                ? group.map((term, ti) => ti === termIndex ? { ...term, className } : term)
+                ? group.map((term, ti) => ti === termIndex ? update(term) : term)
                 : group)
         )
     }
@@ -209,6 +256,7 @@ export const ClassFilter = (() => {
                     <DialogContentText>
                         Media matches if it satisfies ANY group. Inside a group, ALL conditions must hold.
                         Score % (-100..100) is optional: 90 means a detection with score of at least 90%, -50 means one with at most 50%.
+                        A group (▸) is one condition: NOT inverts its whole expression, and Score % does not apply to it.
                     </DialogContentText>
                     {classNames.length === 0 &&
                         <DialogContentText>
@@ -232,26 +280,34 @@ export const ClassFilter = (() => {
                                     <Select
                                         size="small"
                                         displayEmpty
-                                        value={term.className}
+                                        value={term.group ? GROUP_PREFIX + term.group : term.className}
                                         onChange={(e) => setClassName(gi, ti, e.target.value)}
                                         sx={{ minWidth: 180 }}
                                     >
                                         <MenuItem value=""><em>Choose a class</em></MenuItem>
                                         {classNames.map(n => <MenuItem key={n} value={n}>{n}</MenuItem>)}
-                                        {groupFilters.length > 0 && <ListSubheader>Groups</ListSubheader>}
-                                        {groupFilters.map(g => <MenuItem key={GROUP_PREFIX + g.index} value={GROUP_PREFIX + g.index}>{'▸ ' + g.name}</MenuItem>)}
+                                        {(validGroups.length > 0 || unavailableGroup(term)) && <ListSubheader>Groups</ListSubheader>}
+                                        {validGroups.map(g => <MenuItem key={g.name} value={GROUP_PREFIX + g.name} title={g.expr}>{'▸ ' + g.name}</MenuItem>)}
+                                        {unavailableGroup(term) &&
+                                            <MenuItem value={GROUP_PREFIX + term.group} disabled
+                                                title="This group isn't in the current .maloi (or its classes changed) - the condition is ignored">
+                                                {'▸ ' + term.group + ' (unavailable)'}
+                                            </MenuItem>}
                                     </Select>
                                     <TextField
                                         size="small"
                                         type="number"
                                         label="Score %"
-                                        title="+N: some detection with score >= N%. -N: some detection with score <= N%. Empty: any score."
+                                        title={term.group
+                                            ? "Score does not apply to a group."
+                                            : "+N: some detection with score >= N%. -N: some detection with score <= N%. Empty: any score."}
+                                        disabled={!!term.group}
                                         value={term.score ?? ''}
                                         onChange={(e) => setScore(gi, ti, e.target.value)}
                                         slotProps={{
                                             htmlInput: { min: -100, max: 100, step: 1 },
                                             input: {
-                                                endAdornment: term.score !== null && term.score !== undefined &&
+                                                endAdornment: !term.group && term.score !== null && term.score !== undefined &&
                                                     <InputAdornment position="end">
                                                         <IconButton type="button" size="small" edge="end"
                                                             onClick={() => setScore(gi, ti, '')} title="Clear score (any score)">

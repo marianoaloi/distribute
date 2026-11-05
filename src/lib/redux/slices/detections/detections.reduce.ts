@@ -1,4 +1,5 @@
 import { createSlice } from "@reduxjs/toolkit";
+import { ClassExpr } from "../../../../entity/FilterMedia";
 
 export interface DetectionBox {
     x: number
@@ -10,12 +11,13 @@ export interface DetectionBox {
     className: string
 }
 
-// A predefined class-filter group from the folder's .maloi. classes are raw
-// class ids (negative = NOT), resolved to names against classNames at use.
+// A predefined class-filter group from the folder's .maloi. expr is the
+// original text (shown as a tooltip); ast is its parse, with class ids
+// resolved to names against classNames at evaluation time.
 export interface DetectionGroup {
     name: string
-    classes: number[]
-    join: 'OR' | 'AND'
+    expr: string
+    ast: ClassExpr
 }
 
 interface DetectionProgress {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { OpenDirectory, OpenDirectoryRecursive, selectDetections, selectMedias, selectPipelineRunning, updateManyArrayItem, useSelector } from "../lib/redux"
+import { OpenDirectory, OpenDirectoryRecursive, selectDetectionClassNames, selectDetectionGroups, selectDetections, selectMedias, selectPipelineRunning, updateManyArrayItem, useSelector } from "../lib/redux"
 import { ImgGrid, NoMediaFound, Qtd, Resume } from "./gridImg.styled"
 import { MediaIMG, isScrollToLastSeenKey, scrollToMedia } from "./media"
 import { Media } from "../entity/Media"
@@ -11,7 +11,7 @@ import { Pagination } from "./pagination"
 import ModalZoom from "./modalZoom"
 import { configurationsSelector, setPage, setPostsPerPage, setScrollPosition } from "../lib/redux/slices/configurations"
 import { MediaTypeFilter, matchesMediaType } from "./mediaTypeFilter"
-import { ClassFilter, hasClass, matchesClassFilter, matchesClassPresence, normalizeClassFilter } from "./classFilter"
+import { ClassFilter, groupResolver, hasClass, matchesClassFilter, matchesClassPresence, normalizeClassFilter } from "./classFilter"
 
 
 import { FolderCopyTwoTone, FolderOpen, Pause, PlayArrow } from '@mui/icons-material';
@@ -25,13 +25,14 @@ export const GridIMGs = (() => {
 
     const config = useSelector(configurationsSelector)
     const detections = useSelector(selectDetections)
-    const classFilterGroups = normalizeClassFilter(config.classFilter)
+    const resolveGroup = groupResolver(useSelector(selectDetectionGroups), useSelector(selectDetectionClassNames))
+    const classFilterGroups = normalizeClassFilter(config.classFilter, resolveGroup)
     // Imported fake items (database import feature) only make sense inside
     // duplicate groups — the main grid stays a true view of the actual folder.
     const medias = useSelector(selectMedias).filter(m => !m.deleted && !m.imported)
         .filter(m => matchesMediaType(m.mime, config.mediaType))
         .filter(m => matchesClassPresence(hasClass(detections[m.id]), config.classPresence))
-        .filter(m => matchesClassFilter(detections[m.id], classFilterGroups))
+        .filter(m => matchesClassFilter(detections[m.id], classFilterGroups, resolveGroup))
     // A loadSuperRecursive run already owns "which folder is open" - see app.ts's rejectIfBusy.
     const pipelineRunning = useSelector(selectPipelineRunning)
     const currentPage = config.page;

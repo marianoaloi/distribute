@@ -3,7 +3,7 @@ import { useDispatch } from "react-redux"
 import { IconButton, CircularProgress, LinearProgress } from "@mui/material"
 import { ImageSearch, RestartAlt, FolderOpen, FolderCopyTwoTone, VolumeOff, FileDownload, FileUpload, RadioButtonChecked, RadioButtonUnchecked } from "@mui/icons-material"
 import { Media } from "../entity/Media"
-import { DuplicateAlgorithm, ExportDatabase, FindBlurFrameDuplicates, FindFrameDuplicates, FindIndexDuplicates, FindObjectDuplicates, GetDuplicateGroups, selectDuplicateAlgorithm, setDuplicateAlgorithm, GetMediaFrames, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDetections, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMediaFrames, selectMedias, selectPipelineRunning, updateManyArrayItem, useSelector } from "../lib/redux"
+import { selectDetectionClassNames, selectDetectionGroups, DuplicateAlgorithm, ExportDatabase, FindBlurFrameDuplicates, FindFrameDuplicates, FindIndexDuplicates, FindObjectDuplicates, GetDuplicateGroups, selectDuplicateAlgorithm, setDuplicateAlgorithm, GetMediaFrames, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDetections, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMediaFrames, selectMedias, selectPipelineRunning, updateManyArrayItem, useSelector } from "../lib/redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { MediaIMG, isScrollToLastSeenKey, scrollToMedia } from "./media"
 import { FrameCollageTile } from "./frameCollageTile"
@@ -11,7 +11,7 @@ import ModalZoom from "./modalZoom"
 import { CounterImgIndex, DuplicateGroupCard, DuplicateGroupRow, DuplicatesList, DuplicatesResume, EmptyState, GroupLabel, ImportedMediaWrap, RebuildIndexInfo } from "./duplicatesGrid.styled"
 import { Folders } from "./folder"
 import { MediaTypeFilter, matchesMediaType } from "./mediaTypeFilter"
-import { ClassFilter, hasClass, matchesClassFilter, matchesClassPresence, normalizeClassFilter } from "./classFilter"
+import { ClassFilter, groupResolver, hasClass, matchesClassFilter, matchesClassPresence, normalizeClassFilter } from "./classFilter"
 import { Pagination, totalPagesFor } from "./pagination"
 import { ALGORITHM_EMPTY_TEXTS, ALGORITHM_GROUP_LABELS, ALGORITHM_SCAN_TITLES, DuplicateAlgorithmSelect } from "./duplicateAlgorithmSelect"
 
@@ -35,7 +35,8 @@ export const GridDuplicates = (() => {
     const medias = useSelector(selectMedias).filter(m => !m.deleted)
         .filter(m => matchesMediaType(m.mime, config.mediaType))
     const detections = useSelector(selectDetections)
-    const classFilterGroups = normalizeClassFilter(config.classFilter)
+    const resolveGroup = groupResolver(useSelector(selectDetectionGroups), useSelector(selectDetectionClassNames))
+    const classFilterGroups = normalizeClassFilter(config.classFilter, resolveGroup)
     const groupIds = useSelector(selectDuplicateGroups)
     const algorithm = useSelector(selectDuplicateAlgorithm)
     const indexRebuilding = useSelector(selectIndexRebuilding)
@@ -79,7 +80,7 @@ export const GridDuplicates = (() => {
         // yet, and imported items (another folder's exported DB) have no local
         // detections at all. Per-member filtering would silently drop exactly
         // the cross-folder matches the import feature exists to surface.
-        .filter(group => group.some(m => matchesClassFilter(detections[m.id], classFilterGroups)))
+        .filter(group => group.some(m => matchesClassFilter(detections[m.id], classFilterGroups, resolveGroup)))
         // Same group-level view for Has/Without class: a group has a class when
         // any member does, so "Without class" means no member has one.
         .filter(group => matchesClassPresence(group.some(m => hasClass(detections[m.id])), config.classPresence))

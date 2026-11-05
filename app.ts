@@ -28,6 +28,7 @@ import * as dbImport from "./compareImg/dbImport";
 import { hashFor } from "./thumbnails/cache";
 import * as onnxDetector from "./objectDetection/onnxDetector";
 import * as MediaStore from "./mediaDb/MediaStore";
+import { parseClassExpr, formatClassExpr, legacyGroupToExpr, type ParseResult } from "./mediaDb/classExpr";
 import { backfillContentMd5 } from "./mediaDb/backfill";
 import * as pipelineRun from "./pipeline/PipelineRun";
 import * as ThumbnailService from "./thumbnails/ThumbnailService";
@@ -76,8 +77,10 @@ interface MaloiFile {
     // bakes a Reshape op sized for a specific input resolution other than
     // the 640 default.
     reshape?: number;
-    // Predefined class-filter groups, untrusted until parseMaloiGroups. classes
-    // are 0-based positions in the "classes" list, negative = NOT that class.
+    // Predefined class-filter groups, untrusted until parseMaloiGroups. Each is
+    // { name, expr } with expr a boolean expression over 0-based positions in
+    // the "classes" list, e.g. "(6 || 7) && !(1 || 2)". The legacy
+    // { name, classes, join } form is still accepted (negative id = NOT).
     group?: unknown;
 }
 
@@ -86,18 +89,28 @@ const splitClassNames = (raw: string): string[] =>
 
 // Boundary validation for a .maloi's "group" array: a malformed entry is
 // skipped (never throws) so a bad group can't break model loading.
+const parseMaloiGroupAst = (entry: any, classCount: number): ParseResult => {
+    if (typeof entry?.expr === "string") return parseClassExpr(entry.expr, classCount);
+    const join = typeof entry?.join === "string" ? entry.join.trim().toUpperCase() : "";
+    const classes = entry?.classes;
+    const validIds = Array.isArray(classes) && classes.length > 0
+        && classes.every((id: unknown) => Number.isInteger(id) && Math.abs(id as number) < classCount);
+    if (!validIds || (join !== "OR" && join !== "AND")) return { ok: false, error: "needs an \"expr\" string (or legacy \"classes\" + \"join\")" };
+    return { ok: true, ast: legacyGroupToExpr(classes.map((id: number) => id || 0), join) };
+};
+
 const parseMaloiGroups = (raw: unknown, classCount: number): MediaStore.DetectionGroup[] => {
     if (!Array.isArray(raw)) return [];
     const groups: MediaStore.DetectionGroup[] = [];
+    const seen = new Set<string>();
     for (const entry of raw) {
         const name = typeof entry?.name === "string" ? entry.name.trim() : "";
-        const join = typeof entry?.join === "string" ? entry.join.trim().toUpperCase() : "";
-        const classes = entry?.classes;
-        const validIds = Array.isArray(classes) && classes.length > 0
-            && classes.every((id: unknown) => Number.isInteger(id) && Math.abs(id as number) < classCount);
-        if (name && validIds && (join === "OR" || join === "AND")) {
-            groups.push({ name, classes: classes.map((id: number) => id || 0), join });
-        }
+        if (!name) { console.warn("[maloi] skipping group without a name"); continue; }
+        if (seen.has(name)) { console.warn(`[maloi] skipping duplicate group "${name}"`); continue; }
+        const parsed = parseMaloiGroupAst(entry, classCount);
+        if (!parsed.ok) { console.warn(`[maloi] skipping group "${name}": ${parsed.error}`); continue; }
+        seen.add(name);
+        groups.push({ name, expr: formatClassExpr(parsed.ast), ast: parsed.ast });
     }
     return groups;
 };

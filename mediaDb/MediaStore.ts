@@ -4,6 +4,7 @@ import path from "path";
 
 import type { MediaRow, UpsertMediaInput, MediaMissingMd5Row, MediaAwaitingSortRow, DetectionBox, DetectionRow, DetectMediaRef, ItemDetectionState } from "../types/domain";
 import { getCacheDir, hashFor } from "../thumbnails/cache";
+import { parseClassExpr, type ClassExpr } from "./classExpr";
 
 export const ensureReady = (): void => HashStore.ensureReady();
 
@@ -211,26 +212,36 @@ export const saveDetectionClasses = (names: string[]): void => {
     run(names);
 };
 
+// expr is the canonical text (formatClassExpr(ast)); only it is stored, and
+// ast is rebuilt on read so the two can never disagree.
 export interface DetectionGroup {
     name: string;
-    classes: number[];
-    join: "OR" | "AND";
+    expr: string;
+    ast: ClassExpr;
 }
 
 export const getDetectionGroups = (): DetectionGroup[] => {
     const db = HashStore.getDb();
-    const rows = db.prepare("SELECT name, classes, joinType FROM detection_group ORDER BY position ASC").all() as Array<{ name: string; classes: string; joinType: string }>;
-    return rows.map((r) => ({ name: r.name, classes: JSON.parse(r.classes) as number[], join: r.joinType as "OR" | "AND" }));
+    const rows = db.prepare("SELECT name, expr FROM detection_group ORDER BY position ASC").all() as Array<{ name: string; expr: string }>;
+    const groups: DetectionGroup[] = [];
+    for (const r of rows) {
+        // Infinity: the class list may have shrunk since the group was saved;
+        // the renderer simply matches nothing for an unknown id.
+        const parsed = parseClassExpr(r.expr, Infinity);
+        if (parsed.ok) groups.push({ name: r.name, expr: r.expr, ast: parsed.ast });
+        else console.warn(`[detection_group] skipping "${r.name}": ${parsed.error}`);
+    }
+    return groups;
 };
 
 // Replaces all saved groups (an empty list clears them).
 export const saveDetectionGroups = (groups: DetectionGroup[]): void => {
     const db = HashStore.getDb();
     const del = db.prepare("DELETE FROM detection_group");
-    const insert = db.prepare("INSERT INTO detection_group (position, name, classes, joinType) VALUES (?, ?, ?, ?)");
+    const insert = db.prepare("INSERT INTO detection_group (position, name, expr) VALUES (?, ?, ?)");
     const run = db.transaction((list: DetectionGroup[]) => {
         del.run();
-        list.forEach((g, position) => insert.run(position, g.name, JSON.stringify(g.classes), g.join));
+        list.forEach((g, position) => insert.run(position, g.name, g.expr));
     });
     run(groups);
 };
