@@ -23,20 +23,18 @@ import * as util from "./util";
 import { setActiveFolder, TMP_FOLDER_NAME } from "./DirectorioCache";
 import * as duplicateFinder from "./compareImg/duplicateFinder";
 import * as compareImgStore from "./compareImg/HashStore";
-import * as mediaIndexer from "./compareImg/mediaIndexer";
 import * as dbImport from "./compareImg/dbImport";
 import { hashFor } from "./thumbnails/cache";
 import * as onnxDetector from "./objectDetection/onnxDetector";
 import * as MediaStore from "./mediaDb/MediaStore";
-import { parseClassExpr, formatClassExpr, legacyGroupToExpr, type ParseResult } from "./mediaDb/classExpr";
-import { backfillContentMd5 } from "./mediaDb/backfill";
+import { readMaloi, applyMaloi, splitClassNames } from "./objectDetection/maloi";
+import * as superPipeline from "./pipeline/superPipeline";
 import * as pipelineRun from "./pipeline/PipelineRun";
 import * as ThumbnailService from "./thumbnails/ThumbnailService";
 import * as undoStack from "./undo/UndoStack";
 import * as sortMediaByKind from "./organize/sortMediaByKind";
 import { framePathFor, frameSetForMedia } from "./compareImg/videoFrames";
 import type { DetectionBox, DetectMediaRef, DetectObjectsPayload, StreamMediaItem } from "./types/domain";
-import { processMediaToDetections } from "./objectDetection/processImages";
 
 const transformDataStreaming = util.transformDataStreaming;
 
@@ -66,54 +64,6 @@ interface SaveDetectionClassesPayload {
 interface SaveDetectionSizePayload {
     size?: number | string | null;
 }
-
-interface MaloiFile {
-    onnx?: string;
-    classes?: string;
-    // Per-model override for onnxDetector's letterbox/tensor input
-    // resolution (objectDetection/onnxDetector.js's setModelSize) - fixes
-    // onnxruntime's native "ReshapeHelper ... input_shape_size ==
-    // requested_shape_size was false" crash for models whose exported graph
-    // bakes a Reshape op sized for a specific input resolution other than
-    // the 640 default.
-    reshape?: number;
-    // Predefined class-filter groups, untrusted until parseMaloiGroups. Each is
-    // { name, expr } with expr a boolean expression over 0-based positions in
-    // the "classes" list, e.g. "(6 || 7) && !(1 || 2)". The legacy
-    // { name, classes, join } form is still accepted (negative id = NOT).
-    group?: unknown;
-}
-
-const splitClassNames = (raw: string): string[] =>
-    String(raw).split(",").map((s) => s.trim()).filter((s) => s.length > 0);
-
-// Boundary validation for a .maloi's "group" array: a malformed entry is
-// skipped (never throws) so a bad group can't break model loading.
-const parseMaloiGroupAst = (entry: any, classCount: number): ParseResult => {
-    if (typeof entry?.expr === "string") return parseClassExpr(entry.expr, classCount);
-    const join = typeof entry?.join === "string" ? entry.join.trim().toUpperCase() : "";
-    const classes = entry?.classes;
-    const validIds = Array.isArray(classes) && classes.length > 0
-        && classes.every((id: unknown) => Number.isInteger(id) && Math.abs(id as number) < classCount);
-    if (!validIds || (join !== "OR" && join !== "AND")) return { ok: false, error: "needs an \"expr\" string (or legacy \"classes\" + \"join\")" };
-    return { ok: true, ast: legacyGroupToExpr(classes.map((id: number) => id || 0), join) };
-};
-
-const parseMaloiGroups = (raw: unknown, classCount: number): MediaStore.DetectionGroup[] => {
-    if (!Array.isArray(raw)) return [];
-    const groups: MediaStore.DetectionGroup[] = [];
-    const seen = new Set<string>();
-    for (const entry of raw) {
-        const name = typeof entry?.name === "string" ? entry.name.trim() : "";
-        if (!name) { console.warn("[maloi] skipping group without a name"); continue; }
-        if (seen.has(name)) { console.warn(`[maloi] skipping duplicate group "${name}"`); continue; }
-        const parsed = parseMaloiGroupAst(entry, classCount);
-        if (!parsed.ok) { console.warn(`[maloi] skipping group "${name}": ${parsed.error}`); continue; }
-        seen.add(name);
-        groups.push({ name, expr: formatClassExpr(parsed.ast), ast: parsed.ast });
-    }
-    return groups;
-};
 
 // Shared guard for every long-running entry point (loadRecursive/
 // loadSuperRecursive, rebuildIndex, detectObjects, exportDatabase,
@@ -383,19 +333,11 @@ ipcMain.on("sortMediaByKind", () => {
     runSortMediaByKind();
 });
 
-// onProgress passthrough lets runSuperExecutionPipeline feed this stage's
-// real per-row progress into pipelineRun's "duplicates" stage - unset (the
-// common case: the standalone "scan for duplicates" button) it's just the
-// plain scan with no extra reporting.
-const findIndexDuplicates = async (onProgress?: (comparedRows: number, totalRows: number) => void): Promise<void> => {
-    try {
-        const groups = await duplicateFinder.findIndexDuplicates(onProgress);
-        mainWindow!.webContents.send("duplicatesFound", groups);
-    } catch (error) {
-        console.error("findIndexDuplicates failed", error);
-        mainWindow!.webContents.send("duplicatesFound", []);
-    }
-};
+// Pixel duplicate scan - see pipeline/superPipeline.ts's runDuplicates. Its
+// per-row progress only reaches pipelineRun while an LSR run owns it (see
+// guiSuperContext); the standalone "scan for duplicates" button is the plain
+// scan with no extra reporting.
+const findIndexDuplicates = async (): Promise<string[][]> => superPipeline.runDuplicates(guiSuperContext);
 ipcMain.on("findIndexDuplicates", () => { if (!rejectIfBusy()) findIndexDuplicates(); });
 
 // On-demand, non-persisted duplicate scans (shared object-detection box /
@@ -447,6 +389,36 @@ ipcMain.on("getDuplicateGroups", getDuplicateGroups);
 let detectionStopRequested = false;
 ipcMain.on("stopDetection", () => { detectionStopRequested = true; });
 
+// The GUI's sink for pipeline/superPipeline.ts: every event goes out on the
+// same legacy IPC channel/payload the stages always used, and stage progress
+// feeds pipelineRun only while a multi-stage run (LSR) owns it - a manual
+// rebuild/detect/duplicates run has its own progress bar.
+const DETECTION_COMPLETE_PAYLOAD: Record<superPipeline.DetectResult, object> = {
+    "no-model": { error: "no-model" },
+    "no-classes": { error: "no-classes" },
+    stopped: { stopped: true },
+    done: {},
+};
+const guiSuperContext: superPipeline.SuperContext = {
+    detector: onnxDetector,
+    shouldStop: () => detectionStopRequested,
+    events: {
+        stageStarted: (key) => {
+            // Same reset a manual detect run does (runDetectObjects): a stop
+            // pressed before this chain reached detection must not skip it.
+            if (key === "detect") detectionStopRequested = false;
+            pipelineRun.startStage(key);
+        },
+        progress: (processed, total) => { if (pipelineRun.isRunning()) pipelineRun.updateStage(processed, total); },
+        indexProgress: (processed, total) => mainWindow!.webContents.send("indexRebuildProgress", { processed, total }),
+        indexDone: (result) => mainWindow!.webContents.send("indexRebuilt", result),
+        detection: (event) => mainWindow!.webContents.send("detectionFound", event),
+        detectionProgress: (p) => mainWindow!.webContents.send("detectionProgress", p),
+        detectionsComplete: (result) => mainWindow!.webContents.send("detectionsComplete", DETECTION_COMPLETE_PAYLOAD[result]),
+        duplicates: (groups) => mainWindow!.webContents.send("duplicatesFound", groups),
+    },
+};
+
 // Lets the user pick either a bare .onnx model file (old fixed ./xcxv/best.onnx
 // path replacement) or a .maloi file - a small JSON sidecar of the shape
 // { "onnx": "<path>", "classes": "a,b,c" } that sets the model *and* its class
@@ -476,21 +448,8 @@ const chooseOnnxModelDialog = async (): Promise<boolean> => {
             const chosenPath = file.filePaths[0];
             MediaStore.ensureReady();
             if (path.extname(chosenPath).toLowerCase() === ".maloi") {
-                const maloi: MaloiFile = JSON.parse(fs.readFileSync(chosenPath, "utf8"));
-                const onnxPath = path.resolve(path.dirname(chosenPath), maloi.onnx || "");
-                onnxDetector.setModelPath(onnxPath);
-                MediaStore.getOrCreateModelPath(onnxPath);
-                const names = splitClassNames(maloi.classes || "");
-                MediaStore.saveDetectionClasses(names);
-                // Replaces the saved groups; no "group" in the file clears them.
-                MediaStore.saveDetectionGroups(parseMaloiGroups(maloi.group, names.length));
-                onnxDetector.setClassNames(names);
-                mainWindow!.webContents.send("detectionClassesLoaded", { names, groups: MediaStore.getDetectionGroups() });
-                // Always set (even to null/absent) rather than only when
-                // present - otherwise a .maloi with no "reshape" field would
-                // silently inherit whatever override an earlier .maloi pick
-                // left behind, for a model it has nothing to do with.
-                onnxDetector.setModelSize(typeof maloi.reshape === "number" ? maloi.reshape : null);
+                applyMaloi(readMaloi(chosenPath), onnxDetector, MediaStore);
+                mainWindow!.webContents.send("detectionClassesLoaded", { names: onnxDetector.getClassNames(), groups: MediaStore.getDetectionGroups() });
             } else {
                 onnxDetector.setModelPath(chosenPath);
                 MediaStore.getOrCreateModelPath(chosenPath);
@@ -515,35 +474,8 @@ ipcMain.on("chooseOnnxModel", () => { if (!rejectIfBusy()) chooseOnnxModelDialog
 // (see objectDetection/processImages.js), so it needs nothing passed in from
 // the renderer either way.
 const runDetectObjects = async (): Promise<void> => {
-    // Gate: refuse to start (rather than silently no-op or error mid-run)
-    // unless both a model and at least one class name are configured - the
-    // renderer pre-checks the same two conditions and shows an alert, this
-    // is the authoritative backend guard.
-    if (!onnxDetector.isAvailable()) {
-        mainWindow!.webContents.send("detectionsComplete", { error: "no-model" });
-        return;
-    }
-    const classNames = onnxDetector.getClassNames();
-    if (classNames.length === 0) {
-        mainWindow!.webContents.send("detectionsComplete", { error: "no-classes" });
-        return;
-    }
-
     detectionStopRequested = false;
-
-    // Forwards progress into pipelineRun's "detect" stage only when this run
-    // is part of the loadSuperRecursive chain - a manual Play-button run
-    // already has its own progress bar (objectDetectionGrid.tsx, driven by
-    // the "detectionProgress" event processMediaToDetections always sends).
-    const onProgress = pipelineRun.isRunning()
-        ? (processed: number, total: number) => pipelineRun.updateStage(processed, total)
-        : undefined;
-
-    await processMediaToDetections(mainWindow, onnxDetector, classNames, () => detectionStopRequested, onProgress).catch(error => {
-        console.error("processMediaToDetections failed", error);
-    });
-
-    mainWindow!.webContents.send("detectionsComplete", detectionStopRequested ? { stopped: true } : {});
+    await superPipeline.runDetect(guiSuperContext);
 };
 
 ipcMain.on("detectObjects", async (event: IpcMainEvent, data: DetectObjectsPayload) => {
@@ -693,27 +625,7 @@ ipcMain.on("getMediaFrames", (event: IpcMainEvent, data: { medias?: DetectMediaR
 // Wipes the (possibly corrupted) compareImg sqlite index and re-indexes the
 // media the renderer already has loaded in redux, so the user doesn't need
 // to re-open/re-scan the folder to recover from a corrupted index.db.
-const buildIndex = async (): Promise<void> => {
-    try {
-        const medias = MediaStore.findAllMediaThatExists() || [];
-        mainWindow!.webContents.send("indexRebuildProgress", { processed: 0, total: medias.length });
-        if (pipelineRun.isRunning()) pipelineRun.updateStage(0, medias.length);
-        await mediaIndexer.indexMediaBackground(medias.map(m => ({
-            item: m.localPath,
-            mime: m.mime,
-            kind: m.kind,
-            contentMd5: m.contentMd5,
-            id: m.id,
-        })), (processed, total) => {
-            mainWindow!.webContents.send("indexRebuildProgress", { processed, total });
-            if (pipelineRun.isRunning()) pipelineRun.updateStage(processed, total);
-        });
-        mainWindow!.webContents.send("indexRebuilt", { success: true, count: medias.length });
-    } catch (error) {
-        console.error("rebuildIndex failed", error);
-        mainWindow!.webContents.send("indexRebuilt", { success: false, error: (error as Error).message });
-    }
-}
+const buildIndex = async (): Promise<number> => superPipeline.runBuildIndex(guiSuperContext);
 const rebuildIndex = async (): Promise<void> => {
     await buildIndex();
     await findIndexDuplicates();
@@ -734,13 +646,7 @@ let superExecutionInProgress = false;
 // it's normally the fastest part of the chain) - it exists here only so the
 // overall-ETA fraction (stageIndex/stageCount) accounts for it once "hash"
 // starts.
-const SUPER_STAGES: pipelineRun.StageDef[] = [
-    { key: "scan", label: "Scanning folder" },
-    { key: "hash", label: "Hashing file content" },
-    { key: "index", label: "Building comparison index" },
-    { key: "detect", label: "Detecting objects" },
-    { key: "duplicates", label: "Finding visual duplicates" },
-];
+const SUPER_STAGES = superPipeline.SUPER_STAGES;
 
 // pipelineRun kind of the "Load super background" run. The renderer recognizes
 // the background run by this exact string (the frontend uses the same
@@ -792,17 +698,7 @@ const runSuperExecutionPipeline = async (): Promise<void> => {
         // all, with nothing else left to retry it later. This chain is the
         // one place where waiting for the hash pass first is worth the
         // extra time.
-        pipelineRun.startStage("hash");
-        await backfillContentMd5((processed, total) => pipelineRun.updateStage(processed, total));
-
-        pipelineRun.startStage("index");
-        await buildIndex();
-
-        pipelineRun.startStage("detect");
-        await runDetectObjects();
-
-        pipelineRun.startStage("duplicates");
-        await findIndexDuplicates((processed, total) => pipelineRun.updateStage(processed, total));
+        await superPipeline.runSuperChain(guiSuperContext, ["hash", "index", "detect", "duplicates"]);
 
         flushBackgroundMedia();
         pipelineRun.finish();

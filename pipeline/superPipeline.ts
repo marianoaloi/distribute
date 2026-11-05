@@ -1,0 +1,150 @@
+// The single definition of the "Load super recursive" (LSR) processing chain
+// after the folder scan: hash -> index -> detect -> duplicates. Shared by
+// app.ts (GUI, which forwards every event to the renderer over IPC) and
+// cli/lsr.ts (headless). Electron-free: everything a caller wants to observe
+// goes through the SuperEvents sink.
+//
+// The "scan" stage itself is NOT here - the GUI's scan streams media to the
+// renderer as it walks (app.ts's openfileRecursive), the CLI has its own
+// sequential walker (cli/scan.ts).
+import * as MediaStore from "../mediaDb/MediaStore";
+import * as mediaIndexer from "../compareImg/mediaIndexer";
+import * as duplicateFinder from "../compareImg/duplicateFinder";
+import { backfillContentMd5 } from "../mediaDb/backfill";
+import { processMediaToDetections, type DetectionFoundEvent, type DetectorLike as LoopDetector } from "../objectDetection/processImages";
+import type { StageDef } from "./PipelineRun";
+
+export type StageKey = "scan" | "hash" | "index" | "detect" | "duplicates";
+
+// pipelineRun's stage list for the LSR chain - order matches runSuperChain.
+// "scan" itself has no tracked progress (the folder walk's file count isn't
+// known upfront) - it exists here only so the overall-ETA fraction
+// (stageIndex/stageCount) accounts for it once "hash" starts.
+export const SUPER_STAGES: (StageDef & { key: StageKey })[] = [
+    { key: "scan", label: "Scanning folder" },
+    { key: "hash", label: "Hashing file content" },
+    { key: "index", label: "Building comparison index" },
+    { key: "detect", label: "Detecting objects" },
+    { key: "duplicates", label: "Finding visual duplicates" },
+];
+
+export interface DetectorLike extends LoopDetector {
+    isAvailable(): boolean;
+    getClassNames(): string[];
+}
+
+// Every hook is optional; the GUI maps each to its legacy IPC channel.
+export interface SuperEvents {
+    stageStarted?(key: StageKey): void;
+    // Progress of the current stage (pipelineRun's stage bar).
+    progress?(processed: number, total: number): void;
+    indexProgress?(processed: number, total: number): void; // "indexRebuildProgress"
+    indexDone?(result: { success: boolean; count?: number; error?: string }): void; // "indexRebuilt"
+    detection?(event: DetectionFoundEvent): void; // "detectionFound"
+    detectionProgress?(p: { processed: number; total: number }): void; // "detectionProgress"
+    detectionsComplete?(result: DetectResult): void; // "detectionsComplete"
+    duplicates?(groups: string[][]): void; // "duplicatesFound"
+}
+
+export interface SuperContext {
+    events: SuperEvents;
+    // Polled by the detection loop before each media.
+    shouldStop(): boolean;
+    detector: DetectorLike;
+}
+
+export type DetectResult = "done" | "stopped" | "no-model" | "no-classes";
+
+export const runHash = async (ctx: SuperContext): Promise<void> => {
+    await backfillContentMd5((processed, total) => ctx.events.progress?.(processed, total));
+};
+
+// (Re)indexes every media still on disk into the compareImg index. Returns
+// how many media were submitted; never throws (reports through indexDone).
+export const runBuildIndex = async (ctx: SuperContext): Promise<number> => {
+    const { events } = ctx;
+    try {
+        const medias = MediaStore.findAllMediaThatExists() || [];
+        events.indexProgress?.(0, medias.length);
+        events.progress?.(0, medias.length);
+        await mediaIndexer.indexMediaBackground(medias.map(m => ({
+            item: m.localPath,
+            mime: m.mime,
+            kind: m.kind,
+            contentMd5: m.contentMd5,
+            id: m.id,
+        })), (processed, total) => {
+            events.indexProgress?.(processed, total);
+            events.progress?.(processed, total);
+        });
+        events.indexDone?.({ success: true, count: medias.length });
+        return medias.length;
+    } catch (error) {
+        console.error("rebuildIndex failed", error);
+        events.indexDone?.({ success: false, error: (error as Error).message });
+        return 0;
+    }
+};
+
+// Gate: refuses to start (rather than silently no-op or error mid-run)
+// unless both a model and at least one class name are configured.
+export const runDetect = async (ctx: SuperContext): Promise<DetectResult> => {
+    const result = await detectGated(ctx);
+    ctx.events.detectionsComplete?.(result);
+    return result;
+};
+
+const detectGated = async (ctx: SuperContext): Promise<DetectResult> => {
+    const { detector, events } = ctx;
+    if (!detector.isAvailable()) return "no-model";
+    const classNames = detector.getClassNames();
+    if (classNames.length === 0) return "no-classes";
+
+    const sink = {
+        found: (event: DetectionFoundEvent) => events.detection?.(event),
+        progress: (p: { processed: number; total: number }) => events.detectionProgress?.(p),
+    };
+    await processMediaToDetections(sink, detector, classNames, ctx.shouldStop,
+        (processed, total) => events.progress?.(processed, total)).catch(error => {
+        console.error("processMediaToDetections failed", error);
+    });
+    return ctx.shouldStop() ? "stopped" : "done";
+};
+
+// Pixel duplicate scan (persisted to items_duplicated). Never throws: a
+// failure reports (and returns) an empty group list.
+export const runDuplicates = async (ctx: SuperContext): Promise<string[][]> => {
+    try {
+        const groups = await duplicateFinder.findIndexDuplicates((processed, total) => ctx.events.progress?.(processed, total));
+        ctx.events.duplicates?.(groups);
+        return groups;
+    } catch (error) {
+        console.error("findIndexDuplicates failed", error);
+        ctx.events.duplicates?.([]);
+        return [];
+    }
+};
+
+export interface ChainOptions {
+    // Checked between stages: true skips every remaining stage. Separate from
+    // ctx.shouldStop (the detection stop button) so the GUI's "stop
+    // detection" doesn't also cancel the duplicate scan that follows it.
+    abort?: () => boolean;
+}
+
+// Runs the selected post-scan stages in canonical order. Stage functions
+// report their own item-level failures; an unexpected throw propagates.
+export const runSuperChain = async (ctx: SuperContext, stages: readonly StageKey[], options: ChainOptions = {}): Promise<void> => {
+    const steps: [StageKey, () => Promise<unknown>][] = [
+        ["hash", () => runHash(ctx)],
+        ["index", () => runBuildIndex(ctx)],
+        ["detect", () => runDetect(ctx)],
+        ["duplicates", () => runDuplicates(ctx)],
+    ];
+    for (const [key, run] of steps) {
+        if (!stages.includes(key)) continue;
+        if (options.abort?.()) return;
+        ctx.events.stageStarted?.(key);
+        await run();
+    }
+};

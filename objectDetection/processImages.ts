@@ -4,14 +4,37 @@ import * as MediaStore from "../mediaDb/MediaStore";
 import { DetectionBox, DetectMediaRef } from "../types/domain";
 import * as mediaIndexer from "../compareImg/mediaIndexer";
 
-// onProgress mirrors the "detectionProgress" IPC event below but is only
-// forwarded when a caller passes it - app.ts wires it to
-// pipeline/PipelineRun.js's "detect" stage when this run is part of the
-// loadSuperRecursive chain, and leaves it unset for a plain manual run
-// (which already has its own "detecting" progress bar via that IPC event).
-// shouldStop is polled before each media is picked up - a callback, not a
-// boolean, so a stop requested mid-run actually reaches the loop.
-export const processMediaToDetections = async (mainWindow: any, onnxDetector: any, classNames: string[], shouldStop: () => boolean, onProgress?: (processed: number, total: number) => void): Promise<void> => {
+export interface DetectionFoundEvent {
+    id: string;
+    boxes: DetectionBox[];
+    classes: string[];
+    classScores: Record<string, { min: number; max: number }>;
+    error?: string;
+}
+
+// Where per-media results go: app.ts forwards them to the renderer's
+// "detectionFound"/"detectionProgress" IPC channels; the headless CLI just
+// counts them. Keeps this module free of any BrowserWindow dependency.
+export interface DetectionSink {
+    found(event: DetectionFoundEvent): void;
+    progress(p: { processed: number; total: number }): void;
+}
+
+// The part of objectDetection/onnxDetector this loop needs - injectable so a
+// caller can substitute a fake detector.
+export interface DetectorLike {
+    getModelPath(): string | null;
+    detect(imagePath: string): Promise<DetectionBox[]>;
+}
+
+// onProgress mirrors sink.progress but is only forwarded when a caller passes
+// it - app.ts wires it to pipeline/PipelineRun.js's "detect" stage when this
+// run is part of the loadSuperRecursive chain, and leaves it unset for a
+// plain manual run (which already has its own "detecting" progress bar via
+// the "detectionProgress" IPC event).
+// shouldStop is polled before each media is picked up (a callback, not a
+// boolean, so a stop requested mid-run actually reaches the loop).
+export const processMediaToDetections = async (sink: DetectionSink, onnxDetector: DetectorLike, classNames: string[], shouldStop: () => boolean, onProgress?: (processed: number, total: number) => void): Promise<void> => {
 
 
     let processed = 0;
@@ -82,7 +105,7 @@ export const processMediaToDetections = async (mainWindow: any, onnxDetector: an
         try {
             const items = medias || [];
             if (items.length === 0) {
-                mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: [], classes: [], classScores: {} });
+                sink.found({ id: media.id, boxes: [], classes: [], classScores: {} });
             } else {
                 const perItem: { item: DetectMediaRef; boxes: DetectionBox[] }[] = [];
                 for (const item of items) {
@@ -105,7 +128,7 @@ export const processMediaToDetections = async (mainWindow: any, onnxDetector: an
 
                 const displayItem = perItem.find((d) => isDisplayFrame(d.item.framePosition)) || perItem[0];
                 if (!displayItem) {
-                    mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: [], classes: [], classScores: {} });
+                    sink.found({ id: media.id, boxes: [], classes: [], classScores: {} });
                     return;
                 }
                 const classes = [...new Set(perItem.flatMap((d) => d.boxes.map((b) => b.className)))];
@@ -118,21 +141,21 @@ export const processMediaToDetections = async (mainWindow: any, onnxDetector: an
                         range.max = Math.max(range.max, box.score);
                     }
                 }
-                mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: displayItem.boxes, classes, classScores });
+                sink.found({ id: media.id, boxes: displayItem.boxes, classes, classScores });
             }
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code === "ENOENT") {
                 // Moved/deleted between the existence check above and the read.
                 console.log("detectObjects: skipping", media.media, "- file no longer exists");
-                mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: [], classes: [], classScores: {} });
+                sink.found({ id: media.id, boxes: [], classes: [], classScores: {} });
                 return;
             }
             MediaStore.replaceItemDetections(media.itemId, [], modelPathId);
             console.error("detectObjects failed for", media.media, error);
-            mainWindow!.webContents.send("detectionFound", { id: media.id, boxes: [], classes: [], classScores: {}, error: (error as Error).message });
+            sink.found({ id: media.id, boxes: [], classes: [], classScores: {}, error: (error as Error).message });
         } finally {
             processed++;
-            mainWindow!.webContents.send("detectionProgress", { processed, total });
+            sink.progress({ processed, total });
             if (onProgress) onProgress(processed, total);
         }
     };
