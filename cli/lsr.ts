@@ -15,6 +15,7 @@ import { acquireLock } from "./lock";
 import { setActiveFolder } from "../DirectorioCache";
 import type { StageDef } from "../pipeline/PipelineRun";
 import * as inFlight from "../system/inFlight";
+import * as childProcs from "../system/childProcs";
 import { CLI_ONLY_STAGES, MAX_DUPLICATE_BUCKET, StageFailure } from "./stageRules";
 import type { FailedFiles, StageState } from "./stages";
 
@@ -178,6 +179,11 @@ export const main = async (argv: string[]): Promise<void> => {
         process.stderr.write(`error: ${lock.error}\n`);
         process.exit(EXIT_USAGE);
     }
+
+    // Every exit path (normal, stall, uncaught, forced second signal) runs
+    // process "exit" handlers: no ffmpeg the workers started may outlive the
+    // run - one stuck on its input would otherwise run forever.
+    process.on("exit", () => { childProcs.killAll(); });
 
     // Before anything opens index.db: every tmp/ path derives from it.
     setActiveFolder(options.root);

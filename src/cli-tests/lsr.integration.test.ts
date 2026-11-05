@@ -104,6 +104,26 @@ const snapshotTreeNoSpecial = (root: string): Record<string, string> => {
     return out
 }
 
+// Live ffmpeg processes whose command line mentions <needle> (a fixture path).
+const ffmpegsWith = (needle: string): string[] =>
+    spawnSync("ps", ["-eo", "pid=,args="], { encoding: "utf8" }).stdout.split("\n")
+        .filter(l => /ffmpeg/.test(l) && l.includes(needle))
+
+// FIFOs the tests create, so afterAll can unblock any reader and remove them.
+const fifos: string[] = []
+const makeFifo = (p: string): void => {
+    const r = spawnSync("mkfifo", [p])
+    if (r.status !== 0) throw new Error(`mkfifo failed: ${r.stderr}`)
+    fifos.push(p)
+}
+// Opening the write end (non-blocking) and closing it gives a blocked reader EOF.
+const drainFifo = (p: string): void => {
+    try { fs.closeSync(fs.openSync(p, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK)) } catch { /* no reader / gone */ }
+}
+const killFfmpegsWith = (needle: string): void => {
+    for (const l of ffmpegsWith(needle)) { try { process.kill(Number(l.trim().split(/\s+/)[0]), "SIGKILL") } catch { /* gone */ } }
+}
+
 // Live extraDups child processes working on <root> (ps, so no pgrep self-match).
 const extraChildrenOf = (root: string): string[] =>
     spawnSync("ps", ["-eo", "pid=,args="], { encoding: "utf8" }).stdout.split("\n")
@@ -151,7 +171,13 @@ d("lsr CLI (Electron integration)", () => {
         makeFixture(root)
         pristine = snapshotTree(root)
     })
-    afterAll(() => { if (base) fs.rmSync(base, { recursive: true, force: true }) })
+    afterAll(() => {
+        // Never leave a reader blocked on a test FIFO (or any ffmpeg on our fixtures) behind.
+        for (const f of fifos) drainFifo(f)
+        if (base) killFfmpegsWith(base)
+        for (const f of fifos) fs.rmSync(f, { force: true })
+        if (base) fs.rmSync(base, { recursive: true, force: true })
+    })
 
     describe("usage and configuration errors (exit 2)", () => {
         it("--help exits 0 and prints usage", () => {
@@ -639,8 +665,7 @@ d("lsr CLI (Electron integration)", () => {
             fs.symlinkSync(path.join(r6, "real", "a.png"), path.join(r6, "link-to-file.png"))
             fs.symlinkSync(r6, path.join(r6, "real", "loop")) // folder symlink back up: a cycle
             fs.symlinkSync(path.join(r6, "nowhere.png"), path.join(r6, "dangling.png"))
-            const fifo = spawnSync("mkfifo", [path.join(r6, "pipe.png")])
-            expect(fifo.status).toBe(0)
+            makeFifo(path.join(r6, "pipe.png"))
             const before = snapshotTreeNoSpecial(r6)
             const r = spawnSync(ELECTRON, [CLI, "--root", r6, "--stages", "scan,hash,index"], { env, encoding: "utf8", timeout: 30_000 })
             expect(r.signal).toBeNull() // not killed by the timeout
@@ -814,7 +839,7 @@ d("lsr CLI (Electron integration)", () => {
             fs.copyFileSync(path.join(root, "a.png"), path.join(rs, "a.png"))
             expect(lsr(["--root", rs, "--stages", "scan,hash"]).code).toBe(0)
             fs.unlinkSync(path.join(rs, "a.png"))
-            expect(spawnSync("mkfifo", [path.join(rs, "a.png")]).status).toBe(0)
+            makeFifo(path.join(rs, "a.png"))
             const started = Date.now()
             const r = spawnSync(ELECTRON, [CLI, "--root", rs, "--stages", "index"], { env: { ...env, LSR_STALL_MINUTES: "0.02" }, encoding: "utf8", timeout: 60_000 })
             expect(r.signal).toBeNull()
@@ -826,6 +851,12 @@ d("lsr CLI (Electron integration)", () => {
             const log = fs.readFileSync(path.join(rs, "tmp", "logs", logsOf(rs).pop()!), "utf8")
             expect(log).toMatch(/stalled/)
             expect(log).toMatch(/exiting \(exit code 3\)/)
+            // The runner must take its ffmpeg children down with it (no reader left blocked on the FIFO).
+            const deadline = Date.now() + 3000
+            while (ffmpegsWith(rs).length > 0 && Date.now() < deadline) spawnSync("sleep", ["0.1"])
+            const leaked = ffmpegsWith(rs)
+            drainFifo(path.join(rs, "a.png")); killFfmpegsWith(rs) // clean up regardless
+            expect(leaked).toEqual([])
         })
         it("a healthy run with a short stall limit is not killed", () => {
             const r = lsr(["--root", root, "--stages", "scan,hash,index,duplicates"], { LSR_STALL_MINUTES: "0.05" })
