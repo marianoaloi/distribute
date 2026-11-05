@@ -9,7 +9,9 @@ import * as mediaIndexer from "../compareImg/mediaIndexer";
 // pipeline/PipelineRun.js's "detect" stage when this run is part of the
 // loadSuperRecursive chain, and leaves it unset for a plain manual run
 // (which already has its own "detecting" progress bar via that IPC event).
-export const processMediaToDetections = async (mainWindow: any, onnxDetector: any, classNames: string[], detectionStopRequested: boolean, onProgress?: (processed: number, total: number) => void): Promise<void> => {
+// shouldStop is polled before each media is picked up - a callback, not a
+// boolean, so a stop requested mid-run actually reaches the loop.
+export const processMediaToDetections = async (mainWindow: any, onnxDetector: any, classNames: string[], shouldStop: () => boolean, onProgress?: (processed: number, total: number) => void): Promise<void> => {
 
 
     let processed = 0;
@@ -141,7 +143,7 @@ export const processMediaToDetections = async (mainWindow: any, onnxDetector: an
         // Stop is honoured before picking up each new media - one already
         // in flight is allowed to finish so its already-computed boxes
         // still get persisted and shown.
-        while (cursor < mediaGroups.length && !detectionStopRequested) {
+        while (cursor < mediaGroups.length && !shouldStop()) {
             await processOne(mediaGroups[cursor++]);
         }
     };

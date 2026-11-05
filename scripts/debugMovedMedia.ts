@@ -160,7 +160,7 @@ const main = async (): Promise<void> => {
                 item: m.localPath, mime: m.mime, kind: m.kind, contentMd5: m.contentMd5, id: m.id,
             })));
         });
-        await stage("detect", () => processMediaToDetections(fakeWindow, onnxDetector, onnxDetector.getClassNames(), false));
+        await stage("detect", () => processMediaToDetections(fakeWindow, onnxDetector, onnxDetector.getClassNames(), () => false));
         await stage("duplicates", () => duplicateFinder.findIndexDuplicates());
     } finally {
         for (const [src, dest] of moved) if (fs.existsSync(dest)) fs.renameSync(dest, src);

@@ -539,7 +539,7 @@ const runDetectObjects = async (): Promise<void> => {
         ? (processed: number, total: number) => pipelineRun.updateStage(processed, total)
         : undefined;
 
-    await processMediaToDetections(mainWindow, onnxDetector, classNames, detectionStopRequested, onProgress).catch(error => {
+    await processMediaToDetections(mainWindow, onnxDetector, classNames, () => detectionStopRequested, onProgress).catch(error => {
         console.error("processMediaToDetections failed", error);
     });
 
