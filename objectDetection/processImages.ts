@@ -38,20 +38,22 @@ export const processMediaToDetections = async (sink: DetectionSink, onnxDetector
 
 
     let processed = 0;
-    // An item already has a stored result for the *current* class list when
-    // its snapshot matches classesSnapshot below - skip re-running the model
-    // on it and just replay what's already in item_detection. Any class
-    // list edit changes the snapshot, so a redo is forced for everyone again.
 
     MediaStore.ensureReady();
     const modelPathId = MediaStore.getOrCreateModelPath(onnxDetector.getModelPath() as string);
+    const classList = MediaStore.classListKey(classNames);
     const medias = MediaStore.findAllItemsExists() || [];
     const total = medias.length;
 
-    const itemsState = MediaStore.findAllDetectionExists() || [];
+    // Done-check per ITEM: a video/GIF has one item per extracted frame and
+    // its itemId differs from the media id (checking the media id never
+    // matched them, so every video was re-detected on every run). An item
+    // counts as done only when it was detected by this same model against
+    // this same class list - switching .maloi model re-detects.
+    const itemKey = (media: DetectMediaRef): string => media.itemId || media.id;
+    const detected = MediaStore.findDetectedItemIds(medias.map(itemKey), modelPathId, classList);
 
-
-    const mediaState = medias.filter(media => !itemsState.get(media.id)).reduce((map, row) => {
+    const mediaState = medias.filter(media => !detected.has(itemKey(media))).reduce((map, row) => {
         const state = map.get(row.id);
         if (!state) {
             map.set(row.id, [row]);
@@ -122,7 +124,7 @@ export const processMediaToDetections = async (sink: DetectionSink, onnxDetector
                     }
                     const boxes: DetectionBox[] = await onnxDetector.detect(item.media);
                     MediaStore.replaceItemDetections(item.itemId, boxes, modelPathId);
-                    MediaStore.setItemDetectionState(item.itemId, boxes.map(box => box.className).join(","));
+                    MediaStore.setItemDetectionState(item.itemId, boxes.map(box => box.className).join(","), { modelPathId, classList });
                     perItem.push({ item, boxes });
                 }
 

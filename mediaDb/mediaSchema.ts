@@ -177,4 +177,10 @@ export const createMediaSchema = (database: Database.Database): void => {
             detectionAt      INTEGER
         );
     `);
+    // What an item was detected WITH, so a pass can tell "already detected by
+    // this model against this class list" (skip) from "detected by another
+    // model / class list" (redo). Rows from before these columns stay NULL
+    // and so count as not done: one re-detection after upgrading.
+    ensureColumn(database, "item_detection_state", "modelPathId", "INTEGER");
+    ensureColumn(database, "item_detection_state", "classList", "TEXT");
 };

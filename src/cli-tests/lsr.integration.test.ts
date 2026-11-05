@@ -26,8 +26,8 @@ interface RunResult { code: number | null; signal: NodeJS.Signals | null; stdout
 
 const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1" }
 
-const lsr = (args: string[]): RunResult => {
-    const r = spawnSync(ELECTRON, [CLI, ...args], { env, encoding: "utf8", timeout: 170_000 })
+const lsr = (args: string[], extraEnv: NodeJS.ProcessEnv = {}): RunResult => {
+    const r = spawnSync(ELECTRON, [CLI, ...args], { env: { ...env, ...extraEnv }, encoding: "utf8", timeout: 170_000 })
     return { code: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr }
 }
 
@@ -316,6 +316,81 @@ d("lsr CLI (Electron integration)", () => {
         })
     })
 
+
+    // cli/fakeDetector.ts: only with NODE_ENV=test AND LSR_FAKE_DETECTOR=1.
+    describe("detect stage with the fake detector, and detection resume", () => {
+        const FAKE = { NODE_ENV: "test", LSR_FAKE_DETECTOR: "1" }
+        let fakeMaloi: string
+        let dr: string
+        const detectedItems = (r: string): string[] => query(r, "select distinct itemId from item_detection order by itemId").map(x => x.itemId)
+        beforeAll(() => {
+            fakeMaloi = path.join(base, "fake-detector.maloi")
+            fs.writeFileSync(fakeMaloi, JSON.stringify({ onnx: "does-not-exist.onnx", classes: "x,y" }))
+            dr = path.join(base, "detect")
+            makeFixture(dr)
+        })
+
+        it("is ignored without NODE_ENV=test: missing ONNX -> exit 2", () => {
+            const r = lsr(["--root", dr, "--maloi", fakeMaloi, "--stages", "detect"], { NODE_ENV: "production", LSR_FAKE_DETECTOR: "1" })
+            expect(r.code).toBe(2)
+            expect(r.stderr).toMatch(/ONNX model not found/)
+            expect(r.stderr).not.toMatch(/fake test detector/)
+        })
+        it("is ignored without LSR_FAKE_DETECTOR=1", () => {
+            const r = lsr(["--root", dr, "--maloi", fakeMaloi, "--stages", "detect"], { NODE_ENV: "test", LSR_FAKE_DETECTOR: "" })
+            expect(r.code).toBe(2)
+            expect(r.stderr).toMatch(/ONNX model not found/)
+        })
+        it("first run detects every item, including each video frame item", () => {
+            const r = lsr(["--root", dr, "--maloi", fakeMaloi, "--stages", "scan,hash,index,detect"], FAKE)
+            expect(r.code).toBe(0)
+            expect(r.stderr).toMatch(/WARN .*fake test detector/)
+            expect(stagesDone(r.stdout)).toEqual(["scan", "hash", "index", "detect"])
+            expect(r.stdout).toMatch(/stage detect done in \S+: 5 media processed, 0 failed/)
+            const expected = query(dr, "select distinct itemId from media_item order by itemId").map(x => x.itemId)
+            const videoId = query(dr, "select id from media where filename = 'v.mp4'")[0].id
+            expect(expected.filter(i => i.startsWith(`${videoId}_`)).length).toBeGreaterThanOrEqual(2)
+            expect(detectedItems(dr)).toEqual(expected)
+        })
+        it("second and third detect runs process nothing (video frames are not re-detected)", () => {
+            const before = query(dr, "select count(*) n from item_detection")[0].n
+            for (let i = 0; i < 2; i++) {
+                const r = lsr(["--root", dr, "--maloi", fakeMaloi, "--stages", "detect"], FAKE)
+                expect(r.code).toBe(0)
+                expect(r.stdout).toMatch(/stage detect done in \S+: 0 media processed, 0 failed/)
+            }
+            expect(query(dr, "select count(*) n from item_detection")[0].n).toBe(before)
+        })
+        it("a new media file is the only one detected on the next run", () => {
+            ffmpeg("-f", "lavfi", "-i", "testsrc=s=20x20", "-frames:v", "1", path.join(dr, "new.png"))
+            const r = lsr(["--root", dr, "--maloi", fakeMaloi, "--stages", "scan,detect"], FAKE)
+            expect(r.code).toBe(0)
+            expect(r.stdout).toMatch(/: 1 media processed, 0 failed/)
+        })
+        it("the full chain including duplicates exits 0 and leaves media untouched", () => {
+            const before = snapshotTree(dr)
+            const r = lsr(["--root", dr, "--maloi", fakeMaloi], FAKE)
+            expect(r.code).toBe(0)
+            expect(stagesDone(r.stdout)).toEqual(["scan", "hash", "index", "detect", "duplicates"])
+            expect(snapshotTree(dr)).toEqual(before)
+        })
+        it("resume works past the 400-id lookup chunk", () => {
+            const many = path.join(base, "many")
+            fs.mkdirSync(many)
+            // 450 distinct frames (testsrc draws a changing pattern per frame)
+            ffmpeg("-f", "lavfi", "-i", "testsrc=s=16x16:r=1:d=450", path.join(many, "f%03d.png"))
+            expect(fs.readdirSync(many).length).toBe(450)
+            const first = lsr(["--root", many, "--maloi", fakeMaloi, "--stages", "scan,detect"], FAKE)
+            expect(first.code).toBe(0)
+            const processed = Number(/stage detect done in \S+: (\d+) media processed/.exec(first.stdout)![1])
+            expect(processed).toBe(450)
+            expect(detectedItems(many).length).toBeGreaterThan(400)
+            const second = lsr(["--root", many, "--maloi", fakeMaloi, "--stages", "detect"], FAKE)
+            expect(second.code).toBe(0)
+            expect(second.stdout).toMatch(/: 0 media processed, 0 failed/)
+        })
+    })
+
     describe("interruption", () => {
         let big: string
         let bigPristine: Record<string, string>
@@ -340,6 +415,10 @@ d("lsr CLI (Electron integration)", () => {
             expect(r.stderr).toMatch(/SIGINT received: stopping/)
             expect(r.stdout).toMatch(/interrupted - re-run the same command to continue/)
             expect(r.stdout).toMatch(/exit code 130/)
+            // The stop really landed mid-scan (not after a scan that had already finished).
+            const partial = /stage scan done in \S+: (\d+) folders, (\d+) media/.exec(r.stdout)
+            expect(partial).not.toBeNull()
+            expect(Number(partial![2])).toBeLessThan(3000)
             expect(fs.existsSync(lockOf(big))).toBe(false)
             const logText = fs.readFileSync(path.join(big, "tmp", "logs", logsOf(big)[0]), "utf8")
             expect(logText).toMatch(/exit code 130/)

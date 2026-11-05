@@ -125,6 +125,30 @@ export const findMediaByIds = (ids: string[]): Map<string, MediaRow> => {
     return result;
 };
 
+// Which of these items were already detected by THIS model against THIS
+// configured class list (their item_detection_state says so) - including
+// items the model found nothing in. Another model or class list, or a state
+// row from before that was recorded, counts as not done. Keyed by ITEM id
+// (an image's item id is its media id; a video/GIF frame's is
+// "<mediaId>_<position>"). Chunked IN lookups instead of loading the table.
+export const findDetectedItemIds = (itemIds: string[], modelPathId: number, classList: string): Set<string> => {
+    const db = HashStore.getDb();
+    const done = new Set<string>();
+    for (let i = 0; i < itemIds.length; i += ID_CHUNK) {
+        const chunk = itemIds.slice(i, i + ID_CHUNK);
+        if (chunk.length === 0) continue;
+        const rows = db.prepare(`
+            SELECT itemId FROM item_detection_state
+            WHERE modelPathId = ? AND classList = ? AND itemId IN (${chunk.map(() => "?").join(",")})
+        `).all(modelPathId, classList, ...chunk) as Array<{ itemId: string }>;
+        for (const row of rows) done.add(row.itemId);
+    }
+    return done;
+};
+
+// The configured class list as stored in item_detection_state.classList.
+export const classListKey = (classNames: string[]): string => classNames.join(",");
+
 export const findAllMediaThatExists = (): MediaRow[] => {
     const db = HashStore.getDb();
     return (db.prepare(`SELECT ${MEDIA_SELECT_COLUMNS} FROM media`).all() as MediaRow[])
@@ -246,15 +270,18 @@ export const saveDetectionGroups = (groups: DetectionGroup[]): void => {
     run(groups);
 };
 
-// Mirrors setDetectionState above, one level down: records the class-name
-// snapshot THIS item (not the whole media) was just detected against - see
-// mediaSchema.js's item_detection_state table.
-export const setItemDetectionState = (itemId: string, classesSnapshot: string): void => {
+// Mirrors setDetectionState above, one level down: records the class names
+// found on THIS item (not the whole media) - see mediaSchema.js's
+// item_detection_state table - plus, when given, the model and configured
+// class list it was detected with (findDetectedItemIds' done-check).
+export const setItemDetectionState = (itemId: string, classesSnapshot: string, detectedWith?: { modelPathId: number; classList: string }): void => {
     const db = HashStore.getDb();
     db.prepare(`
-        INSERT INTO item_detection_state (itemId, detectionClasses, detectionAt) VALUES (@itemId, @classesSnapshot, @detectedAt)
-        ON CONFLICT(itemId) DO UPDATE SET detectionClasses = excluded.detectionClasses, detectionAt = excluded.detectionAt
-    `).run({ itemId, classesSnapshot, detectedAt: Date.now() });
+        INSERT INTO item_detection_state (itemId, detectionClasses, detectionAt, modelPathId, classList)
+        VALUES (@itemId, @classesSnapshot, @detectedAt, @modelPathId, @classList)
+        ON CONFLICT(itemId) DO UPDATE SET detectionClasses = excluded.detectionClasses, detectionAt = excluded.detectionAt,
+            modelPathId = excluded.modelPathId, classList = excluded.classList
+    `).run({ itemId, classesSnapshot, detectedAt: Date.now(), modelPathId: detectedWith?.modelPathId ?? null, classList: detectedWith?.classList ?? null });
 };
 
 

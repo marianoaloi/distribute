@@ -58,9 +58,12 @@ const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, 
             return { code: EXIT_USAGE, summaries: [] };
         }
     }
+    const { isFakeDetectorRequested, createFakeDetector } = await import("./fakeDetector");
+    const detector: import("../pipeline/superPipeline").DetectorLike = isFakeDetectorRequested() ? createFakeDetector() : onnxDetector;
+    if (detector !== onnxDetector) log.warn("NODE_ENV=test + LSR_FAKE_DETECTOR=1: using the fake test detector, not the ONNX model");
     if (options.stages.includes("detect")) {
-        if (!onnxDetector.isAvailable()) { log.error(`ONNX model not found: ${onnxDetector.getModelPath()}`); return { code: EXIT_USAGE, summaries: [] }; }
-        if (onnxDetector.getClassNames().length === 0) { log.error("the .maloi file lists no classes"); return { code: EXIT_USAGE, summaries: [] }; }
+        if (!detector.isAvailable()) { log.error(`ONNX model not found: ${detector.getModelPath()}`); return { code: EXIT_USAGE, summaries: [] }; }
+        if (detector.getClassNames().length === 0) { log.error("the .maloi file lists no classes"); return { code: EXIT_USAGE, summaries: [] }; }
     }
 
     const reporter = createReporter((line) => log.info(line));
@@ -69,7 +72,7 @@ const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, 
 
     const detections = { media: 0, failed: 0 };
     const ctx: import("../pipeline/superPipeline").SuperContext = {
-        detector: onnxDetector,
+        detector,
         shouldStop,
         events: {
             progress: (processed, total) => pipelineRun.updateStage(processed, total),
