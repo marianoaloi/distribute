@@ -33,11 +33,9 @@
 }
 
 .imageAddaptScreen {
-  /* top: 50%;
-      left: 50%; */
-  transform: translate(100%, 0px);
-  max-height: 100%;
-  max-width: 100%;
+ transform: translate(50%, 10px);
+    max-height: 90%;
+    max-width: 90%;
 }
 
 @keyframes App-logo-spin {

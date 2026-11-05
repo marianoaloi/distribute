@@ -304,7 +304,7 @@ export const GridIMGs = (() => {
       modalZoomRefMethods.current.fullScreenVideo(); // Call the method in the child component
     }
 
-    if (ev.key === "'" ) {
+    if (ev.key === "1" ) {
       modalZoomRefMethods.current.chamgeImageClass(); // Call the method in the child component
     }
 
