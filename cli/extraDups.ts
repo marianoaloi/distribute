@@ -31,6 +31,16 @@ export const extraDupsBudgetMs = (env: NodeJS.ProcessEnv): number => {
     return (Number.isFinite(minutes) && minutes > 0 ? minutes : DEFAULT_EXTRA_DUPS_MINUTES) * 60_000;
 };
 
+// Memory cap per algorithm child (JS heap via --max-old-space-size, SQLite
+// heap via hard_heap_limit); override with LSR_EXTRA_DUPS_MAX_MB.
+export const DEFAULT_EXTRA_DUPS_MAX_MB = 4096;
+export const extraDupsMaxMb = (env: NodeJS.ProcessEnv): number => {
+    const mb = Number(env.LSR_EXTRA_DUPS_MAX_MB);
+    return Number.isFinite(mb) && mb > 0 ? Math.max(1, Math.floor(mb)) : DEFAULT_EXTRA_DUPS_MAX_MB;
+};
+
+const OUT_OF_MEMORY = /out of memory|heap limit|allocation failed/i;
+
 export class StoppedError extends Error { }
 
 const POLL_MS = 500;
@@ -55,9 +65,12 @@ const formatBudget = (ms: number): string => ms >= 60_000 ? `${Math.round(ms / 6
 // request.
 export const runInChild = (root: string, algorithm: ExtraAlgorithm, options: RunOptions): Promise<string[][]> =>
     new Promise<string[][]>((resolve, reject) => {
+        const maxMb = extraDupsMaxMb(process.env);
+        const oom = (): Error => new Error(`ran out of memory (LSR_EXTRA_DUPS_MAX_MB=${maxMb})`);
         const child = fork(path.join(__dirname, "extraDupsChild.js"), [root, algorithm, String(process.pid)], {
             execPath: process.execPath,
-            env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+            execArgv: [`--max-old-space-size=${maxMb}`],
+            env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", LSR_EXTRA_DUPS_MAX_MB: String(maxMb) },
             stdio: ["ignore", "ignore", "pipe", "ipc"],
         });
         liveChildren.add(child);
@@ -80,13 +93,14 @@ export const runInChild = (root: string, algorithm: ExtraAlgorithm, options: Run
             }
         }, POLL_MS);
         child.on("message", (message: { groups?: string[][]; error?: string }) => settle(() => {
-            if (message.error !== undefined) reject(new Error(message.error));
+            if (message.error !== undefined) reject(OUT_OF_MEMORY.test(message.error) ? oom() : new Error(message.error));
             else resolve(message.groups ?? []);
         }));
         child.once("error", (error) => settle(() => reject(error)));
         child.once("exit", (code, signal) => {
             liveChildren.delete(child);
-            settle(() => reject(new Error(`exited (${signal ?? `code ${code}`}) before answering${stderr ? `: ${stderr.trim().split("\n").slice(-3).join(" | ")}` : ""}`)));
+            settle(() => reject(OUT_OF_MEMORY.test(stderr) ? oom()
+                : new Error(`exited (${signal ?? `code ${code}`}) before answering${stderr ? `: ${stderr.trim().split("\n").slice(-3).join(" | ")}` : ""}`)));
         });
     });
 

@@ -48,6 +48,14 @@ const main = async (): Promise<void> => {
     }
     if (Number.isInteger(parentPid) && parentPid > 1) watchParent(parentPid);
     setActiveFolder(root);
+    const HashStore = await import("../compareImg/HashStore");
+    const db = HashStore.useReadOnlyConnection();
+    // Sort/temp space on disk, and SQLite's own heap capped (the JS heap is
+    // capped by the runner's --max-old-space-size): a pathological query
+    // fails with "out of memory" instead of eating the shared server.
+    db.pragma("temp_store = FILE");
+    const maxMb = Number(process.env.LSR_EXTRA_DUPS_MAX_MB);
+    if (Number.isFinite(maxMb) && maxMb > 0) db.pragma(`hard_heap_limit = ${Math.floor(maxMb * 1024 * 1024)}`);
     const duplicateFinder = await import("../compareImg/duplicateFinder");
     const find = {
         objects: duplicateFinder.findObjectDuplicates,
@@ -59,7 +67,7 @@ const main = async (): Promise<void> => {
     } catch (error) {
         await send({ error: (error as Error).message });
     }
-    try { (await import("../compareImg/HashStore")).closeConnection(); } catch { /* exiting */ }
+    try { HashStore.closeConnection(); } catch { /* exiting */ }
     process.exit(0);
 };
 

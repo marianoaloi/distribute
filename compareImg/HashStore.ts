@@ -243,6 +243,15 @@ const verifyIntegrity = (): void => {
     }
 };
 
+// For a process that must never write (cli/extraDupsChild.ts, killable at
+// any moment): read-only, no schema setup or backfill. ensureReady is then
+// a no-op for this process.
+export const useReadOnlyConnection = (): Database.Database => {
+    closeConnection();
+    db = new Database(getDbPath(), { readonly: true, fileMustExist: true });
+    return db;
+};
+
 export const ensureReady = (): void => {
     if (db) return;
     db = openDb();
