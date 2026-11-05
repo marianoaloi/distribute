@@ -2,9 +2,9 @@ import { useEffect, useState } from "react"
 import { useDispatch } from "react-redux"
 import {
     IconButton, Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions,
-    Button, Select, MenuItem, ListSubheader, ToggleButton, Stack, Divider, TextField
+    Button, Select, MenuItem, ListSubheader, ToggleButton, Stack, Divider, TextField, InputAdornment
 } from "@mui/material"
-import { FilterAlt, FilterAltOffOutlined, Add, Delete, RestartAlt } from "@mui/icons-material"
+import { FilterAlt, FilterAltOffOutlined, Add, Delete, RestartAlt, Clear } from "@mui/icons-material"
 import { LoadDetectionClasses, LoadDetections, selectDetectionClassNames, selectDetectionGroups, useSelector } from "../lib/redux"
 import { configurationsSelector, setClassFilter, setClassPresence } from "../lib/redux/slices/configurations"
 import { ClassFilterBar } from "./classFilter.styled"
@@ -248,8 +248,19 @@ export const ClassFilter = (() => {
                                         title="+N: some detection with score >= N%. -N: some detection with score <= N%. Empty: any score."
                                         value={term.score ?? ''}
                                         onChange={(e) => setScore(gi, ti, e.target.value)}
-                                        inputProps={{ min: -100, max: 100, step: 1 }}
-                                        sx={{ width: 100 }}
+                                        slotProps={{
+                                            htmlInput: { min: -100, max: 100, step: 1 },
+                                            input: {
+                                                endAdornment: term.score !== null && term.score !== undefined &&
+                                                    <InputAdornment position="end">
+                                                        <IconButton type="button" size="small" edge="end"
+                                                            onClick={() => setScore(gi, ti, '')} title="Clear score (any score)">
+                                                            <Clear fontSize="small" />
+                                                        </IconButton>
+                                                    </InputAdornment>
+                                            }
+                                        }}
+                                        sx={{ width: 130 }}
                                     />
                                     <IconButton type="button" onClick={() => removeTerm(gi, ti)} title="Remove condition">
                                         <Delete fontSize="small" />
