@@ -67,9 +67,24 @@ export const parseMaloiGroups = (raw: unknown, classCount: number): DetectionGro
     return groups;
 };
 
+// Letterbox/tensor size bounds for "reshape": a .maloi is now also read
+// unattended (cli/lsr.ts), and a huge value means a huge tensor allocation.
+export const RESHAPE_MIN = 32;
+export const RESHAPE_MAX = 4096;
+
+// A non-number "reshape" is ignored (null = the detector's default size), as
+// before; a number outside an integer RESHAPE_MIN..RESHAPE_MAX is an error.
+export const parseReshape = (raw: unknown, maloiPath: string): number | null => {
+    if (typeof raw !== "number") return null;
+    if (!Number.isInteger(raw) || raw < RESHAPE_MIN || raw > RESHAPE_MAX) {
+        throw new Error(`.maloi file ${maloiPath} has an invalid "reshape" ${raw}: expected an integer from ${RESHAPE_MIN} to ${RESHAPE_MAX}`);
+    }
+    return raw;
+};
+
 // Pure parse of a .maloi file: the onnx path is resolved relative to the
 // .maloi's own folder. Throws an Error with a clear message on unreadable
-// files, bad JSON, or a missing "onnx" field.
+// files, bad JSON, a missing "onnx" field or an out-of-range "reshape".
 export const readMaloi = (maloiPath: string): LoadedMaloi => {
     let raw: string;
     try {
@@ -94,7 +109,7 @@ export const readMaloi = (maloiPath: string): LoadedMaloi => {
         onnxPath: path.resolve(path.dirname(maloiPath), maloi.onnx),
         classNames,
         groups: parseMaloiGroups(maloi.group, classNames.length),
-        reshape: typeof maloi.reshape === "number" ? maloi.reshape : null,
+        reshape: parseReshape(maloi.reshape, maloiPath),
     };
 };
 

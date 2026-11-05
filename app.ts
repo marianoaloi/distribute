@@ -463,6 +463,14 @@ const chooseOnnxModelDialog = async (): Promise<boolean> => {
         mainWindow!.webContents.send("onnxModelChosen", { path: onnxDetector.getModelPath(), size: onnxDetector.getSize() });
     } catch (err) {
         console.error("chooseOnnxModel failed", err);
+        // The user picked a model set that could not be loaded: say so, and
+        // return false so loadSuperRecursive does not quietly carry on with
+        // whatever model was configured before. readMaloi validates before
+        // anything is applied, so that previous model stays configured - and
+        // onnxModelChosen re-sends its path so the renderer still shows it.
+        mainWindow!.webContents.send("pipelineRejected", { message: `Could not load the chosen model: ${(err as Error).message}` });
+        mainWindow!.webContents.send("onnxModelChosen", { path: onnxDetector.getModelPath(), size: onnxDetector.getSize() });
+        return false;
     }
     return onnxDetector.isAvailable();
 };

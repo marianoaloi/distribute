@@ -55,3 +55,37 @@ describe("pickSurvivor", () => {
         expect(pickSurvivor([only])).toBe(only)
     })
 })
+
+describe("imported members (cross-library fake items)", () => {
+    const imp = (id: string, mime: string, size: number, hasAudio = false): SurvivorCandidate => ({ id, mime, size, hasAudio, imported: true })
+
+    it("are dropped before the tiers are applied", () => {
+        const g = [imp("iv", "video/mp4", 9999, true), m("own", "image/png", 10)]
+        expect(survivorCandidates(g).map(x => x.id)).toEqual(["own"])
+        expect(pickSurvivor(g)?.id).toBe("own")
+    })
+    it("never survive even when biggest within the winning tier", () => {
+        const g = [imp("big", "video/mp4", 9999, true), m("small", "video/mp4", 1, true)]
+        expect(pickSurvivor(g)?.id).toBe("small")
+    })
+    it("an imported gif does not pull an own image group into the gif tier", () => {
+        const g = [imp("ig", "image/gif", 1), m("a", "image/png", 5), m("b", "image/jpeg", 7)]
+        expect(survivorCandidates(g).map(x => x.id)).toEqual(["a", "b"])
+        expect(pickSurvivor(g)?.id).toBe("b")
+    })
+    it("an all-imported group has no candidates and no survivor", () => {
+        const g = [imp("x", "image/png", 5), imp("y", "video/mp4", 7, true)]
+        expect(survivorCandidates(g)).toEqual([])
+        expect(pickSurvivor(g)).toBeUndefined()
+    })
+    it("imported: false behaves like an own member", () => {
+        const g = [{ ...m("a", "image/png", 5), imported: false }, m("b", "image/png", 3)]
+        expect(pickSurvivor(g)?.id).toBe("a")
+    })
+    it("does not mutate the input group", () => {
+        const g = [imp("x", "image/png", 5), m("a", "image/png", 1)]
+        const copy = g.map(x => ({ ...x }))
+        survivorCandidates(g)
+        expect(g).toEqual(copy)
+    })
+})

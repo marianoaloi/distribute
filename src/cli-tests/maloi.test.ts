@@ -2,7 +2,7 @@
 import fs from "fs"
 import os from "os"
 import path from "path"
-import { applyMaloi, LoadedMaloi, MaloiDetector, MaloiStore, parseMaloiGroups, readMaloi, splitClassNames } from "../../objectDetection/maloi"
+import { applyMaloi, LoadedMaloi, MaloiDetector, MaloiStore, parseMaloiGroups, parseReshape, readMaloi, RESHAPE_MAX, RESHAPE_MIN, splitClassNames } from "../../objectDetection/maloi"
 
 let dir: string
 const write = (name: string, content: string): string => {
@@ -45,6 +45,7 @@ describe("readMaloi", () => {
     })
     it("parses reshape only when it is a number", () => {
         expect(readMaloi(write("r1.maloi", JSON.stringify({ onnx: "m.onnx", reshape: 1280 }))).reshape).toBe(1280)
+        expect(readMaloi(write("r4.maloi", JSON.stringify({ onnx: "m.onnx", reshape: null }))).reshape).toBeNull()
         expect(readMaloi(write("r2.maloi", JSON.stringify({ onnx: "m.onnx", reshape: "1280" }))).reshape).toBeNull()
         expect(readMaloi(write("r3.maloi", JSON.stringify({ onnx: "m.onnx" }))).reshape).toBeNull()
     })
@@ -170,5 +171,38 @@ describe("applyMaloi", () => {
         store.ensureReady = () => { throw new Error("db down") }
         expect(() => applyMaloi(loaded, detector, store)).toThrow("db down")
         expect(calls).toEqual([])
+    })
+})
+
+describe("parseReshape", () => {
+    it("has bounds 32..4096", () => {
+        expect(RESHAPE_MIN).toBe(32)
+        expect(RESHAPE_MAX).toBe(4096)
+    })
+    it("ignores non-numbers (null = detector default)", () => {
+        for (const v of [undefined, null, "640", true, {}, [640]]) expect(parseReshape(v, "x.maloi")).toBeNull()
+    })
+    it("accepts integers within bounds, inclusive", () => {
+        expect(parseReshape(32, "x.maloi")).toBe(32)
+        expect(parseReshape(640, "x.maloi")).toBe(640)
+        expect(parseReshape(4096, "x.maloi")).toBe(4096)
+    })
+    it.each([31, 4097, 0, -640, 640.5, NaN, Infinity, -Infinity, 1e9])("rejects %p with a message naming reshape and the file", (v) => {
+        expect(() => parseReshape(v, "/p/x.maloi")).toThrow(/x\.maloi.*"reshape"/)
+    })
+})
+
+describe("readMaloi reshape validation", () => {
+    it("throws on an out-of-range or fractional reshape", () => {
+        expect(() => readMaloi(write("rb1.maloi", JSON.stringify({ onnx: "m.onnx", reshape: 8192 })))).toThrow(/reshape/)
+        expect(() => readMaloi(write("rb2.maloi", JSON.stringify({ onnx: "m.onnx", reshape: 16 })))).toThrow(/reshape/)
+        expect(() => readMaloi(write("rb3.maloi", JSON.stringify({ onnx: "m.onnx", reshape: 640.5 })))).toThrow(/reshape/)
+    })
+    it("accepts the bounds", () => {
+        expect(readMaloi(write("rb4.maloi", JSON.stringify({ onnx: "m.onnx", reshape: 32 }))).reshape).toBe(32)
+        expect(readMaloi(write("rb5.maloi", JSON.stringify({ onnx: "m.onnx", reshape: 4096 }))).reshape).toBe(4096)
+    })
+    it("a huge reshape in exponent notation is rejected", () => {
+        expect(() => readMaloi(write("rb6.maloi", '{"onnx":"m.onnx","reshape":1e6}'))).toThrow(/reshape/)
     })
 })
