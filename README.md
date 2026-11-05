@@ -8,6 +8,7 @@ An Electron + React (TypeScript) desktop app for browsing, previewing, and organ
 - [Keyboard Shortcuts & Mouse Controls](#keyboard-shortcuts--mouse-controls)
 - [Getting Started](#getting-started)
 - [Building & Packaging](#building--packaging)
+- [Headless LSR (command line)](#headless-lsr-command-line)
 - [Architecture](#architecture)
 
 ## Features
@@ -132,6 +133,41 @@ npm run buildele     # build + package for Linux
 npm run winBuild      # package for Windows (portable)
 npm run deb64         # create a Debian installer
 ```
+
+## Headless LSR (command line)
+
+"Load super recursive" without the GUI, for big libraries on a server. It
+writes the same per-folder database the GUI uses
+(`<mediaRoot>/tmp/hashIndex/index.db`), so opening the folder in the app
+afterwards shows the results. It never moves or deletes media.
+
+```bash
+npm run build:electron
+ELECTRON_RUN_AS_NODE=1 npx electron electron-dist/cli/lsr.js \
+  --root /data/media --maloi /models/body.maloi \
+  [--stages scan,hash,index,detect,duplicates,extraDups,report] \
+  [--report /data/lsr-report --format json,csv] [--verbose]
+# or: npm run lsr -- --root /data/media --maloi /models/body.maloi
+```
+
+- Stages always run in that order; `--stages` picks a subset (`--maloi` is
+  only needed with `detect`).
+- Progress and an ETA go to stdout; the full log goes to
+  `<mediaRoot>/tmp/logs/lsr-<timestamp>.log`.
+- Interrupt with Ctrl-C (or SIGTERM) and re-run the same command: work that
+  is already done is skipped. Only one run per folder at a time
+  (`tmp/lsr.lock`); don't open the same folder in the GUI meanwhile.
+- The report (`tmp/reports/` by default) lists every duplicate group with a
+  suggested file to keep - advisory only.
+- Exit codes: 0 ok, 1 some items failed, 2 usage/configuration error,
+  3 a stage failed, 130 interrupted. `--help` has the details.
+- Tuning: `LSR_STALL_MINUTES` (default 30) ends a run whose progress stops;
+  `LSR_EXTRA_DUPS_MINUTES` (default 60) and `LSR_EXTRA_DUPS_MAX_MB` (default
+  4096) bound each of the extra duplicate algorithms.
+
+Linux/macOS shell syntax shown; on a headless Linux server no display is
+needed. If the Electron or ffmpeg binary is missing after `npm install`, run
+`node node_modules/electron/install.js` / `node node_modules/ffmpeg-static/install.js`.
 
 ## Architecture
 
