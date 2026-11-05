@@ -123,15 +123,42 @@ export const csvRowsFor = (group: ReportGroup): string[] =>
     group.members.map(m => [group.algorithm, group.groupId, m.role, m.id, m.path, m.size, m.kind, m.hasAudio ? 1 : 0, m.contentMd5]
         .map(csvEscape).join(","));
 
+const isSymlink = (p: string): boolean => { try { return fs.lstatSync(p).isSymbolicLink(); } catch { return false; } };
+
+// A <target>.tmp the report may replace: a symlink (removed, never followed),
+// an empty file (killed before the first write), or a partial report (the
+// header is written first).
+export const isStaleReportTmp = (tmpPath: string): boolean => {
+    if (isSymlink(tmpPath)) return true;
+    let head = "";
+    try {
+        const fd = fs.openSync(tmpPath, "r");
+        try {
+            const buffer = Buffer.alloc(256);
+            head = buffer.subarray(0, fs.readSync(fd, buffer, 0, buffer.length, 0)).toString("utf8");
+        } finally {
+            fs.closeSync(fd);
+        }
+    } catch {
+        return false;
+    }
+    return head === "" || head.startsWith('{"generatedAt"') || head.startsWith(`${CSV_HEADER.join(",")}\n`) || `${CSV_HEADER.join(",")}\n`.startsWith(head);
+};
+
 // Minimal backpressure-aware line writer over a WriteStream. It writes to
 // <file>.tmp and only commit() renames that onto <file>, so a run killed
 // mid-report never leaves a truncated report behind (just a stray .tmp).
 const openWriter = (filePath: string): { write(text: string): Promise<void>; close(): Promise<void>; commit(): void; discard(): void } => {
     const tmpPath = `${filePath}.tmp`;
-    // A stale .tmp from a run killed mid-report is dropped first (unlink
-    // removes a planted symlink itself, never its target), then created
+    // A stale .tmp from a run killed mid-report is dropped first - but only
+    // one that is ours (see isStaleReportTmp); anything else is refused, so
+    // the report never deletes a file it did not write. unlink removes a
+    // symlink itself, never its target; the new file is then created
     // exclusively, so nothing can redirect the write.
-    try { fs.unlinkSync(tmpPath); } catch { /* none */ }
+    if (fs.existsSync(tmpPath) || isSymlink(tmpPath)) {
+        if (!isStaleReportTmp(tmpPath)) throw new Error(`${tmpPath} exists and is not a leftover LSR report; remove it or choose another --report path`);
+        fs.unlinkSync(tmpPath);
+    }
     const stream = fs.createWriteStream(tmpPath, { fd: fs.openSync(tmpPath, "wx") });
     let failure: Error | null = null;
     stream.on("error", (error) => { failure = error; });
@@ -171,7 +198,13 @@ export const writeReport = async (header: ReportHeader, groups: AsyncIterable<Re
     const totals = emptyTotals();
     const removedIds = new Set<string>();
     const json = targets.json ? openWriter(targets.json) : null;
-    const csv = targets.csv ? openWriter(targets.csv) : null;
+    let csv: ReturnType<typeof openWriter> | null = null;
+    try {
+        csv = targets.csv ? openWriter(targets.csv) : null;
+    } catch (error) {
+        if (json) { await json.close().catch(() => undefined); json.discard(); }
+        throw error;
+    }
     try {
         if (json) {
             const head = JSON.stringify({ ...header, groups: [] });
@@ -193,6 +226,8 @@ export const writeReport = async (header: ReportHeader, groups: AsyncIterable<Re
         throw error;
     }
     await Promise.all([json?.close(), csv?.close()]);
+    // Each format is renamed into place on its own: should the second rename
+    // fail, the two files would be from different runs (the error is thrown).
     json?.commit();
     csv?.commit();
     return totals;

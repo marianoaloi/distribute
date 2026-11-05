@@ -6,7 +6,7 @@ import fs from "fs"
 import os from "os"
 import path from "path"
 import {
-    addToTotals, buildReportGroup, DECIDING_ALGORITHMS, csvEscape, CSV_HEADER, csvRowsFor, emptyTotals, formatBytes,
+    addToTotals, buildReportGroup, DECIDING_ALGORITHMS, isStaleReportTmp, csvEscape, CSV_HEADER, csvRowsFor, emptyTotals, formatBytes,
     groupIdFor, MemberInfo, ReportGroup, writeReport,
 } from "../../reporting/report"
 
@@ -219,7 +219,7 @@ describe("writeReport", () => {
     })
     it("writes via <target>.tmp: a stale .tmp is replaced and nothing is left besides the target", async () => {
         const json = path.join(dir, "t.json")
-        fs.writeFileSync(`${json}.tmp`, "stale garbage from a killed run")
+        fs.writeFileSync(`${json}.tmp`, '{"generatedAt":"2026-11-05T00:00:00.000Z","root":"/me') // killed mid-write
         await writeReport(header, gen([]), { json })
         expect(fs.readdirSync(dir)).toEqual(["t.json"])
         expect(JSON.parse(fs.readFileSync(json, "utf8")).groups).toEqual([])
@@ -295,5 +295,78 @@ describe("review-only algorithms (reviewer H1)", () => {
     it("csv rows carry the review role", () => {
         const g = buildReportGroup("frames", [mem("a"), mem("b")])!
         expect(csvRowsFor(g).map(r => r.split(",")[2])).toEqual(["review", "review"])
+    })
+})
+
+describe("stale .tmp handling (reviewer L1: never delete a file the report did not write)", () => {
+    let dir: string
+    beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "lsr-tmp-")) })
+    afterEach(() => fs.rmSync(dir, { recursive: true, force: true }))
+    const w = (n: string, c: string) => { const p = path.join(dir, n); fs.writeFileSync(p, c); return p }
+    const header = { generatedAt: "t", root: "/r", stages: ["report"] }
+    async function* none() { /* no groups */ }
+
+    describe("isStaleReportTmp", () => {
+        it("accepts an empty file, a partial JSON report, a partial CSV report", () => {
+            expect(isStaleReportTmp(w("e.tmp", ""))).toBe(true)
+            expect(isStaleReportTmp(w("j.tmp", '{"generatedAt":"x","root":'))).toBe(true)
+            expect(isStaleReportTmp(w("c.tmp", `${CSV_HEADER.join(",")}\npixel,abc,ke`))).toBe(true)
+            expect(isStaleReportTmp(w("h.tmp", "algorithm,groupId,ro"))).toBe(true) // killed inside the header line
+        })
+        it("accepts a symlink (whatever it points to)", () => {
+            const target = w("user.txt", "precious")
+            const link = path.join(dir, "l.tmp")
+            fs.symlinkSync(target, link)
+            expect(isStaleReportTmp(link)).toBe(true)
+            const dangling = path.join(dir, "d.tmp")
+            fs.symlinkSync(path.join(dir, "nowhere"), dangling)
+            expect(isStaleReportTmp(dangling)).toBe(true)
+        })
+        it("rejects foreign content, a directory, and a missing path", () => {
+            expect(isStaleReportTmp(w("u.tmp", "user data"))).toBe(false)
+            expect(isStaleReportTmp(w("u2.tmp", ' {"generatedAt":1}'))).toBe(false)
+            expect(isStaleReportTmp(w("u3.tmp", "name,size\n"))).toBe(false)
+            expect(isStaleReportTmp(w("u4.tmp", `${CSV_HEADER.join(",")}X`))).toBe(false)
+            fs.mkdirSync(path.join(dir, "dir.tmp"))
+            expect(isStaleReportTmp(path.join(dir, "dir.tmp"))).toBe(false)
+            expect(isStaleReportTmp(path.join(dir, "missing.tmp"))).toBe(false)
+        })
+        it("KNOWN EDGE: a file whose whole content is a prefix of the CSV header counts as stale", () => {
+            // Documented behaviour (a run killed inside the header line); e.g. a file holding just "a".
+            expect(isStaleReportTmp(w("tiny.tmp", "a"))).toBe(true)
+        })
+    })
+
+    describe("writeReport", () => {
+        it("refuses a foreign .tmp: rejects, leaves it untouched, writes no report", async () => {
+            const json = path.join(dir, "x.json")
+            w("x.json.tmp", "user data")
+            await expect(writeReport(header, none(), { json })).rejects.toThrow(/x\.json\.tmp exists and is not a leftover LSR report/)
+            expect(fs.readFileSync(`${json}.tmp`, "utf8")).toBe("user data")
+            expect(fs.existsSync(json)).toBe(false)
+        })
+        it("a foreign CSV .tmp after a good JSON one: nothing written, JSON .tmp discarded, foreign file untouched", async () => {
+            const json = path.join(dir, "y.json"), csv = path.join(dir, "y.csv")
+            w("y.csv.tmp", "user data")
+            await expect(writeReport(header, none(), { json, csv })).rejects.toThrow(/y\.csv\.tmp exists/)
+            expect(fs.readdirSync(dir).sort()).toEqual(["y.csv.tmp"])
+            expect(fs.readFileSync(`${csv}.tmp`, "utf8")).toBe("user data")
+        })
+        it("replaces an empty .tmp", async () => {
+            const json = path.join(dir, "v.json")
+            w("v.json.tmp", "")
+            await writeReport(header, none(), { json })
+            expect(fs.readdirSync(dir)).toEqual(["v.json"])
+        })
+        it("a .tmp symlink to a user file: the link is removed, the user file untouched, the report written", async () => {
+            const user = w("user.json.tmp", "user data")
+            const json = path.join(dir, "z.json")
+            fs.symlinkSync(user, `${json}.tmp`)
+            await writeReport(header, none(), { json })
+            expect(fs.readFileSync(user, "utf8")).toBe("user data")
+            expect(fs.lstatSync(json).isFile()).toBe(true)
+            expect(JSON.parse(fs.readFileSync(json, "utf8")).groups).toEqual([])
+            expect(fs.existsSync(`${json}.tmp`)).toBe(false)
+        })
     })
 })

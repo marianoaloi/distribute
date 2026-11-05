@@ -6,7 +6,7 @@
 // {"generatedAt", a CSV one with the report's header line).
 import fs from "fs";
 import path from "path";
-import { CSV_HEADER } from "../reporting/report";
+import { CSV_HEADER, isStaleReportTmp } from "../reporting/report";
 
 export const REPORT_FORMATS = ["json", "csv"] as const;
 export type ReportFormat = typeof REPORT_FORMATS[number];
@@ -54,6 +54,10 @@ export const checkReportTargets = (targets: Partial<Record<ReportFormat, string>
         let dirOk = false;
         try { dirOk = fs.statSync(dir).isDirectory(); } catch { /* missing */ }
         if (!dirOk) return `--report folder does not exist: ${dir}`;
+        const tmp = `${target}.tmp`;
+        let tmpPresent = false;
+        try { fs.lstatSync(tmp); tmpPresent = true; } catch { /* none */ }
+        if (tmpPresent && !isStaleReportTmp(tmp)) return `${tmp} exists and is not a leftover LSR report; remove it or choose another --report path`;
         if (!fs.existsSync(target)) continue;
         let isFile = false;
         try { isFile = fs.statSync(target).isFile(); } catch { /* vanished */ }

@@ -76,6 +76,19 @@ describe("checkReportTargets", () => {
         fs.mkdirSync(path.join(dir, "r.json"))
         expect(checkReportTargets({ json: path.join(dir, "r.json") })).toMatch(/is not a file/)
     })
+    it("refuses an explicit target whose .tmp is a foreign file (checked before any work)", () => {
+        fs.writeFileSync(path.join(dir, "r.json.tmp"), "user data")
+        expect(checkReportTargets({ json: path.join(dir, "r.json") })).toMatch(/r\.json\.tmp exists and is not a leftover LSR report/)
+        expect(fs.readFileSync(path.join(dir, "r.json.tmp"), "utf8")).toBe("user data")
+    })
+    it("accepts an explicit target whose .tmp is a leftover (empty, partial, symlink)", () => {
+        fs.writeFileSync(path.join(dir, "a.json.tmp"), "")
+        fs.writeFileSync(path.join(dir, "b.json.tmp"), '{"generatedAt":"x",')
+        fs.writeFileSync(path.join(dir, "user"), "keep")
+        fs.symlinkSync(path.join(dir, "user"), path.join(dir, "c.json.tmp"))
+        for (const n of ["a", "b", "c"]) expect(checkReportTargets({ json: path.join(dir, `${n}.json`) })).toBeNull()
+        expect(fs.readFileSync(path.join(dir, "user"), "utf8")).toBe("keep")
+    })
     it("refuses a folder path that is a file", () => {
         fs.writeFileSync(path.join(dir, "file"), "x")
         expect(checkReportTargets({ json: path.join(dir, "file", "r.json") })).toMatch(/folder does not exist/)

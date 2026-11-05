@@ -1343,12 +1343,32 @@ d("lsr CLI (Electron integration)", () => {
             expect(fs.readdirSync(out).filter(f => f.endsWith(".tmp"))).toEqual([])
         })
         it("a stale .tmp from a killed run is cleaned up by the next report", () => {
-            fs.writeFileSync(path.join(out, "r.json.tmp"), "garbage from a killed run")
+            fs.writeFileSync(path.join(out, "r.json.tmp"), '{"generatedAt":"2026-11-05T00:00:00.000Z","groups":[{"algo') // killed mid-write
             fs.writeFileSync(path.join(out, "r.csv.tmp"), "")
             const r = lsr(["--root", rr, "--stages", "report", "--report", path.join(out, "r"), "--format", "json,csv"], FAKE)
             expect(r.code).toBe(0)
             expect(fs.readdirSync(out).filter(f => f.endsWith(".tmp"))).toEqual([])
             expect(readJson(path.join(out, "r.json")).groups.length).toBeGreaterThan(0)
+        })
+        it("a foreign <report>.tmp is refused up front: exit 2, file untouched, no report, no stage run", () => {
+            fs.writeFileSync(path.join(out, "u.json.tmp"), "user data")
+            const r = lsr(["--root", rr, "--stages", "report", "--report", path.join(out, "u.json")], FAKE)
+            expect(r.code).toBe(2)
+            expect(r.stderr).toMatch(/u\.json\.tmp exists and is not a leftover LSR report/)
+            expect(fs.readFileSync(path.join(out, "u.json.tmp"), "utf8")).toBe("user data")
+            expect(fs.existsSync(path.join(out, "u.json"))).toBe(false)
+            expect(stagesDone(r.stdout)).toEqual([])
+        })
+        it("a <report>.tmp symlink to a user file: the link is replaced, the user file untouched", () => {
+            const user = path.join(out, "precious.txt")
+            fs.writeFileSync(user, "user data")
+            fs.symlinkSync(user, path.join(out, "w.json.tmp"))
+            const r = lsr(["--root", rr, "--stages", "report", "--report", path.join(out, "w.json")], FAKE)
+            expect(r.code).toBe(0)
+            expect(fs.readFileSync(user, "utf8")).toBe("user data")
+            expect(fs.lstatSync(path.join(out, "w.json")).isFile()).toBe(true)
+            expect(readJson(path.join(out, "w.json")).groups.length).toBeGreaterThan(0)
+            expect(fs.existsSync(path.join(out, "w.json.tmp"))).toBe(false)
         })
         it("--stages report alone recomputes the other algorithms (same groups as the extraDups run)", () => {
             const prev = readJson(path.join(out, "r.json"))
