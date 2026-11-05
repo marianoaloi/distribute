@@ -342,9 +342,13 @@ const ITEM_DETECTION_SELECT = `
     WHERE item_detection.itemId = ?
 `;
 
+// Prepared once per connection: the detection pass replays stored boxes
+// through this for every already-done item of a media it redoes.
+let itemDetectionStmt: { db: unknown; stmt: { all(...args: unknown[]): unknown[] } } | null = null;
 export const getItemDetections = (itemId: string): DetectionRow[] => {
     const db = HashStore.getDb();
-    return db.prepare(ITEM_DETECTION_SELECT).all(itemId) as DetectionRow[];
+    if (!itemDetectionStmt || itemDetectionStmt.db !== db) itemDetectionStmt = { db, stmt: db.prepare(ITEM_DETECTION_SELECT) };
+    return itemDetectionStmt.stmt.all(itemId) as DetectionRow[];
 };
 
 export interface DetectionRowWithMediaId extends DetectionRow {

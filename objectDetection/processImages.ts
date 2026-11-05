@@ -4,7 +4,7 @@ import * as MediaStore from "../mediaDb/MediaStore";
 import { DetectionBox, DetectMediaRef } from "../types/domain";
 import * as mediaIndexer from "../compareImg/mediaIndexer";
 import * as inFlight from "../system/inFlight";
-import { countMedia, itemRefsForMedia, listMediaPage, type PagedMediaRow } from "../mediaDb/mediaPages";
+import { countMedia, inTransaction, itemRefsForMedia, listMediaPage, type PagedMediaRow } from "../mediaDb/mediaPages";
 import { forEachPage } from "../mediaDb/paging";
 
 // Media per page of the detection pass.
@@ -45,7 +45,11 @@ export interface DetectionPassStats {
     alreadyDone: number;
     // Video/GIF media with no extracted frames (nothing to detect on).
     withoutFrames: number;
+    // The first FAILED_PATHS_CAP media files whose detection failed.
+    failedPaths: string[];
 }
+
+export const FAILED_PATHS_CAP = 100;
 
 export const processMediaToDetections = async (sink: DetectionSink, onnxDetector: DetectorLike, classNames: string[], shouldStop: () => boolean, onProgress?: (processed: number, total: number) => void): Promise<DetectionPassStats> => {
 
@@ -115,8 +119,14 @@ export const processMediaToDetections = async (sink: DetectionSink, onnxDetector
                         continue;
                     }
                     const boxes: DetectionBox[] = await inFlight.track(item.media, () => onnxDetector.detect(item.media));
-                    MediaStore.replaceItemDetections(item.itemId, boxes, modelPathId);
-                    MediaStore.setItemDetectionState(item.itemId, boxes.map(box => box.className).join(","), { modelPathId, classList });
+                    // One transaction: boxes and the "done with this model"
+                    // record can never disagree (a kill between the two would
+                    // let a later run replay one model's boxes as another's).
+                    const itemId = item.itemId;
+                    inTransaction(() => {
+                        MediaStore.replaceItemDetections(itemId, boxes, modelPathId);
+                        MediaStore.setItemDetectionState(itemId, boxes.map(box => box.className).join(","), { modelPathId, classList });
+                    });
                     perItem.push({ item, boxes });
                 }
 
@@ -145,6 +155,7 @@ export const processMediaToDetections = async (sink: DetectionSink, onnxDetector
                 return;
             }
             MediaStore.replaceItemDetections(media.itemId, [], modelPathId);
+            failedMediaIds.add(media.id);
             console.error("detectObjects failed for", media.media, error);
             sink.found({ id: media.id, boxes: [], classes: [], classScores: {}, error: (error as Error).message });
         } finally {
@@ -158,6 +169,8 @@ export const processMediaToDetections = async (sink: DetectionSink, onnxDetector
     // stop takes effect within the page in flight.
     let videosWithoutFrames = 0;
     let alreadyDone = 0;
+    const failedMediaIds = new Set<string>();
+    const failedPaths: string[] = [];
     const isFramed = (ref: DetectMediaRef): boolean => ref.kind === "video" || ref.kind === "gif";
     const detectPage = async (medias: PagedMediaRow[]): Promise<void> => {
         const plan = (): { groups: DetectMediaRef[][]; detected: Set<string> } => {
@@ -215,6 +228,9 @@ export const processMediaToDetections = async (sink: DetectionSink, onnxDetector
         };
         const workerCount = Math.min(DETECTION_CONCURRENCY, groups.length);
         await Promise.all(Array.from({ length: workerCount }, runWorker));
+        for (const m of medias) {
+            if (failedMediaIds.delete(m.id) && failedPaths.length < FAILED_PATHS_CAP) failedPaths.push(m.localPath);
+        }
     };
 
     await forEachPage(
@@ -228,5 +244,5 @@ export const processMediaToDetections = async (sink: DetectionSink, onnxDetector
     if (videosWithoutFrames > 0) {
         console.warn(`detectObjects: ${videosWithoutFrames} video/GIF media have no extracted frames (frame extraction failed or no content hash yet) and were skipped`);
     }
-    return { alreadyDone, withoutFrames: videosWithoutFrames };
+    return { alreadyDone, withoutFrames: videosWithoutFrames, failedPaths };
 };

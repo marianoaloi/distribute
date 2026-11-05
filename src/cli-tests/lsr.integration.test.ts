@@ -663,6 +663,64 @@ d("lsr CLI (Electron integration)", () => {
             expect(stagesDone(r.stdout)).toEqual(["index", "duplicates"])
             expect(fs.existsSync(lockOf(r7))).toBe(false)
         })
+        it.each([[4, 1], [5, 3]])("index with all %d items failing -> exit %d (system-wide threshold is 5)", (n, code) => {
+            const rx = path.join(base, `failall${n}`)
+            fs.mkdirSync(rx)
+            const frames = path.join(rx, "f%02d.png")
+            ffmpeg("-f", "lavfi", "-i", `testsrc2=s=32x24:r=1:d=${n}`, frames)
+            expect(fs.readdirSync(rx).length).toBe(n)
+            expect(lsr(["--root", rx, "--stages", "scan,hash"]).code).toBe(0)
+            execSql(rx, "CREATE TRIGGER lsr_test_block BEFORE INSERT ON items BEGIN SELECT RAISE(ABORT, 'lsr test: items unwritable'); END;")
+            const r = lsr(["--root", rx, "--stages", "index,duplicates"])
+            expect(r.code).toBe(code)
+            if (code === 3) {
+                expect(r.stderr).toMatch(/stage index failed.*every one of the 5 items the index stage tried failed/s)
+                expect(stagesDone(r.stdout)).toEqual([])
+                expect(r.stdout).not.toMatch(/\[2\/2 duplicates/)
+            } else {
+                expect(r.stdout).toMatch(new RegExp(`${n} media checked, ${n} failed; ${n} errors logged`))
+                expect(stagesDone(r.stdout)).toEqual(["index", "duplicates"])
+            }
+            expect(fs.existsSync(lockOf(rx))).toBe(false)
+        })
+        it("partial failure (1 of 6 items) stays item-level: exit 1, later stages run", () => {
+            const rp = path.join(base, "failpartial")
+            fs.mkdirSync(rp)
+            ffmpeg("-f", "lavfi", "-i", "testsrc2=s=32x24:r=1:d=6", path.join(rp, "f%02d.png"))
+            expect(lsr(["--root", rp, "--stages", "scan,hash"]).code).toBe(0)
+            const bad = query(rp, "select id from media where filename = 'f03.png'")[0].id
+            execSql(rp, `CREATE TRIGGER lsr_test_block BEFORE INSERT ON items WHEN NEW.id = '${bad}' BEGIN SELECT RAISE(ABORT, 'lsr test: one item unwritable'); END;`)
+            const r = lsr(["--root", rp, "--stages", "index,duplicates"])
+            expect(r.code).toBe(1)
+            expect(r.stdout).toMatch(/6 media checked, 1 failed; 1 errors logged/)
+            expect(r.stderr).toMatch(/f03\.png: lsr test: one item unwritable/)
+            expect(stagesDone(r.stdout)).toEqual(["index", "duplicates"])
+            expect(query(rp, "select count(*) n from items")[0].n).toBe(5)
+        })
+        it.each([[4, 1], [5, 3]])("hash with all %d files unreadable -> exit %d", (n, code) => {
+            const rh = path.join(base, `hashunreadable${n}`)
+            fs.mkdirSync(rh)
+            ffmpeg("-f", "lavfi", "-i", `testsrc2=s=32x24:r=1:d=${n}`, path.join(rh, "f%02d.png"))
+            expect(lsr(["--root", rh, "--stages", "scan"]).code).toBe(0)
+            const files = fs.readdirSync(rh).filter(f => f.endsWith(".png")).map(f => path.join(rh, f))
+            for (const f of files) fs.chmodSync(f, 0o000)
+            try {
+                const r = lsr(["--root", rh, "--stages", "hash,index"])
+                expect(r.code).toBe(code)
+                if (code === 3) {
+                    expect(r.stdout).toMatch(/hash\s+\S+\s+FAILED: every one of the 5 items/)
+                    expect(r.stderr).toMatch(/every one of the 5 items the hash stage tried failed/)
+                    expect(stagesDone(r.stdout)).toEqual([])
+                    expect(r.stdout).not.toMatch(/\[2\/2 index/)
+                } else {
+                    // documented exit 1 = "finished, but some items failed"
+                    expect(r.stdout).toMatch(new RegExp(`0 of ${n} unhashed files hashed, ${n} unreadable`))
+                    expect(r.stdout).toMatch(new RegExp(`${n} errors`))
+                    expect(stagesDone(r.stdout)).toEqual(["hash", "index"])
+                }
+                expect(fs.existsSync(lockOf(rh))).toBe(false)
+            } finally { for (const f of files) fs.chmodSync(f, 0o644) }
+        })
         it("duplicates unable to persist its groups -> stage FAILED, exit 3, lock released, media untouched", () => {
             const r8 = path.join(base, "faildup")
             fs.mkdirSync(path.join(r8, "s"), { recursive: true })
@@ -845,6 +903,102 @@ d("lsr CLI (Electron integration)", () => {
             expect(out.code).toBe(0)
             expect(Date.now() - started).toBeLessThan(15_000)
             expect(out.stdout).toMatch(/==== LSR summary ====/)
+        })
+    })
+
+
+    // Prior work counts as success; failed files are listed in the summary; detection writes are atomic.
+    describe("re-runs after partial success, failed-file listing, atomic detection writes", () => {
+        const FAKE = { NODE_ENV: "test", LSR_FAKE_DETECTOR: "1" }
+        const frames = (dir: string, n: number, prefix: string, size = "32x24") =>
+            ffmpeg("-f", "lavfi", "-i", `testsrc2=s=${size}:r=1:d=${n}`, path.join(dir, `${prefix}%02d.png`))
+        const summaryOf = (out: string) => out.slice(out.indexOf("==== LSR summary ===="))
+
+        it("hash: 5 new unreadable files after 10 hashed earlier -> exit 1 (not FAILED), files listed", () => {
+            const rh = path.join(base, "rerun-hash")
+            fs.mkdirSync(rh)
+            frames(rh, 10, "old")
+            expect(lsr(["--root", rh, "--stages", "scan,hash"]).code).toBe(0)
+            frames(rh, 5, "new", "40x30")
+            expect(lsr(["--root", rh, "--stages", "scan"]).code).toBe(0)
+            const bad = fs.readdirSync(rh).filter(f => f.startsWith("new")).map(f => path.join(rh, f))
+            for (const f of bad) fs.chmodSync(f, 0o000)
+            try {
+                const r = lsr(["--root", rh, "--stages", "hash"])
+                expect(r.code).toBe(1)
+                expect(r.stdout).toMatch(/0 of 5 unhashed files hashed, 5 unreadable/)
+                const summary = summaryOf(r.stdout)
+                expect(summary).toMatch(/failed files \(5\):/)
+                for (const f of bad) expect(summary).toContain(f)
+                expect(summary).not.toMatch(/and \d+ more/)
+            } finally { for (const f of bad) fs.chmodSync(f, 0o644) }
+        })
+        it("index: 5 new failing items after 6 indexed earlier -> exit 1, files listed", () => {
+            const ri = path.join(base, "rerun-index")
+            fs.mkdirSync(ri)
+            frames(ri, 6, "old")
+            expect(lsr(["--root", ri, "--stages", "scan,hash,index"]).code).toBe(0)
+            frames(ri, 5, "new", "40x30")
+            expect(lsr(["--root", ri, "--stages", "scan,hash"]).code).toBe(0)
+            execSql(ri, "CREATE TRIGGER lsr_test_block BEFORE INSERT ON items BEGIN SELECT RAISE(ABORT, 'lsr test: items unwritable'); END;")
+            const r = lsr(["--root", ri, "--stages", "index,duplicates"])
+            expect(r.code).toBe(1)
+            expect(r.stdout).toMatch(/11 media checked, 5 failed; 5 errors logged/)
+            expect(stagesDone(r.stdout)).toEqual(["index", "duplicates"])
+            const summary = summaryOf(r.stdout)
+            expect(summary).toMatch(/failed files \(5\):/)
+            for (let i = 1; i <= 5; i++) expect(summary).toContain(path.join(ri, `new0${i}.png`))
+        })
+        it("a FAILED stage still lists its failed files, capped at 20 with '... and N more'", () => {
+            const rc = path.join(base, "cap-list")
+            fs.mkdirSync(rc)
+            frames(rc, 25, "f")
+            expect(lsr(["--root", rc, "--stages", "scan"]).code).toBe(0)
+            const files = fs.readdirSync(rc).filter(f => f.endsWith(".png")).map(f => path.join(rc, f))
+            for (const f of files) fs.chmodSync(f, 0o000)
+            try {
+                const r = lsr(["--root", rc, "--stages", "hash"])
+                expect(r.code).toBe(3)
+                const summary = summaryOf(r.stdout)
+                expect(summary).toMatch(/hash\s+\S+\s+FAILED: every one of the 25 items/)
+                expect(summary).toMatch(/failed files \(25\):/)
+                const listed = files.filter(f => summary.includes(f))
+                expect(listed).toHaveLength(20)
+                expect(summary).toMatch(/\.\.\. and 5 more \(see the log\)/)
+                // the log has every one
+                const log = fs.readFileSync(path.join(rc, "tmp", "logs", logsOf(rc).pop()!), "utf8")
+                for (const f of files) expect(log).toContain(f)
+            } finally { for (const f of files) fs.chmodSync(f, 0o644) }
+        })
+        it("detection boxes and done-state are written in one transaction (a failed state write keeps the old boxes)", () => {
+            const rt = path.join(base, "atomic")
+            fs.mkdirSync(rt)
+            frames(rt, 3, "f")
+            const m = path.join(base, "atomic.maloi")
+            fs.writeFileSync(m, JSON.stringify({ onnx: "x.onnx", classes: "x" }))
+            expect(lsr(["--root", rt, "--maloi", m, "--stages", "scan,hash,index,detect"], FAKE).code).toBe(0)
+            const target = query(rt, "select id from media where filename = 'f02.png'")[0].id
+            const boxesBefore = query(rt, `select * from item_detection where itemId = '${target}'`)
+            expect(boxesBefore.length).toBe(1)
+            // Make the box rows distinguishable, then force a redo whose state write fails.
+            execSql(rt, `UPDATE item_detection SET detectedAt = 1, score = 0.123 WHERE itemId = '${target}';` +
+                `DELETE FROM item_detection_state WHERE itemId = '${target}';` +
+                `CREATE TRIGGER lsr_test_block BEFORE INSERT ON item_detection_state WHEN NEW.itemId = '${target}' BEGIN SELECT RAISE(ABORT, 'lsr test: state unwritable'); END;`)
+            const marked = query(rt, `select * from item_detection where itemId = '${target}'`)
+            const r = lsr(["--root", rt, "--maloi", m, "--stages", "detect"], FAKE)
+            expect(r.code).toBe(1)
+            expect(r.stdout).toMatch(/1 media processed, 1 failed, 2 already detected/)
+            expect(r.stderr).toMatch(/lsr test: state unwritable/)
+            expect(summaryOf(r.stdout)).toContain(path.join(rt, "f02.png"))
+            // rolled back: the box rows are exactly the marked ones, not replaced
+            expect(query(rt, `select * from item_detection where itemId = '${target}'`)).toEqual(marked)
+            expect(query(rt, `select count(*) n from item_detection_state where itemId = '${target}'`)[0].n).toBe(0)
+            // once writable again, the next run redoes it
+            execSql(rt, "DROP TRIGGER lsr_test_block")
+            const again = lsr(["--root", rt, "--maloi", m, "--stages", "detect"], FAKE)
+            expect(again.code).toBe(0)
+            expect(again.stdout).toMatch(/1 media processed, 0 failed, 2 already detected/)
+            expect(query(rt, `select detectedAt from item_detection where itemId = '${target}'`)[0].detectedAt).toBeGreaterThan(1)
         })
     })
 

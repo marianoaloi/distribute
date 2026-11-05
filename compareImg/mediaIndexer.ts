@@ -71,7 +71,11 @@ export interface IndexStats {
     done: number;
     skipped: number;
     failed: number;
+    // The first FAILED_PATHS_CAP media files that failed.
+    failedPaths: string[];
 }
+
+export const FAILED_PATHS_CAP = 100;
 
 const indexImage = async (mediaItem: IndexableMediaItem): Promise<IndexOutcome> => {
     const localPath = mediaItem.item;
@@ -163,7 +167,7 @@ export const indexMediaBackground = async (
     onProgress?: (processed: number, total: number) => void,
 ): Promise<IndexStats> => {
     compareImgStore.ensureReady();
-    const stats: IndexStats = { done: 0, skipped: 0, failed: 0 };
+    const stats: IndexStats = { done: 0, skipped: 0, failed: 0, failedPaths: [] };
     const total = mediaItems.length;
     let processed = 0;
 
@@ -189,6 +193,7 @@ export const indexMediaBackground = async (
                     outcome = await indexImage(mediaItem);
                 }
                 stats[outcome]++;
+                if (outcome === "failed" && stats.failedPaths.length < FAILED_PATHS_CAP) stats.failedPaths.push(mediaItem.item);
             } finally {
                 inFlight.end(mediaItem.item);
             }

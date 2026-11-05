@@ -102,7 +102,7 @@ export const runBuildIndex = async (ctx: SuperContext): Promise<number> => {
         const total = countMedia();
         let done = 0;
         let submitted = 0;
-        const stats: IndexStats = { done: 0, skipped: 0, failed: 0 };
+        const stats: IndexStats = { done: 0, skipped: 0, failed: 0, failedPaths: [] };
         events.indexProgress?.(0, total);
         events.progress?.(0, total);
         await forEachPage(
@@ -130,6 +130,7 @@ export const runBuildIndex = async (ctx: SuperContext): Promise<number> => {
                 stats.done += page.done;
                 stats.skipped += page.skipped;
                 stats.failed += page.failed;
+                stats.failedPaths.push(...page.failedPaths.slice(0, Math.max(0, 100 - stats.failedPaths.length)));
             },
             { pageSize: INDEX_PAGE_SIZE, shouldStop: ctx.abort },
         );

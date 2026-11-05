@@ -26,10 +26,20 @@ export interface BackfillResult {
     failed: number;
     // The file is gone (moved/deleted since it was scanned) - not a failure.
     missing: number;
+    // The first FAILED_PATHS_CAP files that failed.
+    failedPaths: string[];
 }
 
+// At most this many failed paths are kept per pass (for the run summary).
+export const FAILED_PATHS_CAP = 100;
+
+
 export const backfillContentMd5 = async (onProgress?: (attempted: number, total: number) => void, shouldStop?: () => boolean): Promise<BackfillResult> => {
-    const result: BackfillResult = { ok: true, hashed: 0, failed: 0, missing: 0 };
+    const result: BackfillResult = { ok: true, hashed: 0, failed: 0, missing: 0, failedPaths: [] };
+    const fail = (filePath: string): void => {
+        result.failed++;
+        if (result.failedPaths.length < FAILED_PATHS_CAP) result.failedPaths.push(filePath);
+    };
     try {
         MediaStore.ensureReady();
         const total = MediaStore.countMediaMissingContentMd5();
@@ -55,10 +65,10 @@ export const backfillContentMd5 = async (onProgress?: (attempted: number, total:
                     try {
                         const contentMd5 = await inFlight.track(row.localPath, () => fileMd5(row.localPath));
                         if (contentMd5) hashed.push([row.id, contentMd5]);
-                        else if (fs.existsSync(row.localPath)) { result.failed++; console.log("backfillContentMd5: skipping", row.localPath, "- unreadable"); }
+                        else if (fs.existsSync(row.localPath)) { fail(row.localPath); console.error("backfillContentMd5: cannot read", row.localPath, "- left unhashed"); }
                         else { result.missing++; console.log("backfillContentMd5: skipping", row.localPath, "- no longer exists"); }
                     } catch (error) {
-                        result.failed++;
+                        fail(row.localPath);
                         console.error("backfillContentMd5 failed for", row.localPath, "-", (error as Error).message);
                     } finally {
                         attempted++;
@@ -75,7 +85,7 @@ export const backfillContentMd5 = async (onProgress?: (attempted: number, total:
                 // One bad write rolled the batch back: redo it row by row so
                 // only that row is lost (it stays NULL for the next pass).
                 for (const [id, md5] of hashed) {
-                    try { MediaStore.setContentMd5(id, md5); result.hashed++; } catch (error) { result.failed++; console.error("backfillContentMd5: cannot store hash for", id, "-", (error as Error).message); }
+                    try { MediaStore.setContentMd5(id, md5); result.hashed++; } catch (error) { fail(id); console.error("backfillContentMd5: cannot store hash for", id, "-", (error as Error).message); }
                 }
             }
         }

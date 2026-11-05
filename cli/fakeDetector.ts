@@ -14,6 +14,8 @@ export const FAKE_MODEL_PATH = "lsr-fake-detector.onnx";
 // File-name markers that make the fake detector misbehave (tests only).
 export const POISON_REJECT = "__lsr_reject__";
 export const POISON_THROW = "__lsr_throw__";
+// detect() rejects normally: an ordinary per-item failure.
+export const POISON_FAIL = "__lsr_fail__";
 // Never resolves: a hung item, for the stall watchdog test.
 export const POISON_HANG = "__lsr_hang__";
 
@@ -33,6 +35,7 @@ export const createFakeDetector = (): DetectorLike => ({
             // Stay in flight until the throw has happened.
             await new Promise<void>(resolve => setTimeout(resolve, 50));
         }
+        if (imagePath.includes(POISON_FAIL)) throw new Error(`fake detector: cannot detect ${imagePath}`);
         if (imagePath.includes(POISON_HANG)) await new Promise<never>(() => undefined);
         const size = (await fs.promises.stat(imagePath)).size;
         const classId = size % FAKE_CLASS_NAMES.length;

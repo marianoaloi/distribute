@@ -53,8 +53,12 @@ export const stallTimeoutMs = (env: NodeJS.ProcessEnv): number => {
 // (exit 1), so a single bad file can never block every future run.
 export const ALL_FAILED_MIN_ITEMS = 5;
 
-export const everyItemFailed = (succeeded: number, failed: number): boolean =>
-    failed >= ALL_FAILED_MIN_ITEMS && succeeded === 0;
+// alreadyDone: items of this stage finished by EARLIER runs. A re-run only
+// retries the leftovers - mostly the permanently bad files - so "none of
+// this run's items succeeded" alone would turn a handful of bad files into
+// a FAILED stage on every re-run; with earlier successes it is not system-wide.
+export const everyItemFailed = (succeeded: number, failed: number, alreadyDone = 0): boolean =>
+    failed >= ALL_FAILED_MIN_ITEMS && succeeded === 0 && alreadyDone === 0;
 
 const allFailedError = (stage: string, failed: number): StageFailure =>
     new StageFailure(`every one of the ${failed} items the ${stage} stage tried failed - most likely a system-wide problem (ffmpeg missing, disk full, read-only database); see the log`);
@@ -77,7 +81,11 @@ const checkNativeRuntime = (): string | null => {
     }
 };
 
-interface StageSummary { stage: CliStage; elapsedMs: number; note: string }
+interface FailedFiles { count: number; paths: string[] }
+interface StageSummary { stage: CliStage; elapsedMs: number; note: string; failed?: FailedFiles }
+
+// Failed files listed per stage in the end summary (all are in the log).
+const SUMMARY_FAILED_FILES = 20;
 
 const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, errorCount: () => number): Promise<{ code: number; summaries: StageSummary[] }> => {
     const MediaStore = await import("../mediaDb/MediaStore");
@@ -86,6 +94,8 @@ const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, 
     const pipelineRun = await import("../pipeline/PipelineRun");
     const { readMaloi, applyMaloi } = await import("../objectDetection/maloi");
     const { scanTree } = await import("./scan");
+    const { countMedia } = await import("../mediaDb/mediaPages");
+    const failedFiles: Partial<Record<CliStage, FailedFiles>> = {};
 
     MediaStore.ensureReady();
     if (options.maloi) {
@@ -109,7 +119,7 @@ const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, 
     pipelineRun.configure({ onProgress: (snapshot) => { onActivity(); reporter.onProgress(snapshot); }, onDone: () => undefined });
     pipelineRun.begin("LSR CLI", superPipeline.SUPER_STAGES.filter(s => options.stages.includes(s.key)));
 
-    const detections = { media: 0, failed: 0, alreadyDone: 0, withoutFrames: 0 };
+    const detections = { media: 0, failed: 0, alreadyDone: 0, withoutFrames: 0, failedPaths: [] as string[] };
     const ctx: import("../pipeline/superPipeline").SuperContext = {
         detector,
         shouldStop,
@@ -119,7 +129,7 @@ const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, 
         events: {
             progress: (processed, total) => pipelineRun.updateStage(processed, total),
             detection: (event) => { detections.media++; if (event.error) detections.failed++; },
-            detectionStats: (stats) => { detections.alreadyDone = stats.alreadyDone; detections.withoutFrames = stats.withoutFrames; },
+            detectionStats: (stats) => { detections.alreadyDone = stats.alreadyDone; detections.withoutFrames = stats.withoutFrames; detections.failedPaths = stats.failedPaths; },
         },
     };
 
@@ -134,19 +144,23 @@ const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, 
         },
         hash: async () => {
             const missingBefore = MediaStore.countMediaMissingContentMd5();
-            let hashStats = { hashed: 0, failed: 0, missing: 0 };
+            const hashedBefore = countMedia() - missingBefore;
+            let hashStats = { hashed: 0, failed: 0, missing: 0, failedPaths: [] as string[] };
             ctx.events.hashStats = (r) => { hashStats = r; };
             await superPipeline.runHash(ctx);
-            if (everyItemFailed(hashStats.hashed, hashStats.failed)) throw allFailedError("hash", hashStats.failed);
+            failedFiles.hash = { count: hashStats.failed, paths: hashStats.failedPaths };
+            if (everyItemFailed(hashStats.hashed, hashStats.failed, hashedBefore)) throw allFailedError("hash", hashStats.failed);
             return `${missingBefore - MediaStore.countMediaMissingContentMd5()} of ${missingBefore} unhashed files hashed` +
                 (hashStats.failed ? `, ${hashStats.failed} unreadable` : "") + (hashStats.missing ? `, ${hashStats.missing} no longer on disk` : "");
         },
         index: async () => {
             let failure: string | undefined;
             ctx.events.indexDone = (result) => { if (!result.success) failure = result.error; };
-            let indexStats = { done: 0, failed: 0 };
+            // "done" already includes media indexed by earlier runs.
+            let indexStats = { done: 0, failed: 0, failedPaths: [] as string[] };
             ctx.events.indexStats = (s) => { indexStats = s; };
             const count = await superPipeline.runBuildIndex(ctx);
+            failedFiles.index = { count: indexStats.failed, paths: indexStats.failedPaths };
             if (failure !== undefined) throw new StageFailure(failure);
             if (everyItemFailed(indexStats.done, indexStats.failed)) throw allFailedError("index", indexStats.failed);
             return `${count} media checked` + (indexStats.failed ? `, ${indexStats.failed} failed` : "");
@@ -156,7 +170,8 @@ const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, 
             if (result === "no-model" || result === "no-classes") throw new StageFailure(result);
             // Video/GIF media without frames still emit an (empty) result.
             const processedMedia = detections.media - detections.withoutFrames;
-            if (everyItemFailed(processedMedia - detections.failed, detections.failed)) throw allFailedError("detect", detections.failed);
+            failedFiles.detect = { count: detections.failed, paths: detections.failedPaths };
+            if (everyItemFailed(processedMedia - detections.failed, detections.failed, detections.alreadyDone)) throw allFailedError("detect", detections.failed);
             return `${processedMedia} media processed, ${detections.failed} failed, ${detections.alreadyDone} already detected` +
                 (detections.withoutFrames ? `, ${detections.withoutFrames} videos/GIFs without frames skipped` : "");
         },
@@ -178,11 +193,11 @@ const run = async (options: CliOptions, log: RunLog, shouldStop: () => boolean, 
             const note = (await stageRunners[stage]()) + (shouldStop() ? " (stopped early)" : "");
             reporter.flush();
             const errors = errorCount() - errorsBefore;
-            summaries.push({ stage, elapsedMs: Date.now() - started, note: errors ? `${note}; ${errors} errors logged` : note });
+            summaries.push({ stage, elapsedMs: Date.now() - started, note: errors ? `${note}; ${errors} errors logged` : note, failed: failedFiles[stage] });
             log.info(`stage ${stage} done in ${formatDuration(Date.now() - started)}: ${summaries[summaries.length - 1].note}`);
         } catch (error) {
             log.error(`stage ${stage} failed: ${(error as Error).stack || (error as Error).message}`);
-            summaries.push({ stage, elapsedMs: Date.now() - started, note: `FAILED: ${(error as Error).message}` });
+            summaries.push({ stage, elapsedMs: Date.now() - started, note: `FAILED: ${(error as Error).message}`, failed: failedFiles[stage] });
             code = EXIT_STAGE_FAILED;
             break;
         }
@@ -284,7 +299,15 @@ export const main = async (argv: string[]): Promise<void> => {
     if (code === EXIT_OK && counters.errors > 0) code = EXIT_ITEM_ERRORS;
 
     log.info("==== LSR summary ====");
-    for (const s of summaries) log.info(`  ${s.stage.padEnd(10)} ${formatDuration(s.elapsedMs).padStart(7)}  ${s.note}`);
+    for (const s of summaries) {
+        log.info(`  ${s.stage.padEnd(10)} ${formatDuration(s.elapsedMs).padStart(7)}  ${s.note}`);
+        if (s.failed && s.failed.count > 0) {
+            const shown = s.failed.paths.slice(0, SUMMARY_FAILED_FILES);
+            log.info(`             failed files (${s.failed.count}):`);
+            for (const p of shown) log.info(`               ${p}`);
+            if (s.failed.count > shown.length) log.info(`               ... and ${s.failed.count - shown.length} more (see the log)`);
+        }
+    }
     log.info(`  total      ${formatDuration(Date.now() - startedAt).padStart(7)}  ${counters.errors} errors, ${counters.warnings} warnings logged`);
     if (code === EXIT_INTERRUPTED) log.info("  interrupted - re-run the same command to continue");
     log.info(`  exit code ${code}; log: ${log.path}`);
