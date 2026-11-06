@@ -5,6 +5,7 @@ import { getFramesDir, ensureFramesDir } from "./cache";
 import { hashFor } from "../thumbnails/cache";
 import { ffmpegPath } from "./ffmpegBinary";
 import { memoryAwareLimit, TASK_MEMORY_ESTIMATE } from "../system/resourceLimits";
+import * as childProcs from "../system/childProcs";
 
 import type { Semaphore, VideoFrame } from "../types/domain";
 import { get } from "http";
@@ -28,9 +29,10 @@ export { isAvailable } from "./ffmpegBinary";
 
 const runCapture = (args: string[]): Promise<{ error: ExecFileException | null; stdout: string; stderr: string }> =>
     new Promise((resolve) => {
-        execFile(ffmpegPath as string, args, { encoding: "utf8", timeout: PROBE_TIMEOUT_MS }, (error, stdout, stderr) => {
+        // SIGKILL on timeout: an ffmpeg blocked on its input can ignore SIGTERM.
+        childProcs.track(execFile(ffmpegPath as string, args, { encoding: "utf8", timeout: PROBE_TIMEOUT_MS, killSignal: "SIGKILL" }, (error, stdout, stderr) => {
             resolve({ error, stdout, stderr: stderr || "" });
-        });
+        }));
     });
 
 const DURATION_RE = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/;
@@ -97,7 +99,7 @@ const extractFramesFFMPEG = (
     const args = ["-y", "-loglevel", "error", "-i", input, "-filter_complex", filterComplex];
     frames.forEach((f, i) => args.push("-map", `[out${i + 1}]`, "-frames:v", "1", f.path));
 
-    execFile(ffmpegPath as string, args, { encoding: "utf8", timeout: EXTRACT_TIMEOUT_MS }, (error) => error ? reject(error) : resolve());
+    childProcs.track(execFile(ffmpegPath as string, args, { encoding: "utf8", timeout: EXTRACT_TIMEOUT_MS, killSignal: "SIGKILL" }, (error) => error ? reject(error) : resolve()));
 });
 
 // indexMediaBackground now processes several media items concurrently

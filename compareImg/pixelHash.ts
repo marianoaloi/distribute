@@ -1,4 +1,5 @@
 import { execFile } from "child_process";
+import * as childProcs from "../system/childProcs";
 import crypto from "crypto";
 
 import { ffmpegPath } from "./ffmpegBinary";
@@ -186,7 +187,7 @@ export const pixelHashFor = (input: string): Promise<PixelHash> => new Promise((
         return;
     }
     console.log(`compareImg: fingerprinting ${input}`);
-    execFile(
+    childProcs.track(execFile(
         ffmpegPath,
         [
             "-loglevel", "error",
@@ -201,7 +202,8 @@ export const pixelHashFor = (input: string): Promise<PixelHash> => new Promise((
         ],
         // maxBuffer only has to hold GREY_BYTES; the allowance is slack for
         // an unexpectedly chatty stderr, not room for a real image.
-        { encoding: "buffer", timeout: TIMEOUT_MS, maxBuffer: 1 << 20 },
+        // SIGKILL on timeout: an ffmpeg blocked on its input can ignore SIGTERM.
+        { encoding: "buffer", timeout: TIMEOUT_MS, maxBuffer: 1 << 20, killSignal: "SIGKILL" },
         (error, stdout) => {
             if (error) {
                 reject(new Error(`Fingerprinting failed for ${input}: ${error.message}`));
@@ -221,5 +223,5 @@ export const pixelHashFor = (input: string): Promise<PixelHash> => new Promise((
                 baseMd5Blur: blurMd5For(stdout),
             });
         },
-    );
+    ));
 });

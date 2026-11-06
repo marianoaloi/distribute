@@ -28,6 +28,9 @@
     "undo/**/*.ts",
     "organize/**/*.ts",
     "fileOps/**/*.ts",
+    "cli/**/*.ts",
+    "pipeline/**/*.ts",
+    "reporting/**/*.ts",
     "scripts/debugCompareVideos.ts",
     "scripts/debugMovedMedia.ts",
     "types/**/*.ts"

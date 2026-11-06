@@ -219,6 +219,7 @@ export const GridDuplicates = (() => {
             // Only actual-folder items get checked/spared: imported fake items
             // (database import) are other folders' files — not movable, and
             // they must not count as a group's surviving copy either.
+            // KEEP IN SYNC with reporting/survivor.ts (headless LSR report).
             const own = group.filter(m => !m.imported)
             if (own.length === 0) continue
             const videos = own.filter(m => m.mime.includes('video'))

@@ -32,6 +32,7 @@ import * as mediaIndexer from "../compareImg/mediaIndexer";
 import * as duplicateFinder from "../compareImg/duplicateFinder";
 import * as onnxDetector from "../objectDetection/onnxDetector";
 import { processMediaToDetections } from "../objectDetection/processImages";
+import { readMaloi, applyMaloi } from "../objectDetection/maloi";
 import { backfillContentMd5 } from "../mediaDb/backfill";
 import { transformDataStreaming } from "../util";
 import { getDbPath, getFramesDir } from "../compareImg/cache";
@@ -54,7 +55,7 @@ console.error = (...args: unknown[]) => {
 process.on("uncaughtException", (error) => { errors.push(`UNCAUGHT: ${error.stack}`); originalError("UNCAUGHT", error); });
 process.on("unhandledRejection", (reason) => { errors.push(`UNHANDLED REJECTION: ${reason instanceof Error ? reason.stack : String(reason)}`); originalError("UNHANDLED REJECTION", reason); });
 
-const fakeWindow = { webContents: { send: () => undefined } };
+const nullSink = { found: () => undefined, progress: () => undefined };
 
 // Mirrors app.ts's openfileRecursive: every non-tmp subfolder, streamed one
 // folder at a time.
@@ -70,18 +71,8 @@ const scanRecursive = async (dir: string): Promise<void> => {
     await transformDataStreaming(entries, dir, onReadyGo, () => undefined);
 };
 
-// Mirrors app.ts's chooseOnnxModelDialog for a .maloi file.
-const loadModel = (): void => {
-    const maloi = JSON.parse(fs.readFileSync(maloiPath, "utf8"));
-    const onnxPath = path.resolve(path.dirname(maloiPath), maloi.onnx || "");
-    onnxDetector.setModelPath(onnxPath);
-    const names = String(maloi.classes || "").split(",").map((s: string) => s.trim()).filter(Boolean);
-    onnxDetector.setClassNames(names);
-    onnxDetector.setModelSize(typeof maloi.reshape === "number" ? maloi.reshape : null);
-    MediaStore.ensureReady();
-    MediaStore.saveDetectionClasses(names);
-    MediaStore.getOrCreateModelPath(onnxPath);
-};
+// Same .maloi load app.ts's chooseOnnxModelDialog does.
+const loadModel = (): void => applyMaloi(readMaloi(maloiPath), onnxDetector, MediaStore);
 
 const pickVictims = (): string[] => {
     const files = fs.readdirSync(folder).map(f => path.join(folder, f)).filter(f => fs.statSync(f).isFile());
@@ -160,7 +151,7 @@ const main = async (): Promise<void> => {
                 item: m.localPath, mime: m.mime, kind: m.kind, contentMd5: m.contentMd5, id: m.id,
             })));
         });
-        await stage("detect", () => processMediaToDetections(fakeWindow, onnxDetector, onnxDetector.getClassNames(), false));
+        await stage("detect", () => processMediaToDetections(nullSink, onnxDetector, onnxDetector.getClassNames(), () => false));
         await stage("duplicates", () => duplicateFinder.findIndexDuplicates());
     } finally {
         for (const [src, dest] of moved) if (fs.existsSync(dest)) fs.renameSync(dest, src);

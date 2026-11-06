@@ -3,6 +3,8 @@ import * as compareImgStore from "./HashStore";
 import { pixelHashFor } from "./pixelHash";
 import { extractFrames, FRAME_POSITIONS } from "./videoFrames";
 import { memoryAwareLimit, TASK_MEMORY_ESTIMATE } from "../system/resourceLimits";
+import * as inFlight from "../system/inFlight";
+import { pushCapped } from "../system/failedPaths";
 
 // Shape accepted by indexImage/indexVideo/indexMediaBackground - built by
 // app.js's rebuildIndex handler from MediaStore rows before calling in here.
@@ -62,15 +64,30 @@ const indexUnit = async (
 // across every media with byte-identical content.
 const itemBaseId = (mediaItem: IndexableMediaItem): string => `${mediaItem.id}`;
 
-const indexImage = async (mediaItem: IndexableMediaItem): Promise<void> => {
+// Per-media outcome: "done" (indexed now or already), "skipped" (nothing to
+// do yet: no content hash, or the file is gone), "failed".
+export type IndexOutcome = "done" | "skipped" | "failed";
+
+export interface IndexStats {
+    done: number;
+    skipped: number;
+    failed: number;
+    // The first FAILED_PATHS_CAP media files that failed.
+    failedPaths: string[];
+}
+
+
+const indexImage = async (mediaItem: IndexableMediaItem): Promise<IndexOutcome> => {
     const localPath = mediaItem.item;
-    if (!mediaItem.contentMd5) return;
+    if (!mediaItem.contentMd5) return "skipped";
     try {
         await indexUnit(itemBaseId(mediaItem), localPath, mediaItem.id, "");
+        return "done";
     } catch (error) {
         // Moved/deleted after the existence check in indexMediaBackground.
-        if (!fs.existsSync(localPath)) console.log(`compareImg: skipping ${localPath}, file no longer exists`);
-        else console.error(`compareImg: failed to index image ${localPath}:`, (error as Error).message);
+        if (!fs.existsSync(localPath)) { console.log(`compareImg: skipping ${localPath}, file no longer exists`); return "skipped"; }
+        console.error(`compareImg: failed to index image ${localPath}:`, (error as Error).message);
+        return "failed";
     }
 };
 
@@ -89,9 +106,9 @@ const videoAlreadyIndexed = async (mediaItem: IndexableMediaItem): Promise<boole
     }
 };
 
-const indexVideo = async (mediaItem: IndexableMediaItem): Promise<void> => {
+const indexVideo = async (mediaItem: IndexableMediaItem): Promise<IndexOutcome> => {
     const localPath = mediaItem.item;
-    if (!mediaItem.contentMd5) return;
+    if (!mediaItem.contentMd5) return "skipped";
     const baseId = itemBaseId(mediaItem);
     if (await videoAlreadyIndexed(mediaItem)) {
         // This media's own items already exist from an earlier indexing pass
@@ -101,7 +118,7 @@ const indexVideo = async (mediaItem: IndexableMediaItem): Promise<void> => {
         for (const position of FRAME_POSITIONS) {
             compareImgStore.linkItemMedia(`${baseId}_${position}`, mediaItem.id);
         }
-        return;
+        return "done";
     }
 
     // See indexUnit's matching log line - extractFrames spawns ffmpeg
@@ -115,14 +132,19 @@ const indexVideo = async (mediaItem: IndexableMediaItem): Promise<void> => {
         return [];
     });
 
+    let indexedFrames = 0;
     for (const frame of frames) {
         const id = `${baseId}_${frame.position}`;
         try {
             await indexUnit(id, frame.path, mediaItem.id, frame.position, frame.seconds ?? null);
+            indexedFrames++;
         } catch (error) {
             console.error(`compareImg: failed to index video frame ${frame.path}:`, (error as Error).message);
         }
     }
+    if (indexedFrames > 0) return "done";
+    if (!fs.existsSync(localPath)) return "skipped";
+    return "failed";
 };
 
 // Media items are CPU/IO bound one at a time (ffmpeg spawn, image hashing)
@@ -143,8 +165,9 @@ const ITEM_CONCURRENCY_CEILING = 6;
 export const indexMediaBackground = async (
     mediaItems: IndexableMediaItem[],
     onProgress?: (processed: number, total: number) => void,
-): Promise<void> => {
+): Promise<IndexStats> => {
     compareImgStore.ensureReady();
+    const stats: IndexStats = { done: 0, skipped: 0, failed: 0, failedPaths: [] };
     const total = mediaItems.length;
     let processed = 0;
 
@@ -152,19 +175,27 @@ export const indexMediaBackground = async (
     const runWorker = async (): Promise<void> => {
         while (cursor < mediaItems.length) {
             const mediaItem = mediaItems[cursor++];
-            // The list was read from the DB before this run started; the user
-            // may have moved the file out of the folder since.
-            if (!fs.existsSync(mediaItem.item)) {
-                console.log(`compareImg: skipping ${mediaItem.item}, file no longer exists`);
-            } else if (mediaItem.mime && mediaItem.mime.includes("gif")) {
-                // A gif is many frames like a video, not a single still like
-                // an image - route it through indexVideo before the generic
-                // image/video mime checks below.
-                await indexVideo(mediaItem);
-            } else if (mediaItem.mime && mediaItem.mime.includes("video")) {
-                await indexVideo(mediaItem);
-            } else if (mediaItem.mime && mediaItem.mime.includes("image")) {
-                await indexImage(mediaItem);
+            inFlight.begin(mediaItem.item);
+            try {
+                // The list was read from the DB before this run started; the user
+                // may have moved the file out of the folder since.
+                let outcome: IndexOutcome = "skipped";
+                if (!fs.existsSync(mediaItem.item)) {
+                    console.log(`compareImg: skipping ${mediaItem.item}, file no longer exists`);
+                } else if (mediaItem.mime && mediaItem.mime.includes("gif")) {
+                    // A gif is many frames like a video, not a single still like
+                    // an image - route it through indexVideo before the generic
+                    // image/video mime checks below.
+                    outcome = await indexVideo(mediaItem);
+                } else if (mediaItem.mime && mediaItem.mime.includes("video")) {
+                    outcome = await indexVideo(mediaItem);
+                } else if (mediaItem.mime && mediaItem.mime.includes("image")) {
+                    outcome = await indexImage(mediaItem);
+                }
+                stats[outcome]++;
+                if (outcome === "failed") pushCapped(stats.failedPaths, mediaItem.item);
+            } finally {
+                inFlight.end(mediaItem.item);
             }
             processed++;
             if (onProgress) onProgress(processed, total);
@@ -177,4 +208,5 @@ export const indexMediaBackground = async (
     const itemConcurrency = memoryAwareLimit(ITEM_CONCURRENCY_CEILING, TASK_MEMORY_ESTIMATE.indexingItem);
     const workerCount = Math.min(itemConcurrency, mediaItems.length);
     await Promise.all(Array.from({ length: workerCount }, runWorker));
+    return stats;
 };
