@@ -47,3 +47,4 @@ agentdb.rvf.lock
 .claude-flow/data/
 .claude-flow/logs/
 .claude-flow/sessions/
+.claude/**
