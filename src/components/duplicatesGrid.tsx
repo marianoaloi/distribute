@@ -3,7 +3,7 @@ import { useDispatch } from "react-redux"
 import { IconButton, CircularProgress, LinearProgress } from "@mui/material"
 import { ImageSearch, RestartAlt, FolderOpen, FolderCopyTwoTone, VolumeOff, FileDownload, FileUpload, RadioButtonChecked, RadioButtonUnchecked } from "@mui/icons-material"
 import { Media } from "../entity/Media"
-import { selectDetectionClassNames, selectDetectionGroups, DuplicateAlgorithm, ExportDatabase, FindBlurFrameDuplicates, FindFrameDuplicates, FindIndexDuplicates, FindObjectDuplicates, GetDuplicateGroups, selectDuplicateAlgorithm, setDuplicateAlgorithm, GetMediaFrames, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDetections, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMediaFrames, selectMedias, selectPipelineRunning, updateManyArrayItem, useSelector } from "../lib/redux"
+import { selectDetectionClassNames, selectDetectionFocus, selectDetectionGroups, DuplicateAlgorithm, ExportDatabase, FindBlurFrameDuplicates, FindFrameDuplicates, FindIndexDuplicates, FindObjectDuplicates, GetDuplicateGroups, selectDuplicateAlgorithm, setDuplicateAlgorithm, GetMediaFrames, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDetections, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMediaFrames, selectMedias, selectPipelineRunning, updateManyArrayItem, useSelector } from "../lib/redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { MediaIMG, isScrollToLastSeenKey, scrollToMedia } from "./media"
 import { FrameCollageTile } from "./frameCollageTile"
@@ -35,7 +35,10 @@ export const GridDuplicates = (() => {
     const medias = useSelector(selectMedias).filter(m => !m.deleted)
         .filter(m => matchesMediaType(m.mime, config.mediaType))
     const detections = useSelector(selectDetections)
-    const resolveGroup = groupResolver(useSelector(selectDetectionGroups), useSelector(selectDetectionClassNames))
+    const classNames = useSelector(selectDetectionClassNames)
+    const resolveGroup = groupResolver(useSelector(selectDetectionGroups), classNames)
+    // The .maloi "focus" ids, resolved to the names detections carry.
+    const focusClassNames = new Set(useSelector(selectDetectionFocus).map(id => classNames[id]).filter(Boolean))
     const classFilterGroups = normalizeClassFilter(config.classFilter, resolveGroup)
     const groupIds = useSelector(selectDuplicateGroups)
     const algorithm = useSelector(selectDuplicateAlgorithm)
@@ -434,7 +437,7 @@ export const GridDuplicates = (() => {
                             {groupClasses.length > 0
                                 ? <GroupClassesResume title="Classes in this group — item count per class">
                                     {groupClasses.map(([className, count]) => (
-                                        <span key={className}>{className} — {count}</span>
+                                        <span key={className} className={focusClassNames.has(className) ? "focus" : undefined}>{className} — {count}</span>
                                     ))}
                                 </GroupClassesResume>
                                 : null}

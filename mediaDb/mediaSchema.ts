@@ -104,6 +104,16 @@ export const createMediaSchema = (database: Database.Database): void => {
         );
     `);
 
+    // The picked .maloi's "focus" classes, highlighted in the duplicates
+    // view's class resume. Raw class ids, like detection_group's expr, so
+    // renaming a class keeps it focused; position keeps the file order.
+    database.exec(`
+        CREATE TABLE IF NOT EXISTS detection_focus (
+            position INTEGER PRIMARY KEY,
+            classId  INTEGER NOT NULL
+        );
+    `);
+
     // Filled every time the user picks a model in chooseOnnxModel - one row
     // per distinct path ever chosen, so item_detection.modelPathId can point
     // at *which* model produced a result without repeating the path text on

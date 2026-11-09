@@ -1,5 +1,5 @@
 // .maloi model-set files: a small JSON sidecar of the shape
-// { "onnx": "<path>", "classes": "a,b,c", "reshape"?: n, "group"?: [...] }
+// { "onnx": "<path>", "classes": "a,b,c", "reshape"?: n, "group"?: [...], "focus"?: [ids] }
 // that sets the ONNX model *and* its class list (plus optional class-filter
 // groups and a letterbox size override) in one pick.
 //
@@ -27,12 +27,17 @@ export interface MaloiFile {
     // the "classes" list, e.g. "(6 || 7) && !(1 || 2)". The legacy
     // { name, classes, join } form is still accepted (negative id = NOT).
     group?: unknown;
+    // Classes to highlight in the duplicates view's per-group class resume,
+    // as 0-based positions in the "classes" list (same ids as "expr"),
+    // e.g. [3, 2, 1]. Untrusted until parseMaloiFocus.
+    focus?: unknown;
 }
 
 export interface LoadedMaloi {
     onnxPath: string;
     classNames: string[];
     groups: DetectionGroup[];
+    focus: number[];
     reshape: number | null;
 }
 
@@ -65,6 +70,20 @@ export const parseMaloiGroups = (raw: unknown, classCount: number): DetectionGro
         groups.push({ name, expr: formatClassExpr(parsed.ast), ast: parsed.ast });
     }
     return groups;
+};
+
+// Boundary validation for "focus": keeps integer class ids within the class
+// list, in file order without repeats; anything else is skipped with a warning
+// (never throws), like a bad group.
+export const parseMaloiFocus = (raw: unknown, classCount: number): number[] => {
+    if (raw === undefined) return [];
+    if (!Array.isArray(raw)) { console.warn("[maloi] ignoring \"focus\": expected an array of class ids"); return []; }
+    const focus: number[] = [];
+    for (const id of raw) {
+        if (!Number.isInteger(id) || id < 0 || id >= classCount) { console.warn(`[maloi] skipping focus class id ${JSON.stringify(id)}: not a class position`); continue; }
+        if (!focus.includes(id)) focus.push(id);
+    }
+    return focus;
 };
 
 // Letterbox/tensor size bounds for "reshape": a .maloi is now also read
@@ -109,6 +128,7 @@ export const readMaloi = (maloiPath: string): LoadedMaloi => {
         onnxPath: path.resolve(path.dirname(maloiPath), maloi.onnx),
         classNames,
         groups: parseMaloiGroups(maloi.group, classNames.length),
+        focus: parseMaloiFocus(maloi.focus, classNames.length),
         reshape: parseReshape(maloi.reshape, maloiPath),
     };
 };
@@ -124,6 +144,7 @@ export interface MaloiStore {
     getOrCreateModelPath(path: string): number;
     saveDetectionClasses(names: string[]): void;
     saveDetectionGroups(groups: DetectionGroup[]): void;
+    saveDetectionFocus(classIds: number[]): void;
 }
 
 // Applies a parsed .maloi to the detector and persists model path, classes
@@ -136,6 +157,8 @@ export const applyMaloi = (loaded: LoadedMaloi, detector: MaloiDetector, store: 
     store.saveDetectionClasses(loaded.classNames);
     // Replaces the saved groups; no "group" in the file clears them.
     store.saveDetectionGroups(loaded.groups);
+    // Same replace semantics: no "focus" in the file clears it.
+    store.saveDetectionFocus(loaded.focus);
     detector.setClassNames(loaded.classNames);
     // Always set (even to null) rather than only when present - otherwise a
     // .maloi with no "reshape" field would silently inherit whatever override

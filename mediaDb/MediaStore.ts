@@ -273,6 +273,25 @@ export const saveDetectionGroups = (groups: DetectionGroup[]): void => {
     run(groups);
 };
 
+// Class ids may point past a class list that has since shrunk; the renderer
+// simply finds no name for them.
+export const getDetectionFocus = (): number[] => {
+    const db = HashStore.getDb();
+    return (db.prepare("SELECT classId FROM detection_focus ORDER BY position ASC").all() as Array<{ classId: number }>).map((r) => r.classId);
+};
+
+// Replaces the saved focus classes (an empty list clears them).
+export const saveDetectionFocus = (classIds: number[]): void => {
+    const db = HashStore.getDb();
+    const del = db.prepare("DELETE FROM detection_focus");
+    const insert = db.prepare("INSERT INTO detection_focus (position, classId) VALUES (?, ?)");
+    const run = db.transaction((list: number[]) => {
+        del.run();
+        list.forEach((classId, position) => insert.run(position, classId));
+    });
+    run(classIds);
+};
+
 // Mirrors setDetectionState above, one level down: records the class names
 // found on THIS item (not the whole media) - see mediaSchema.js's
 // item_detection_state table - plus, when given, the model and configured
