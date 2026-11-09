@@ -8,7 +8,7 @@ import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { MediaIMG, isScrollToLastSeenKey, scrollToMedia } from "./media"
 import { FrameCollageTile } from "./frameCollageTile"
 import ModalZoom from "./modalZoom"
-import { CounterImgIndex, DuplicateGroupCard, DuplicateGroupRow, DuplicatesList, DuplicatesResume, EmptyState, GroupLabel, ImportedMediaWrap, RebuildIndexInfo } from "./duplicatesGrid.styled"
+import { CounterImgIndex, DuplicateGroupCard, DuplicateGroupRow, DuplicatesList, DuplicatesResume, EmptyState, GroupBody, GroupClassesResume, GroupLabel, ImportedMediaWrap, RebuildIndexInfo } from "./duplicatesGrid.styled"
 import { Folders } from "./folder"
 import { MediaTypeFilter, matchesMediaType } from "./mediaTypeFilter"
 import { ClassFilter, groupResolver, hasClass, matchesClassFilter, matchesClassPresence, normalizeClassFilter } from "./classFilter"
@@ -63,6 +63,17 @@ export const GridDuplicates = (() => {
     }, [])
 
     const mediaById = new Map(medias.map(m => [m.id, m]))
+
+    // A group's class resume: every class any member has, with how many of
+    // the group's items carry it. Imported items carry no local detections,
+    // so they contribute nothing. Sorted by count, then name.
+    const groupClassCounts = (group: Media[]): Array<[string, number]> => {
+        const counts = new Map<string, number>()
+        for (const media of group)
+            for (const className of detections[media.id]?.classes ?? [])
+                counts.set(className, (counts.get(className) ?? 0) + 1)
+        return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    }
 
     let counterIndex = 0
     const groups: Media[][] = groupIds
@@ -389,9 +400,12 @@ export const GridDuplicates = (() => {
 
             {groups.length > 0
                 ? <DuplicatesList>
-                    {pagedGroups.map((group, idx) => (
+                    {pagedGroups.map((group, idx) => {
+                        const groupClasses = groupClassCounts(group)
+                        return (
                         <DuplicateGroupCard key={group[0].id}>
                             <GroupLabel>Group {page * groupsPerPage + idx + 1} — {group.length} {ALGORITHM_GROUP_LABELS[algorithm]}{group.some(m => m.imported) ? ` (${group.filter(m => m.imported).length} from other folder)` : ""}</GroupLabel>
+                            <GroupBody>
                             <DuplicateGroupRow>
                                 {group.map(media => {
                                     const frames = mediaFrames[media.id]
@@ -417,8 +431,17 @@ export const GridDuplicates = (() => {
                                         : tile
                                 })}
                             </DuplicateGroupRow>
+                            {groupClasses.length > 0
+                                ? <GroupClassesResume title="Classes in this group — item count per class">
+                                    {groupClasses.map(([className, count]) => (
+                                        <span key={className}>{className} — {count}</span>
+                                    ))}
+                                </GroupClassesResume>
+                                : null}
+                            </GroupBody>
                         </DuplicateGroupCard>
-                    ))}
+                        )
+                    })}
                 </DuplicatesList>
                 : <EmptyState>{ALGORITHM_EMPTY_TEXTS[algorithm]}</EmptyState>
             }

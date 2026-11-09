@@ -67,6 +67,35 @@ export const GroupLabel = styled(Typography)`
     font-size: 13px;
 `
 
+// Row + classes resume side by side: the tiles keep wrapping as before, the
+// resume stays a fixed column on the right of the group.
+export const GroupBody = styled.div`
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    flex: 1;
+    min-width: 0;
+`
+
+// Per-group class resume: one line per class the group has, with how many
+// of the group's items carry it.
+export const GroupClassesResume = styled.div`
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 140px;
+    max-width: 220px;
+    padding: 10px 12px;
+    background: #000;
+    border: 1px solid #fff;
+    border-radius: 4px;
+    color: #fff;
+    font-size: 12px;
+
+    > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+`
+
 export const EmptyState = styled.div`
     margin: 32px;
     color: rgba(255, 255, 255, 0.6);
