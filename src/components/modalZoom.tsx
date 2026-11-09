@@ -401,14 +401,13 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                 </FrameTile>
                             ))}
                         </FramesPanel>}
-                    <MediaPresentation style={showFramesPanel ? { width: '80%', left: '40%' } : undefined}>
+                    <MediaPresentation style={showFramesPanel ? { width: '80%', left: '40%' } : undefined} onDoubleClick={changeCheckbox}>
                         {
                             mediaWithPreview.mime.includes('video')
                                 ?
                                 <>
                                     <VideoPresentation ref={videoRef} src={toMediaUrl(mediaWithPreview.path)}
-                                        onLoadedMetadata={startVid}
-                                        onDoubleClick={changeCheckbox}
+                                        onLoadedMetadata={startVid}                                        
                                         onWheel={wheelOnVideo}
                                         onVolumeChange={saveVideoVolume}
                                         onTimeUpdate={updateVideoTime}
@@ -425,8 +424,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                 :
                                 <>
                                     <ImgWrapper ref={divImgRef} onWheel={zoomMedia}>
-                                        <ImgPresentation
-                                            onDoubleClick={changeCheckbox}
+                                        <ImgPresentation                                            
                                             draggable={false}
                                             style={{ zoom: imageZoom }}
                                             ref={imgRef} src={toMediaUrl(mediaWithPreview.path)}
