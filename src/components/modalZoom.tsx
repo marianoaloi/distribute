@@ -28,6 +28,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
     ({ mediaWithPreview, handleExternalClose, openModal, onNext, onPrev }, ref) => {
 
         const imgRef = useRef<HTMLImageElement | null>(null)
+        const divImgRef = useRef<HTMLDivElement | null>(null)
         const videoRef = useRef<HTMLVideoElement | null>(null)
         const dispatch = useDispatch();
         const config = useSelector(configurationsSelector)
@@ -195,11 +196,18 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
 
         const imageUnset = () => {
             const imgCurrent = imgRef.current
+            const divImgCurrent = divImgRef.current
+            if (!divImgCurrent)
+                return
             if (!imgCurrent)
                 return
-            if (imgCurrent.classList.contains("imageAddaptScreen"))
+            if (imgCurrent.classList.contains("imageAddaptScreen")){
                 imgCurrent.classList.remove("imageAddaptScreen")
-            else imgCurrent.classList.add("imageAddaptScreen")
+                divImgCurrent.classList.remove("divAddaptScreen")
+            } else {
+                imgCurrent.classList.add("imageAddaptScreen")
+                divImgCurrent.classList.add("divAddaptScreen")
+            }
 
             imgCurrent.focus()
 
@@ -398,11 +406,10 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                 </>
                                 :
                                 <>
-                                    <ImgWrapper>
+                                    <ImgWrapper ref={divImgRef} onWheel={zoomMedia}>
                                         <ImgPresentation
                                             onDoubleClick={changeCheckbox}
                                             draggable={false}
-                                            onWheel={zoomMedia}
                                             style={{ zoom: imageZoom }}
                                             ref={imgRef} src={toMediaUrl(mediaWithPreview.path)}
                                             alt={mediaWithPreview.path} title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></ImgPresentation>

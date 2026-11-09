@@ -54,6 +54,11 @@ export const VideoPresentation = styled.video`
 export const ImgWrapper = styled.div`
       position: absolute;
       overflow: auto;
+
+      .divAddaptScreen{
+            width: 100%;
+            height: 100%;
+      }
 `
 
 export const ImgPresentation = styled.img`
