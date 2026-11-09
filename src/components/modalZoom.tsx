@@ -24,6 +24,24 @@ interface ModalZoomProps {
     onPrev?: () => void
 }
 
+// Volume levels the +/- keys and Shift+wheel step through, 0.1% to 100%:
+// 0.1% steps up to 1%, 1% steps up to 10%, 5% steps up to 100%.
+// Built from integers so every level is exact (no 0.05-step float drift).
+const VOLUME_LEVELS: number[] = [
+    ...Array.from({ length: 10 }, (_, i) => (i + 1) / 1000),    // 0.1% .. 1%
+    ...Array.from({ length: 9 }, (_, i) => (i + 2) / 100),      // 2% .. 10%
+    ...Array.from({ length: 18 }, (_, i) => (i + 3) * 5 / 100), // 15% .. 100%
+]
+
+// Next level strictly above / below the current volume, so a volume set
+// off-grid (native slider drag, a persisted value) snaps onto the grid.
+const nextVolumeLevel = (volume: number, direction: 1 | -1): number => {
+    const eps = 1e-6
+    return direction > 0
+        ? VOLUME_LEVELS.find(level => level > volume + eps) ?? VOLUME_LEVELS[VOLUME_LEVELS.length - 1]
+        : VOLUME_LEVELS.filter(level => level < volume - eps).pop() ?? VOLUME_LEVELS[0]
+}
+
 const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
     ({ mediaWithPreview, handleExternalClose, openModal, onNext, onPrev }, ref) => {
 
@@ -69,12 +87,12 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         const [imageZoom, setImageZoom] = useState(1)
         useEffect(() => { setVideoZoom(1); setImageZoom(1) }, [mediaWithPreview.id])
 
-        // Floor of 0.001 rather than 0, same as minVolume: a 0 would be
+        // Floor of 0.001 (0.1%) rather than 0, same as minVolume: a 0 would be
         // persisted (saveVideoVolume) and open every next video silent.
-        const stepVolume = (step: number): void => {
+        const stepVolume = (direction: 1 | -1): void => {
             const video = videoRef.current
             if (!video) return
-            video.volume = Math.min(1, Math.max(0.001, video.volume + step))
+            video.volume = nextVolumeLevel(video.volume, direction)
         }
 
         // Main-row + / - step a zoomed video's volume. The numpad +/- (same
@@ -89,7 +107,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                 if (ev.code.startsWith('Numpad')) return
                 const target = ev.target as HTMLElement | null
                 if (target?.closest?.('input:not([type="checkbox"]), textarea, [contenteditable="true"]')) return
-                stepVolume(ev.key === '+' ? 0.05 : -0.05)
+                stepVolume(ev.key === '+' ? 1 : -1)
                 ev.preventDefault()
             }
             window.addEventListener('keydown', onKeyDown)
@@ -166,7 +184,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         const wheelOnVideo = (event: any): void => {
             if (event.shiftKey) {
                 const delta = event.deltaY || event.deltaX
-                if (delta) stepVolume(delta > 0 ? -0.05 : 0.05)
+                if (delta) stepVolume(delta > 0 ? -1 : 1)
                 event.stopPropagation();
                 return
             }
