@@ -21,6 +21,23 @@ export const RunDetection = (medias: Media[]) => {
     }
 }
 
+// Re-runs detection ONLY on media with no detected class, ignoring the cached
+// nothing-found result. Results stream back over the same listeners as
+// RunDetection (detectionFound / detectionProgress / detectionsComplete).
+export const RetryDetectionWithoutClass = () => {
+
+    if (!isElectronApp) {
+        return (dispatch: any) => { }
+    }
+
+    return (dispatch: any) => {
+        dispatch(startDetecting());
+        if (ipcRender) {
+            ipcRender.send('retryDetectionWithoutClass', undefined);
+        }
+    }
+}
+
 // Opens a native file dialog (main process) so the user can point detection
 // at any .onnx model file instead of the old hardcoded ./xcxv/best.onnx path.
 // The chosen path (or the still-unset current one, if canceled) comes back

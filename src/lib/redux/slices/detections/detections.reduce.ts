@@ -49,6 +49,10 @@ interface DetectionsState {
     modelPath: string | null
     classNames: string[]
     groups: DetectionGroup[]
+    // The .maloi "focus" class ids, highlighted in the duplicates class resume.
+    focus: number[]
+    // The .maloi "unfocus" class ids, marked as unwanted in that same resume.
+    unfocus: number[]
     lastProcessedId: string | null
     // Letterbox/tensor input resolution actually in effect (see
     // objectDetection/onnxDetector.js's getSize): the .maloi "reshape"
@@ -65,6 +69,8 @@ const initialState: DetectionsState = {
     modelPath: null,
     classNames: [],
     groups: [],
+    focus: [],
+    unfocus: [],
     lastProcessedId: null,
     detectionSize: null,
 }
@@ -131,6 +137,8 @@ const detectionsSlice = createSlice({
             ...state,
             classNames: action.payload.names,
             groups: action.payload.groups ?? [],
+            focus: action.payload.focus ?? [],
+            unfocus: action.payload.unfocus ?? [],
         }),
         setDetectionSize: (state, action) => ({
             ...state,

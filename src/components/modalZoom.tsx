@@ -1,13 +1,14 @@
 import { forwardRef, SyntheticEvent, useEffect, useImperativeHandle, useRef, useState } from "react"
 import { Media } from "../entity/Media"
 import { prettifySizeF } from "./media"
-import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, ImgWrapper, MediaControllersCSS, FoldersZoom, MuteIcon, InfoBox, ZoomHeader, VideoProgress, FramesPanel, FrameTile } from "./modalZoom.styled"
+import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, ImgWrapper, MediaControllersCSS, FoldersZoom, MuteIcon, InfoBox, ZoomHeader, VideoProgress, FramesPanel, FrameTile, ZoomClassesResume } from "./modalZoom.styled"
 import { IconButton, Slider, Modal } from "@mui/material"
 import { toMediaUrl } from "../lib/mediaUrl"
 import { ArrowBackIos, ArrowForwardIos, CleaningServices, Label, ContentCopy, Check, Image } from "@mui/icons-material"
 import { updateArrayItem, useDispatch, useSelector, selectDetections, selectMediaFrames, selectMediaFrameBoxes, GetMediaFrames } from "../lib/redux"
 import { configurationsSelector, setVideoVolume } from "../lib/redux/slices/configurations"
 import { DetectionBoxOutline, DetectionBoxLabel } from "./objectDetectionGrid.styled"
+import { classCounts, useClassResumeMark } from "./classFilter"
 
 interface ModalZoomMethods {
     chamgeImageClass: () => void,
@@ -21,18 +22,44 @@ interface ModalZoomProps {
     handleExternalClose?: any,
     openModal?: boolean,
     onNext?: () => void,
-    onPrev?: () => void
+    onPrev?: () => void,
+    // Items the class resume counts over: the zoomed media's duplicates group
+    // (duplicatesGrid), or just the zoomed media when absent (gridImg).
+    classesGroup?: Media[]
+}
+
+// Volume levels the +/- keys and Shift+wheel step through, 0.1% to 100%:
+// 0.1% steps up to 1%, 1% steps up to 10%, 5% steps up to 100%.
+// Built from integers so every level is exact (no 0.05-step float drift).
+const VOLUME_LEVELS: number[] = [
+    ...Array.from({ length: 10 }, (_, i) => (i + 1) / 1000),    // 0.1% .. 1%
+    ...Array.from({ length: 9 }, (_, i) => (i + 2) / 100),      // 2% .. 10%
+    ...Array.from({ length: 18 }, (_, i) => (i + 3) * 5 / 100), // 15% .. 100%
+]
+
+// Next level strictly above / below the current volume, so a volume set
+// off-grid (native slider drag, a persisted value) snaps onto the grid.
+const nextVolumeLevel = (volume: number, direction: 1 | -1): number => {
+    const eps = 1e-6
+    return direction > 0
+        ? VOLUME_LEVELS.find(level => level > volume + eps) ?? VOLUME_LEVELS[VOLUME_LEVELS.length - 1]
+        : VOLUME_LEVELS.filter(level => level < volume - eps).pop() ?? VOLUME_LEVELS[0]
 }
 
 const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
-    ({ mediaWithPreview, handleExternalClose, openModal, onNext, onPrev }, ref) => {
+    ({ mediaWithPreview, handleExternalClose, openModal, onNext, onPrev, classesGroup }, ref) => {
 
         const imgRef = useRef<HTMLImageElement | null>(null)
+        const divImgRef = useRef<HTMLDivElement | null>(null)
         const videoRef = useRef<HTMLVideoElement | null>(null)
         const dispatch = useDispatch();
         const config = useSelector(configurationsSelector)
         const detections = useSelector(selectDetections)
         const detectedObjects = detections[mediaWithPreview.id]?.boxes || []
+        // Same class resume as the duplicates grid's group card, .maloi
+        // focus / unfocus classes included.
+        const classMark = useClassResumeMark()
+        const resumeClasses = classCounts(classesGroup ?? [mediaWithPreview], detections)
         const [volumeLevel, setVolumeLevel] = useState(0);
         const [currentTime, setCurrentTime] = useState(0);
         const [duration, setDuration] = useState(0);
@@ -68,12 +95,12 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         const [imageZoom, setImageZoom] = useState(1)
         useEffect(() => { setVideoZoom(1); setImageZoom(1) }, [mediaWithPreview.id])
 
-        // Floor of 0.001 rather than 0, same as minVolume: a 0 would be
+        // Floor of 0.001 (0.1%) rather than 0, same as minVolume: a 0 would be
         // persisted (saveVideoVolume) and open every next video silent.
-        const stepVolume = (step: number): void => {
+        const stepVolume = (direction: 1 | -1): void => {
             const video = videoRef.current
             if (!video) return
-            video.volume = Math.min(1, Math.max(0.001, video.volume + step))
+            video.volume = nextVolumeLevel(video.volume, direction)
         }
 
         // Main-row + / - step a zoomed video's volume. The numpad +/- (same
@@ -88,7 +115,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                 if (ev.code.startsWith('Numpad')) return
                 const target = ev.target as HTMLElement | null
                 if (target?.closest?.('input:not([type="checkbox"]), textarea, [contenteditable="true"]')) return
-                stepVolume(ev.key === '+' ? 0.05 : -0.05)
+                stepVolume(ev.key === '+' ? 1 : -1)
                 ev.preventDefault()
             }
             window.addEventListener('keydown', onKeyDown)
@@ -165,7 +192,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         const wheelOnVideo = (event: any): void => {
             if (event.shiftKey) {
                 const delta = event.deltaY || event.deltaX
-                if (delta) stepVolume(delta > 0 ? -0.05 : 0.05)
+                if (delta) stepVolume(delta > 0 ? -1 : 1)
                 event.stopPropagation();
                 return
             }
@@ -195,11 +222,18 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
 
         const imageUnset = () => {
             const imgCurrent = imgRef.current
+            const divImgCurrent = divImgRef.current
+            if (!divImgCurrent)
+                return
             if (!imgCurrent)
                 return
-            if (imgCurrent.classList.contains("imageAddaptScreen"))
+            if (imgCurrent.classList.contains("imageAddaptScreen")){
                 imgCurrent.classList.remove("imageAddaptScreen")
-            else imgCurrent.classList.add("imageAddaptScreen")
+                divImgCurrent.classList.remove("divAddaptScreen")
+            } else {
+                imgCurrent.classList.add("imageAddaptScreen")
+                divImgCurrent.classList.add("divAddaptScreen")
+            }
 
             imgCurrent.focus()
 
@@ -375,14 +409,13 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                 </FrameTile>
                             ))}
                         </FramesPanel>}
-                    <MediaPresentation style={showFramesPanel ? { width: '80%', left: '40%' } : undefined}>
+                    <MediaPresentation style={showFramesPanel ? { width: '80%', left: '40%' } : undefined} onDoubleClick={changeCheckbox}>
                         {
                             mediaWithPreview.mime.includes('video')
                                 ?
                                 <>
                                     <VideoPresentation ref={videoRef} src={toMediaUrl(mediaWithPreview.path)}
                                         onLoadedMetadata={startVid}
-                                        onDoubleClick={changeCheckbox}
                                         onWheel={wheelOnVideo}
                                         onVolumeChange={saveVideoVolume}
                                         onTimeUpdate={updateVideoTime}
@@ -394,15 +427,19 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                         <IconButton onClick={copyPathToClipboard} title={pathCopied ? "Copied!" : "Copy file path to clipboard"}>
                                             {pathCopied ? <Check color="success" /> : <ContentCopy />}
                                         </IconButton>
+                                        {resumeClasses.length > 0 &&
+                                            <ZoomClassesResume title={classesGroup ? "Classes in this group — item count per class" : "Classes in this media"}>
+                                                {resumeClasses.map(([className, count]) => (
+                                                    <span key={className} className={classMark(className)}>{className} — {count}</span>
+                                                ))}
+                                            </ZoomClassesResume>}
                                     </InfoBox>
                                 </>
                                 :
                                 <>
-                                    <ImgWrapper>
+                                    <ImgWrapper ref={divImgRef} onWheel={zoomMedia}>
                                         <ImgPresentation
-                                            onDoubleClick={changeCheckbox}
                                             draggable={false}
-                                            onWheel={zoomMedia}
                                             style={{ zoom: imageZoom }}
                                             ref={imgRef} src={toMediaUrl(mediaWithPreview.path)}
                                             alt={mediaWithPreview.path} title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></ImgPresentation>
@@ -416,6 +453,12 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                         <IconButton onClick={copyPathToClipboard} title={pathCopied ? "Copied!" : "Copy file path to clipboard"}>
                                             {pathCopied ? <Check color="success" /> : <ContentCopy />}
                                         </IconButton>
+                                        {resumeClasses.length > 0 &&
+                                            <ZoomClassesResume title={classesGroup ? "Classes in this group — item count per class" : "Classes in this media"}>
+                                                {resumeClasses.map(([className, count]) => (
+                                                    <span key={className} className={classMark(className)}>{className} — {count}</span>
+                                                ))}
+                                            </ZoomClassesResume>}
                                     </InfoBox>
                                 </>
                         }

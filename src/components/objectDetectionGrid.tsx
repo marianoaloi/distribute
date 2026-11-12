@@ -1,11 +1,12 @@
 import { IconButton, CircularProgress, LinearProgress, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, Button, TextField, Snackbar, Alert } from "@mui/material"
-import { PlayArrow, Stop, FolderOpen, Label, AspectRatio } from "@mui/icons-material"
+import { PlayArrow, Stop, FolderOpen, Label, AspectRatio, YoutubeSearchedFor } from "@mui/icons-material"
 import React from "react"
 import { Media } from "../entity/Media"
-import { ChooseOnnxModel, GetDetectionSize, LoadDetectionClasses, RunDetection, SaveDetectionClasses, SaveDetectionSize, StopDetection, selectDetecting, selectDetectionClassNames, selectDetectionError, selectDetectionProgress, selectDetectionSize, selectDetections, selectLastProcessedId, selectMedias, selectModelPath, selectPipelineRunning, useSelector } from "../lib/redux"
+import { ChooseOnnxModel, GetDetectionSize, LoadDetectionClasses, RetryDetectionWithoutClass, RunDetection, SaveDetectionClasses, SaveDetectionSize, StopDetection, selectDetecting, selectDetectionClassNames, selectDetectionError, selectDetectionProgress, selectDetectionSize, selectDetections, selectLastProcessedId, selectMedias, selectModelPath, selectPipelineRunning, useSelector } from "../lib/redux"
 import { useDispatch } from "react-redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { toMediaUrl } from "../lib/mediaUrl"
+import { hasClass } from "./classFilter"
 import { DetectionBoxLabel, DetectionBoxOutline, DetectionGridWrap, DetectionResume, DetectionTile, EmptyState } from "./objectDetectionGrid.styled"
 
 // The grid only renders this many tiles at once - with large folders, mounting
@@ -83,6 +84,21 @@ export const GridDetections = (() => {
         }
         dispatch(RunDetection(medias))
     }
+    // Same gate as runDetection. A media detected with nothing found is cached
+    // as done, so Play never retries it; this re-runs the model on the loaded
+    // media that still show no class ("Without class" in the class filter).
+    const withoutClassCount = medias.filter(m => !hasClass(detections[m.id])).length
+    const retryWithoutClass = () => {
+        if (!modelPath) {
+            setGateAlert("Choose an ONNX model first")
+            return
+        }
+        if (classNames.length === 0) {
+            setGateAlert("Set at least one detection class first")
+            return
+        }
+        dispatch(RetryDetectionWithoutClass())
+    }
     const stopDetection = () => dispatch(StopDetection())
     const openClassNamesDialog = () => setOpenClassNames(true)
     const closeClassNamesDialog = () => setOpenClassNames(false)
@@ -158,6 +174,10 @@ export const GridDetections = (() => {
                 <IconButton onClick={runDetection} disabled={detecting || medias.length === 0 || pipelineRunning}
                     title={pipelineRunning ? "A Load super recursive run is in progress — wait for it to finish" : modelPath ? `Run ONNX object detection (${modelName}) over every loaded media` : "Choose an ONNX model file first"}>
                     {detecting ? <CircularProgress size={20} /> : <PlayArrow />}
+                </IconButton>
+                <IconButton onClick={retryWithoutClass} disabled={detecting || pipelineRunning || withoutClassCount === 0}
+                    title={pipelineRunning ? "A Load super recursive run is in progress — wait for it to finish" : `Re-run the model on the ${withoutClassCount} loaded media without any class (ignores the cached nothing-found result)`}>
+                    <YoutubeSearchedFor />
                 </IconButton>
                 <IconButton onClick={stopDetection} disabled={!detecting || !modelPath}
                     title="Stop after the current batch — results found so far stay on screen">

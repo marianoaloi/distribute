@@ -449,7 +449,7 @@ const chooseOnnxModelDialog = async (): Promise<boolean> => {
             MediaStore.ensureReady();
             if (path.extname(chosenPath).toLowerCase() === ".maloi") {
                 applyMaloi(readMaloi(chosenPath), onnxDetector, MediaStore);
-                mainWindow!.webContents.send("detectionClassesLoaded", { names: onnxDetector.getClassNames(), groups: MediaStore.getDetectionGroups() });
+                mainWindow!.webContents.send("detectionClassesLoaded", { names: onnxDetector.getClassNames(), groups: MediaStore.getDetectionGroups(), focus: MediaStore.getDetectionFocus(), unfocus: MediaStore.getDetectionUnfocus() });
             } else {
                 onnxDetector.setModelPath(chosenPath);
                 MediaStore.getOrCreateModelPath(chosenPath);
@@ -481,14 +481,22 @@ ipcMain.on("chooseOnnxModel", () => { if (!rejectIfBusy()) chooseOnnxModelDialog
 // loadSuperRecursive's chain - pulls medias/items straight from MediaStore
 // (see objectDetection/processImages.js), so it needs nothing passed in from
 // the renderer either way.
-const runDetectObjects = async (): Promise<void> => {
+const runDetectObjects = async (options?: { retryWithoutClass?: boolean }): Promise<void> => {
     detectionStopRequested = false;
-    await superPipeline.runDetect(guiSuperContext);
+    await superPipeline.runDetect(guiSuperContext, options);
 };
 
 ipcMain.on("detectObjects", async (event: IpcMainEvent, data: DetectObjectsPayload) => {
     if (rejectIfBusy()) return;
     await runDetectObjects();
+});
+
+// The "retry without class" button: same run and same events as detectObjects,
+// but only media with no detected class are re-run (ignoring the cached
+// nothing-found result). Same busy lock, so it excludes LSR and vice versa.
+ipcMain.on("retryDetectionWithoutClass", async () => {
+    if (rejectIfBusy()) return;
+    await runDetectObjects({ retryWithoutClass: true });
 });
 
 // Persists the user-typed comma-separated class list (mediaDb's
@@ -503,10 +511,10 @@ ipcMain.on("saveDetectionClasses", (event: IpcMainEvent, data: SaveDetectionClas
         MediaStore.ensureReady();
         MediaStore.saveDetectionClasses(names);
         onnxDetector.setClassNames(names);
-        mainWindow!.webContents.send("detectionClassesLoaded", { names, groups: MediaStore.getDetectionGroups() });
+        mainWindow!.webContents.send("detectionClassesLoaded", { names, groups: MediaStore.getDetectionGroups(), focus: MediaStore.getDetectionFocus(), unfocus: MediaStore.getDetectionUnfocus() });
     } catch (error) {
         console.error("saveDetectionClasses failed", error);
-        mainWindow!.webContents.send("detectionClassesLoaded", { names: [], groups: [], error: (error as Error).message });
+        mainWindow!.webContents.send("detectionClassesLoaded", { names: [], groups: [], focus: [], unfocus: [], error: (error as Error).message });
     }
 });
 
@@ -515,10 +523,10 @@ ipcMain.on("loadDetectionClasses", () => {
         MediaStore.ensureReady();
         const names = MediaStore.getDetectionClasses();
         onnxDetector.setClassNames(names);
-        mainWindow!.webContents.send("detectionClassesLoaded", { names, groups: MediaStore.getDetectionGroups() });
+        mainWindow!.webContents.send("detectionClassesLoaded", { names, groups: MediaStore.getDetectionGroups(), focus: MediaStore.getDetectionFocus(), unfocus: MediaStore.getDetectionUnfocus() });
     } catch (error) {
         console.error("loadDetectionClasses failed", error);
-        mainWindow!.webContents.send("detectionClassesLoaded", { names: [], groups: [], error: (error as Error).message });
+        mainWindow!.webContents.send("detectionClassesLoaded", { names: [], groups: [], focus: [], unfocus: [], error: (error as Error).message });
     }
 });
 

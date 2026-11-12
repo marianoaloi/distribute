@@ -149,6 +149,28 @@ export const findDetectedItemIds = (itemIds: string[], modelPathId: number, clas
     return done;
 };
 
+// Which of these items have at least one stored box carrying a class name.
+// This is the backend twin of the renderer's "has class" (classFilter's
+// hasClass over getDetectionClassesByMedia): a box whose classId has no
+// detection_class name is not shown as a class, so it must not count here
+// either, or the retry button and this check would disagree about which media
+// are "without class". Chunked like findDetectedItemIds.
+export const findItemIdsWithDetections = (itemIds: string[]): Set<string> => {
+    const db = HashStore.getDb();
+    const found = new Set<string>();
+    for (let i = 0; i < itemIds.length; i += ID_CHUNK) {
+        const chunk = itemIds.slice(i, i + ID_CHUNK);
+        if (chunk.length === 0) continue;
+        const rows = db.prepare(`
+            SELECT DISTINCT item_detection.itemId AS itemId FROM item_detection
+            JOIN detection_class ON detection_class.classId = item_detection.classId
+            WHERE detection_class.name IS NOT NULL
+              AND item_detection.itemId IN (${chunk.map(() => "?").join(",")})`).all(...chunk) as Array<{ itemId: string }>;
+        for (const row of rows) found.add(row.itemId);
+    }
+    return found;
+};
+
 // The configured class list as stored in item_detection_state.classList.
 export const classListKey = (classNames: string[]): string => classNames.join(",");
 
@@ -272,6 +294,34 @@ export const saveDetectionGroups = (groups: DetectionGroup[]): void => {
     });
     run(groups);
 };
+
+// The .maloi class-id list tables (mediaSchema.ts). Only these fixed names
+// are ever interpolated into the SQL.
+type ClassIdTable = "detection_focus" | "detection_unfocus";
+
+// Class ids may point past a class list that has since shrunk; the renderer
+// simply finds no name for them.
+const getClassIds = (table: ClassIdTable): number[] => {
+    const db = HashStore.getDb();
+    return (db.prepare(`SELECT classId FROM ${table} ORDER BY position ASC`).all() as Array<{ classId: number }>).map((r) => r.classId);
+};
+
+// Replaces the saved list (an empty list clears it).
+const saveClassIds = (table: ClassIdTable, classIds: number[]): void => {
+    const db = HashStore.getDb();
+    const del = db.prepare(`DELETE FROM ${table}`);
+    const insert = db.prepare(`INSERT INTO ${table} (position, classId) VALUES (?, ?)`);
+    const run = db.transaction((list: number[]) => {
+        del.run();
+        list.forEach((classId, position) => insert.run(position, classId));
+    });
+    run(classIds);
+};
+
+export const getDetectionFocus = (): number[] => getClassIds("detection_focus");
+export const saveDetectionFocus = (classIds: number[]): void => saveClassIds("detection_focus", classIds);
+export const getDetectionUnfocus = (): number[] => getClassIds("detection_unfocus");
+export const saveDetectionUnfocus = (classIds: number[]): void => saveClassIds("detection_unfocus", classIds);
 
 // Mirrors setDetectionState above, one level down: records the class names
 // found on THIS item (not the whole media) - see mediaSchema.js's
