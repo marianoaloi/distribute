@@ -95,7 +95,7 @@ export const GroupClassesResume = styled.div`
 
     > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     /* .maloi "focus" / "unfocus" classes: 3pt bigger than the rest, focus in
-       pink, unfocus in green. */
+       green, unfocus in pink. */
     > span.focus { font-size: calc(1em + 3pt); color: #45f34c; }
     > span.unfocus { font-size: calc(1em + 3pt); color:  pink;  }
 `
