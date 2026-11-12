@@ -153,7 +153,7 @@ export const ElectronConnection = () => {
                 dispatch(setModelPath(result.path))
                 dispatch(setDetectionSize(result.size))
             })
-            ipcRender.on('detectionClassesLoaded', (e: any, result: { names: string[], groups?: DetectionGroup[], focus?: number[] }) => {
+            ipcRender.on('detectionClassesLoaded', (e: any, result: { names: string[], groups?: DetectionGroup[], focus?: number[], unfocus?: number[] }) => {
                 dispatch(setDetectionClasses(result))
             })
             ipcRender.on('detectionSizeLoaded', (e: any, result: { size: number }) => {

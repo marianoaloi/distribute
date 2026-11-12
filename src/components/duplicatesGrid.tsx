@@ -3,7 +3,7 @@ import { useDispatch } from "react-redux"
 import { IconButton, CircularProgress, LinearProgress } from "@mui/material"
 import { ImageSearch, RestartAlt, FolderOpen, FolderCopyTwoTone, VolumeOff, FileDownload, FileUpload, RadioButtonChecked, RadioButtonUnchecked } from "@mui/icons-material"
 import { Media } from "../entity/Media"
-import { selectDetectionClassNames, selectDetectionFocus, selectDetectionGroups, DuplicateAlgorithm, ExportDatabase, FindBlurFrameDuplicates, FindFrameDuplicates, FindIndexDuplicates, FindObjectDuplicates, GetDuplicateGroups, selectDuplicateAlgorithm, setDuplicateAlgorithm, GetMediaFrames, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDetections, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMediaFrames, selectMedias, selectPipelineRunning, updateManyArrayItem, useSelector } from "../lib/redux"
+import { selectDetectionClassNames, selectDetectionGroups, DuplicateAlgorithm, ExportDatabase, FindBlurFrameDuplicates, FindFrameDuplicates, FindIndexDuplicates, FindObjectDuplicates, GetDuplicateGroups, selectDuplicateAlgorithm, setDuplicateAlgorithm, GetMediaFrames, ImportDatabase, OpenDirectory, OpenDirectoryRecursive, RebuildIndex, indexRebuildFinished, selectDbExportError, selectDbExporting, selectDbImportError, selectDbImporting, selectDbImportMatched, selectDetections, selectDuplicateGroups, selectIndexRebuildError, selectIndexRebuilding, selectIndexRebuildProgress, selectMediaFrames, selectMedias, selectPipelineRunning, updateManyArrayItem, useSelector } from "../lib/redux"
 import { configurationsSelector } from "../lib/redux/slices/configurations"
 import { MediaIMG, isScrollToLastSeenKey, scrollToMedia } from "./media"
 import { FrameCollageTile } from "./frameCollageTile"
@@ -11,7 +11,7 @@ import ModalZoom from "./modalZoom"
 import { CounterImgIndex, DuplicateGroupCard, DuplicateGroupRow, DuplicatesList, DuplicatesResume, EmptyState, GroupBody, GroupClassesResume, GroupLabel, ImportedMediaWrap, RebuildIndexInfo } from "./duplicatesGrid.styled"
 import { Folders } from "./folder"
 import { MediaTypeFilter, matchesMediaType } from "./mediaTypeFilter"
-import { ClassFilter, groupResolver, hasClass, matchesClassFilter, matchesClassPresence, normalizeClassFilter } from "./classFilter"
+import { ClassFilter, classCounts, useClassResumeMark, groupResolver, hasClass, matchesClassFilter, matchesClassPresence, normalizeClassFilter } from "./classFilter"
 import { Pagination, totalPagesFor } from "./pagination"
 import { ALGORITHM_EMPTY_TEXTS, ALGORITHM_GROUP_LABELS, ALGORITHM_SCAN_TITLES, DuplicateAlgorithmSelect } from "./duplicateAlgorithmSelect"
 
@@ -37,8 +37,8 @@ export const GridDuplicates = (() => {
     const detections = useSelector(selectDetections)
     const classNames = useSelector(selectDetectionClassNames)
     const resolveGroup = groupResolver(useSelector(selectDetectionGroups), classNames)
-    // The .maloi "focus" ids, resolved to the names detections carry.
-    const focusClassNames = new Set(useSelector(selectDetectionFocus).map(id => classNames[id]).filter(Boolean))
+    // The .maloi "focus" / "unfocus" mark of each class resume line.
+    const classMark = useClassResumeMark()
     const classFilterGroups = normalizeClassFilter(config.classFilter, resolveGroup)
     const groupIds = useSelector(selectDuplicateGroups)
     const algorithm = useSelector(selectDuplicateAlgorithm)
@@ -66,17 +66,6 @@ export const GridDuplicates = (() => {
     }, [])
 
     const mediaById = new Map(medias.map(m => [m.id, m]))
-
-    // A group's class resume: every class any member has, with how many of
-    // the group's items carry it. Imported items carry no local detections,
-    // so they contribute nothing. Sorted by count, then name.
-    const groupClassCounts = (group: Media[]): Array<[string, number]> => {
-        const counts = new Map<string, number>()
-        for (const media of group)
-            for (const className of detections[media.id]?.classes ?? [])
-                counts.set(className, (counts.get(className) ?? 0) + 1)
-        return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    }
 
     let counterIndex = 0
     const groups: Media[][] = groupIds
@@ -106,7 +95,7 @@ export const GridDuplicates = (() => {
     // Paged by GROUP, not by media, so a group is never split across pages.
     // Select-all/unselect/auto-select and the split move act on this page only.
     const [page, setPage] = useState(0)
-    const [groupsPerPage, setGroupsPerPage] = useState(20)
+    const [groupsPerPage, setGroupsPerPage] = useState(1000)
     const pagedGroups = groups.slice(page * groupsPerPage, (page + 1) * groupsPerPage)
     const pagedMedias = pagedGroups.flat()
     const totalPages = totalPagesFor(groups.length, groupsPerPage)
@@ -404,7 +393,7 @@ export const GridDuplicates = (() => {
             {groups.length > 0
                 ? <DuplicatesList>
                     {pagedGroups.map((group, idx) => {
-                        const groupClasses = groupClassCounts(group)
+                        const groupClasses = classCounts(group, detections)
                         return (
                         <DuplicateGroupCard key={group[0].id}>
                             <GroupLabel>Group {page * groupsPerPage + idx + 1} — {group.length} {ALGORITHM_GROUP_LABELS[algorithm]}{group.some(m => m.imported) ? ` (${group.filter(m => m.imported).length} from other folder)` : ""}</GroupLabel>
@@ -412,7 +401,7 @@ export const GridDuplicates = (() => {
                             {groupClasses.length > 0
                                 ? <GroupClassesResume title="Classes in this group — item count per class">
                                     {groupClasses.map(([className, count]) => (
-                                        <span key={className} className={focusClassNames.has(className) ? "focus" : undefined}>{className} — {count}</span>
+                                        <span key={className} className={classMark(className)}>{className} — {count}</span>
                                     ))}
                                 </GroupClassesResume>
                                 : null}
@@ -454,6 +443,7 @@ export const GridDuplicates = (() => {
 
             {lastZoom &&
                 <ModalZoom mediaWithPreview={lastZoom} handleExternalClose={handleClose} openModal={open} ref={modalZoomRefMethods}
+                    classesGroup={groups.find(group => group.some(m => m.id === lastZoom.id))}
                     onPrev={prevMedia}
                     onNext={nextMedia}
                 ></ModalZoom>

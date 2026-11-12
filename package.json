@@ -1,6 +1,6 @@
 {
   "name": "distribute",
-  "version": "4.0.18",
+  "version": "4.0.23",
   "private": true,
   "main": "electron-dist/app.js",
   "homepage": "./",

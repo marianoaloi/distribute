@@ -2,6 +2,7 @@ import styled from "@emotion/styled";
 import { Box, LinearProgress, Slider } from "@mui/material";
 import { Folders } from "./folder";
 import { VolumeMuteRounded } from "@mui/icons-material";
+import { GroupClassesResume } from "./duplicatesGrid.styled";
 
 
 export const ModalBox = styled(Box)`
@@ -90,6 +91,25 @@ export const FrameTile = styled.div`
     img {
         width: 100%;
         display: block;
+    }
+`
+
+// The duplicates grid's group class resume, floated over the top-left of the
+// media. Kept outside MediaPresentation so its span rule (black text, white
+// stroke) doesn't restyle the resume lines.
+export const ZoomClassesResume = styled(GroupClassesResume)`
+    position: relative;
+    top: 20px;
+    left: 8px;
+    z-index: 3;
+    max-height: calc(100% - 140px);
+    overflow-y: auto;
+    box-sizing: border-box;
+
+    span {
+        color: white;
+        text-stroke: unset;
+        -webkit-text-stroke: unset;
     }
 `
 

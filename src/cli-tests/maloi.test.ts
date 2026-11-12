@@ -2,7 +2,7 @@
 import fs from "fs"
 import os from "os"
 import path from "path"
-import { applyMaloi, LoadedMaloi, MaloiDetector, MaloiStore, parseMaloiFocus, parseMaloiGroups, parseReshape, readMaloi, RESHAPE_MAX, RESHAPE_MIN, splitClassNames } from "../../objectDetection/maloi"
+import { applyMaloi, LoadedMaloi, MaloiDetector, MaloiStore, parseMaloiFocus, parseMaloiGroups, parseMaloiUnfocus, parseReshape, readMaloi, RESHAPE_MAX, RESHAPE_MIN, splitClassNames } from "../../objectDetection/maloi"
 
 let dir: string
 const write = (name: string, content: string): string => {
@@ -157,28 +157,49 @@ describe("parseMaloiFocus", () => {
     })
 })
 
+describe("parseMaloiUnfocus", () => {
+    it("returns [] when absent, without warning", () => {
+        expect(parseMaloiUnfocus(undefined, 3, [])).toEqual([])
+        expect(warn).not.toHaveBeenCalled()
+    })
+    it("validates like focus: in-range integers, file order, no repeats", () => {
+        expect(parseMaloiUnfocus([2, 0, 2, 3, -1, "1"], 3, [])).toEqual([2, 0])
+        expect(warn).toHaveBeenCalled()
+    })
+    it("drops ids already in focus, with a warning", () => {
+        expect(parseMaloiUnfocus([0, 1, 2], 3, [1])).toEqual([0, 2])
+        expect(warn).toHaveBeenCalled()
+    })
+    it("is read from a .maloi file against its class count and focus", () => {
+        const p = write("u.maloi", JSON.stringify({ onnx: "m.onnx", classes: "a,b,c,d", focus: [1], unfocus: [3, 1, 2, 9] }))
+        expect(readMaloi(p).unfocus).toEqual([3, 2])
+        expect(readMaloi(write("u2.maloi", JSON.stringify({ onnx: "m.onnx", classes: "a" }))).unfocus).toEqual([])
+    })
+})
+
 describe("applyMaloi", () => {
     const setup = () => {
         const calls: string[] = []
         const args: Record<string, unknown> = {}
         const rec = (name: string) => (a?: unknown) => { calls.push(name); args[name] = a; return 1 }
         const detector: MaloiDetector = { setModelPath: rec("setModelPath"), setClassNames: rec("setClassNames"), setModelSize: rec("setModelSize") }
-        const store: MaloiStore = { ensureReady: rec("ensureReady"), getOrCreateModelPath: rec("getOrCreateModelPath") as any, saveDetectionClasses: rec("saveDetectionClasses"), saveDetectionGroups: rec("saveDetectionGroups"), saveDetectionFocus: rec("saveDetectionFocus") }
+        const store: MaloiStore = { ensureReady: rec("ensureReady"), getOrCreateModelPath: rec("getOrCreateModelPath") as any, saveDetectionClasses: rec("saveDetectionClasses"), saveDetectionGroups: rec("saveDetectionGroups"), saveDetectionFocus: rec("saveDetectionFocus"), saveDetectionUnfocus: rec("saveDetectionUnfocus") }
         return { calls, args, detector, store }
     }
-    const loaded: LoadedMaloi = { onnxPath: "/m/x.onnx", classNames: ["a", "b"], groups: [], focus: [1], reshape: null }
+    const loaded: LoadedMaloi = { onnxPath: "/m/x.onnx", classNames: ["a", "b"], groups: [], focus: [1], unfocus: [0], reshape: null }
 
     it("calls store.ensureReady first and applies everything", () => {
         const { calls, args, detector, store } = setup()
         applyMaloi(loaded, detector, store)
         expect(calls[0]).toBe("ensureReady")
-        expect(new Set(calls)).toEqual(new Set(["ensureReady", "setModelPath", "getOrCreateModelPath", "saveDetectionClasses", "saveDetectionGroups", "saveDetectionFocus", "setClassNames", "setModelSize"]))
+        expect(new Set(calls)).toEqual(new Set(["ensureReady", "setModelPath", "getOrCreateModelPath", "saveDetectionClasses", "saveDetectionGroups", "saveDetectionFocus", "saveDetectionUnfocus", "setClassNames", "setModelSize"]))
         expect(args.setModelPath).toBe("/m/x.onnx")
         expect(args.getOrCreateModelPath).toBe("/m/x.onnx")
         expect(args.saveDetectionClasses).toEqual(["a", "b"])
         expect(args.setClassNames).toEqual(["a", "b"])
         expect(args.saveDetectionGroups).toEqual([])
         expect(args.saveDetectionFocus).toEqual([1])
+        expect(args.saveDetectionUnfocus).toEqual([0])
     })
     it("calls setModelSize(null) when there is no reshape", () => {
         const { calls, args, detector, store } = setup()

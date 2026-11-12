@@ -1,13 +1,14 @@
 import { forwardRef, SyntheticEvent, useEffect, useImperativeHandle, useRef, useState } from "react"
 import { Media } from "../entity/Media"
 import { prettifySizeF } from "./media"
-import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, ImgWrapper, MediaControllersCSS, FoldersZoom, MuteIcon, InfoBox, ZoomHeader, VideoProgress, FramesPanel, FrameTile } from "./modalZoom.styled"
+import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, ImgWrapper, MediaControllersCSS, FoldersZoom, MuteIcon, InfoBox, ZoomHeader, VideoProgress, FramesPanel, FrameTile, ZoomClassesResume } from "./modalZoom.styled"
 import { IconButton, Slider, Modal } from "@mui/material"
 import { toMediaUrl } from "../lib/mediaUrl"
 import { ArrowBackIos, ArrowForwardIos, CleaningServices, Label, ContentCopy, Check, Image } from "@mui/icons-material"
 import { updateArrayItem, useDispatch, useSelector, selectDetections, selectMediaFrames, selectMediaFrameBoxes, GetMediaFrames } from "../lib/redux"
 import { configurationsSelector, setVideoVolume } from "../lib/redux/slices/configurations"
 import { DetectionBoxOutline, DetectionBoxLabel } from "./objectDetectionGrid.styled"
+import { classCounts, useClassResumeMark } from "./classFilter"
 
 interface ModalZoomMethods {
     chamgeImageClass: () => void,
@@ -21,7 +22,10 @@ interface ModalZoomProps {
     handleExternalClose?: any,
     openModal?: boolean,
     onNext?: () => void,
-    onPrev?: () => void
+    onPrev?: () => void,
+    // Items the class resume counts over: the zoomed media's duplicates group
+    // (duplicatesGrid), or just the zoomed media when absent (gridImg).
+    classesGroup?: Media[]
 }
 
 // Volume levels the +/- keys and Shift+wheel step through, 0.1% to 100%:
@@ -43,7 +47,7 @@ const nextVolumeLevel = (volume: number, direction: 1 | -1): number => {
 }
 
 const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
-    ({ mediaWithPreview, handleExternalClose, openModal, onNext, onPrev }, ref) => {
+    ({ mediaWithPreview, handleExternalClose, openModal, onNext, onPrev, classesGroup }, ref) => {
 
         const imgRef = useRef<HTMLImageElement | null>(null)
         const divImgRef = useRef<HTMLDivElement | null>(null)
@@ -52,6 +56,10 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         const config = useSelector(configurationsSelector)
         const detections = useSelector(selectDetections)
         const detectedObjects = detections[mediaWithPreview.id]?.boxes || []
+        // Same class resume as the duplicates grid's group card, .maloi
+        // focus / unfocus classes included.
+        const classMark = useClassResumeMark()
+        const resumeClasses = classCounts(classesGroup ?? [mediaWithPreview], detections)
         const [volumeLevel, setVolumeLevel] = useState(0);
         const [currentTime, setCurrentTime] = useState(0);
         const [duration, setDuration] = useState(0);
@@ -407,7 +415,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                 ?
                                 <>
                                     <VideoPresentation ref={videoRef} src={toMediaUrl(mediaWithPreview.path)}
-                                        onLoadedMetadata={startVid}                                        
+                                        onLoadedMetadata={startVid}
                                         onWheel={wheelOnVideo}
                                         onVolumeChange={saveVideoVolume}
                                         onTimeUpdate={updateVideoTime}
@@ -419,12 +427,18 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                         <IconButton onClick={copyPathToClipboard} title={pathCopied ? "Copied!" : "Copy file path to clipboard"}>
                                             {pathCopied ? <Check color="success" /> : <ContentCopy />}
                                         </IconButton>
+                                        {resumeClasses.length > 0 &&
+                                            <ZoomClassesResume title={classesGroup ? "Classes in this group — item count per class" : "Classes in this media"}>
+                                                {resumeClasses.map(([className, count]) => (
+                                                    <span key={className} className={classMark(className)}>{className} — {count}</span>
+                                                ))}
+                                            </ZoomClassesResume>}
                                     </InfoBox>
                                 </>
                                 :
                                 <>
                                     <ImgWrapper ref={divImgRef} onWheel={zoomMedia}>
-                                        <ImgPresentation                                            
+                                        <ImgPresentation
                                             draggable={false}
                                             style={{ zoom: imageZoom }}
                                             ref={imgRef} src={toMediaUrl(mediaWithPreview.path)}
@@ -439,6 +453,12 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                         <IconButton onClick={copyPathToClipboard} title={pathCopied ? "Copied!" : "Copy file path to clipboard"}>
                                             {pathCopied ? <Check color="success" /> : <ContentCopy />}
                                         </IconButton>
+                                        {resumeClasses.length > 0 &&
+                                            <ZoomClassesResume title={classesGroup ? "Classes in this group — item count per class" : "Classes in this media"}>
+                                                {resumeClasses.map(([className, count]) => (
+                                                    <span key={className} className={classMark(className)}>{className} — {count}</span>
+                                                ))}
+                                            </ZoomClassesResume>}
                                     </InfoBox>
                                 </>
                         }

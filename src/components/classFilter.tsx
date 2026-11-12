@@ -5,7 +5,7 @@ import {
     Button, Select, MenuItem, ListSubheader, ToggleButton, Stack, Divider, TextField, InputAdornment
 } from "@mui/material"
 import { FilterAlt, FilterAltOffOutlined, Add, Delete, RestartAlt, Clear } from "@mui/icons-material"
-import { LoadDetectionClasses, LoadDetections, selectDetectionClassNames, selectDetectionGroups, useSelector } from "../lib/redux"
+import { LoadDetectionClasses, LoadDetections, selectDetectionClassNames, selectDetectionFocus, selectDetectionGroups, selectDetectionUnfocus, useSelector } from "../lib/redux"
 import { configurationsSelector, setClassFilter, setClassPresence } from "../lib/redux/slices/configurations"
 import { ClassFilterBar } from "./classFilter.styled"
 import { ClassExpr, ClassFilter as ClassFilterExpr, ClassFilterGroup, ClassFilterTerm, ClassPresence } from "../entity/FilterMedia"
@@ -100,6 +100,28 @@ export function matchesClassFilter(detection: MediaDetections | undefined, group
 // has no entry; one run with nothing found has an empty class list.
 export function hasClass(detection: MediaDetections | undefined): boolean {
     return (detection?.classes.length ?? 0) > 0
+}
+
+// Class resume of a set of items (a duplicates group, or the zoomed media):
+// every class any item has, with how many of the items carry it. Items with
+// no local detections (e.g. imported ones) contribute nothing. Sorted by
+// count, then name.
+export function classCounts(items: { id: string }[], detections: Record<string, MediaDetections>): Array<[string, number]> {
+    const counts = new Map<string, number>()
+    for (const item of items)
+        for (const className of detections[item.id]?.classes ?? [])
+            counts.set(className, (counts.get(className) ?? 0) + 1)
+    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+}
+
+// CSS class for a class resume line: the .maloi "focus" / "unfocus" ids,
+// resolved to the names detections carry (focus wins if a name is in both).
+export function useClassResumeMark(): (className: string) => "focus" | "unfocus" | undefined {
+    const classNames = useSelector(selectDetectionClassNames)
+    const toNames = (ids: number[]) => new Set(ids.map(id => classNames[id]).filter(Boolean))
+    const focus = toNames(useSelector(selectDetectionFocus))
+    const unfocus = toNames(useSelector(selectDetectionUnfocus))
+    return className => focus.has(className) ? "focus" : unfocus.has(className) ? "unfocus" : undefined
 }
 
 // The "Has class / Without class" selector next to Reset. Takes the yes/no

@@ -449,7 +449,7 @@ const chooseOnnxModelDialog = async (): Promise<boolean> => {
             MediaStore.ensureReady();
             if (path.extname(chosenPath).toLowerCase() === ".maloi") {
                 applyMaloi(readMaloi(chosenPath), onnxDetector, MediaStore);
-                mainWindow!.webContents.send("detectionClassesLoaded", { names: onnxDetector.getClassNames(), groups: MediaStore.getDetectionGroups(), focus: MediaStore.getDetectionFocus() });
+                mainWindow!.webContents.send("detectionClassesLoaded", { names: onnxDetector.getClassNames(), groups: MediaStore.getDetectionGroups(), focus: MediaStore.getDetectionFocus(), unfocus: MediaStore.getDetectionUnfocus() });
             } else {
                 onnxDetector.setModelPath(chosenPath);
                 MediaStore.getOrCreateModelPath(chosenPath);
@@ -511,10 +511,10 @@ ipcMain.on("saveDetectionClasses", (event: IpcMainEvent, data: SaveDetectionClas
         MediaStore.ensureReady();
         MediaStore.saveDetectionClasses(names);
         onnxDetector.setClassNames(names);
-        mainWindow!.webContents.send("detectionClassesLoaded", { names, groups: MediaStore.getDetectionGroups(), focus: MediaStore.getDetectionFocus() });
+        mainWindow!.webContents.send("detectionClassesLoaded", { names, groups: MediaStore.getDetectionGroups(), focus: MediaStore.getDetectionFocus(), unfocus: MediaStore.getDetectionUnfocus() });
     } catch (error) {
         console.error("saveDetectionClasses failed", error);
-        mainWindow!.webContents.send("detectionClassesLoaded", { names: [], groups: [], focus: [], error: (error as Error).message });
+        mainWindow!.webContents.send("detectionClassesLoaded", { names: [], groups: [], focus: [], unfocus: [], error: (error as Error).message });
     }
 });
 
@@ -523,10 +523,10 @@ ipcMain.on("loadDetectionClasses", () => {
         MediaStore.ensureReady();
         const names = MediaStore.getDetectionClasses();
         onnxDetector.setClassNames(names);
-        mainWindow!.webContents.send("detectionClassesLoaded", { names, groups: MediaStore.getDetectionGroups(), focus: MediaStore.getDetectionFocus() });
+        mainWindow!.webContents.send("detectionClassesLoaded", { names, groups: MediaStore.getDetectionGroups(), focus: MediaStore.getDetectionFocus(), unfocus: MediaStore.getDetectionUnfocus() });
     } catch (error) {
         console.error("loadDetectionClasses failed", error);
-        mainWindow!.webContents.send("detectionClassesLoaded", { names: [], groups: [], focus: [], error: (error as Error).message });
+        mainWindow!.webContents.send("detectionClassesLoaded", { names: [], groups: [], focus: [], unfocus: [], error: (error as Error).message });
     }
 });
 

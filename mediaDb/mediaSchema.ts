@@ -114,6 +114,15 @@ export const createMediaSchema = (database: Database.Database): void => {
         );
     `);
 
+    // The .maloi's "unfocus" classes: same shape as detection_focus, marked
+    // as unwanted in that same class resume.
+    database.exec(`
+        CREATE TABLE IF NOT EXISTS detection_unfocus (
+            position INTEGER PRIMARY KEY,
+            classId  INTEGER NOT NULL
+        );
+    `);
+
     // Filled every time the user picks a model in chooseOnnxModel - one row
     // per distinct path ever chosen, so item_detection.modelPathId can point
     // at *which* model produced a result without repeating the path text on
