@@ -409,6 +409,13 @@ export const GridDuplicates = (() => {
                         <DuplicateGroupCard key={group[0].id}>
                             <GroupLabel>Group {page * groupsPerPage + idx + 1} — {group.length} {ALGORITHM_GROUP_LABELS[algorithm]}{group.some(m => m.imported) ? ` (${group.filter(m => m.imported).length} from other folder)` : ""}</GroupLabel>
                             <GroupBody>
+                            {groupClasses.length > 0
+                                ? <GroupClassesResume title="Classes in this group — item count per class">
+                                    {groupClasses.map(([className, count]) => (
+                                        <span key={className} className={focusClassNames.has(className) ? "focus" : undefined}>{className} — {count}</span>
+                                    ))}
+                                </GroupClassesResume>
+                                : null}
                             <DuplicateGroupRow>
                                 {group.map(media => {
                                     const frames = mediaFrames[media.id]
@@ -434,13 +441,6 @@ export const GridDuplicates = (() => {
                                         : tile
                                 })}
                             </DuplicateGroupRow>
-                            {groupClasses.length > 0
-                                ? <GroupClassesResume title="Classes in this group — item count per class">
-                                    {groupClasses.map(([className, count]) => (
-                                        <span key={className} className={focusClassNames.has(className) ? "focus" : undefined}>{className} — {count}</span>
-                                    ))}
-                                </GroupClassesResume>
-                                : null}
                             </GroupBody>
                         </DuplicateGroupCard>
                         )

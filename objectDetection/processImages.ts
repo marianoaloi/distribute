@@ -51,8 +51,19 @@ export interface DetectionPassStats {
 }
 
 
-export const processMediaToDetections = async (sink: DetectionSink, onnxDetector: DetectorLike, classNames: string[], shouldStop: () => boolean, onProgress?: (processed: number, total: number) => void): Promise<DetectionPassStats> => {
+// retryWithoutClass: the "retry without class" button. A media detected with
+// nothing found is cached as done (item_detection_state), so a normal run never
+// looks at it again. In this mode only media with NO stored class box are
+// processed (the same "Without class" set the UI filter shows) and all their
+// items are re-run, ignoring that cache; media that already have a class are
+// skipped and counted as processed, like already-done media.
+export interface DetectionPassOptions {
+    retryWithoutClass?: boolean;
+}
 
+export const processMediaToDetections = async (sink: DetectionSink, onnxDetector: DetectorLike, classNames: string[], shouldStop: () => boolean, onProgress?: (processed: number, total: number) => void, options?: DetectionPassOptions): Promise<DetectionPassStats> => {
+
+    const retryWithoutClass = options?.retryWithoutClass === true;
 
     let processed = 0;
 
@@ -185,12 +196,20 @@ export const processMediaToDetections = async (sink: DetectionSink, onnxDetector
     const detectPage = async (medias: PagedMediaRow[]): Promise<void> => {
         const plan = (): { groups: DetectMediaRef[][]; detected: Set<string> } => {
             const refs = itemRefsForMedia(medias);
-            const detected = MediaStore.findDetectedItemIds(refs.map(itemKey), modelPathId, classList);
             const byMedia = new Map<string, DetectMediaRef[]>();
             for (const ref of refs) {
                 if (!byMedia.has(ref.id)) byMedia.set(ref.id, []);
                 (byMedia.get(ref.id) as DetectMediaRef[]).push(ref);
             }
+            if (retryWithoutClass) {
+                // Out of scope = any item of the media has a class box. In
+                // scope media get an EMPTY done set so every item is re-run
+                // instead of replayed from the cache that holds the empty result.
+                const withClass = MediaStore.findItemIdsWithDetections(refs.map(itemKey));
+                const groups = [...byMedia.values()].filter(group => !group.some(ref => withClass.has(itemKey(ref))));
+                return { groups, detected: new Set<string>() };
+            }
+            const detected = MediaStore.findDetectedItemIds(refs.map(itemKey), modelPathId, classList);
             // Done or not is decided per MEDIA: one undone item keeps all of
             // the media's rows (the done ones are replayed in processOne).
             const groups = [...byMedia.values()].filter(group => group.some(ref => !detected.has(itemKey(ref))));

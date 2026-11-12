@@ -29,6 +29,7 @@ const ipc = {
             'getDuplicateGroups',
             'rebuildIndex',
             'detectObjects',
+            'retryDetectionWithoutClass',
             'stopDetection',
             'chooseOnnxModel',
             'exportDatabase',

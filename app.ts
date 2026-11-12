@@ -481,14 +481,22 @@ ipcMain.on("chooseOnnxModel", () => { if (!rejectIfBusy()) chooseOnnxModelDialog
 // loadSuperRecursive's chain - pulls medias/items straight from MediaStore
 // (see objectDetection/processImages.js), so it needs nothing passed in from
 // the renderer either way.
-const runDetectObjects = async (): Promise<void> => {
+const runDetectObjects = async (options?: { retryWithoutClass?: boolean }): Promise<void> => {
     detectionStopRequested = false;
-    await superPipeline.runDetect(guiSuperContext);
+    await superPipeline.runDetect(guiSuperContext, options);
 };
 
 ipcMain.on("detectObjects", async (event: IpcMainEvent, data: DetectObjectsPayload) => {
     if (rejectIfBusy()) return;
     await runDetectObjects();
+});
+
+// The "retry without class" button: same run and same events as detectObjects,
+// but only media with no detected class are re-run (ignoring the cached
+// nothing-found result). Same busy lock, so it excludes LSR and vice versa.
+ipcMain.on("retryDetectionWithoutClass", async () => {
+    if (rejectIfBusy()) return;
+    await runDetectObjects({ retryWithoutClass: true });
 });
 
 // Persists the user-typed comma-separated class list (mediaDb's

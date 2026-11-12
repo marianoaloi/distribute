@@ -149,6 +149,28 @@ export const findDetectedItemIds = (itemIds: string[], modelPathId: number, clas
     return done;
 };
 
+// Which of these items have at least one stored box carrying a class name.
+// This is the backend twin of the renderer's "has class" (classFilter's
+// hasClass over getDetectionClassesByMedia): a box whose classId has no
+// detection_class name is not shown as a class, so it must not count here
+// either, or the retry button and this check would disagree about which media
+// are "without class". Chunked like findDetectedItemIds.
+export const findItemIdsWithDetections = (itemIds: string[]): Set<string> => {
+    const db = HashStore.getDb();
+    const found = new Set<string>();
+    for (let i = 0; i < itemIds.length; i += ID_CHUNK) {
+        const chunk = itemIds.slice(i, i + ID_CHUNK);
+        if (chunk.length === 0) continue;
+        const rows = db.prepare(`
+            SELECT DISTINCT item_detection.itemId AS itemId FROM item_detection
+            JOIN detection_class ON detection_class.classId = item_detection.classId
+            WHERE detection_class.name IS NOT NULL
+              AND item_detection.itemId IN (${chunk.map(() => "?").join(",")})`).all(...chunk) as Array<{ itemId: string }>;
+        for (const row of rows) found.add(row.itemId);
+    }
+    return found;
+};
+
 // The configured class list as stored in item_detection_state.classList.
 export const classListKey = (classNames: string[]): string => classNames.join(",");
 

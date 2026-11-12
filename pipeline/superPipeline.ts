@@ -16,7 +16,7 @@ import type { IndexStats } from "../compareImg/mediaIndexer";
 import { pushCapped } from "../system/failedPaths";
 import { countMedia, listMediaPage } from "../mediaDb/mediaPages";
 import { forEachPage } from "../mediaDb/paging";
-import { processMediaToDetections, type DetectionFoundEvent, type DetectionPassStats, type DetectorLike as LoopDetector } from "../objectDetection/processImages";
+import { processMediaToDetections, type DetectionFoundEvent, type DetectionPassOptions, type DetectionPassStats, type DetectorLike as LoopDetector } from "../objectDetection/processImages";
 import type { StageDef } from "./PipelineRun";
 
 export type StageKey = "scan" | "hash" | "index" | "detect" | "duplicates";
@@ -148,13 +148,15 @@ export const runBuildIndex = async (ctx: SuperContext): Promise<number> => {
 
 // Gate: refuses to start (rather than silently no-op or error mid-run)
 // unless both a model and at least one class name are configured.
-export const runDetect = async (ctx: SuperContext): Promise<DetectResult> => {
-    const result = await detectGated(ctx);
+// options.retryWithoutClass re-runs only media with no detected class (see
+// processMediaToDetections); the gate and the events are the same.
+export const runDetect = async (ctx: SuperContext, options?: DetectionPassOptions): Promise<DetectResult> => {
+    const result = await detectGated(ctx, options);
     ctx.events.detectionsComplete?.(result);
     return result;
 };
 
-const detectGated = async (ctx: SuperContext): Promise<DetectResult> => {
+const detectGated = async (ctx: SuperContext, options?: DetectionPassOptions): Promise<DetectResult> => {
     const { detector, events } = ctx;
     if (!detector.isAvailable()) return "no-model";
     const classNames = detector.getClassNames();
@@ -166,7 +168,7 @@ const detectGated = async (ctx: SuperContext): Promise<DetectResult> => {
     };
     try {
         const stats = await processMediaToDetections(sink, detector, classNames, ctx.shouldStop,
-            (processed, total) => events.progress?.(processed, total));
+            (processed, total) => events.progress?.(processed, total), options);
         events.detectionStats?.(stats);
     } catch (error) {
         console.error("processMediaToDetections failed", error);
