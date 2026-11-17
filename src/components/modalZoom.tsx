@@ -227,7 +227,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                 return
             if (!imgCurrent)
                 return
-            if (imgCurrent.classList.contains("imageAddaptScreen")){
+            if (imgCurrent.classList.contains("imageAddaptScreen")) {
                 imgCurrent.classList.remove("imageAddaptScreen")
                 divImgCurrent.classList.remove("divAddaptScreen")
             } else {
@@ -393,7 +393,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                         <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
                     </ZoomHeader>
                     {mediaWithPreview.mime.includes('video') &&
-                        <VideoProgress  value={duration > 0 ? (currentTime / duration) * 100 : 0} />
+                        <VideoProgress value={duration > 0 ? (currentTime / duration) * 100 : 0} />
                     }
                     {showFramesPanel &&
                         <FramesPanel>
@@ -409,14 +409,15 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                 </FrameTile>
                             ))}
                         </FramesPanel>}
-                    <MediaPresentation style={showFramesPanel ? { width: '80%', left: '40%' } : undefined} onDoubleClick={changeCheckbox}>
+                    <MediaPresentation style={showFramesPanel ? { width: '80%', left: '40%' } : undefined} onDoubleClick={changeCheckbox}
+                        onWheel={mediaWithPreview.mime.includes('video') ? wheelOnVideo : zoomMedia}
+                    >
                         {
                             mediaWithPreview.mime.includes('video')
                                 ?
                                 <>
                                     <VideoPresentation ref={videoRef} src={toMediaUrl(mediaWithPreview.path)}
                                         onLoadedMetadata={startVid}
-                                        onWheel={wheelOnVideo}
                                         onVolumeChange={saveVideoVolume}
                                         onTimeUpdate={updateVideoTime}
                                         style={{ transform: `scale(${videoZoom})`, transformOrigin: 'top left' }}
@@ -437,7 +438,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                 </>
                                 :
                                 <>
-                                    <ImgWrapper ref={divImgRef} onWheel={zoomMedia}>
+                                    <ImgWrapper ref={divImgRef} >
                                         <ImgPresentation
                                             draggable={false}
                                             style={{ zoom: imageZoom }}
