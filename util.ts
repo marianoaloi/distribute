@@ -12,7 +12,7 @@ import * as inFlight from "./system/inFlight";
 
 import type { MediaKind, MediaRow, StreamMediaItem } from "./types/domain";
 
-const { hashFor } = cache;
+const { mediaIdFor } = cache;
 
 const kindFor = (itemMime: string | false): MediaKind => {
     if (itemMime && itemMime.includes('gif')) return 'gif';
@@ -93,10 +93,11 @@ const processPathsSlice = async (
                 mtimeMs: stat.mtimeMs,
                 hasAudio: false,
                 kind: kindFor(itemMime),
-                // MD5 of the absolute path: stable across reloads (unlike a load-order
-                // counter), so it survives a re-scan and stays valid as the key
-                // compareImg's duplicate index stores duplicate-group membership under.
-                id: hashFor(item),
+                // MD5 of the path relative to the opened folder: stable across
+                // reloads (unlike a load-order counter) and across the folder
+                // itself moving, so it survives a re-scan and stays valid as the
+                // key compareImg's duplicate index stores duplicate-group membership under.
+                id: mediaIdFor(item),
                 ...extraFields,
             } as RawStreamItem;
         })

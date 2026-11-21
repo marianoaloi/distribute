@@ -3,6 +3,8 @@ import path from "path";
 import Database from "better-sqlite3";
 import * as compareImgStore from "./HashStore";
 import { meanAbsDiff, MEAN_DIFF_THRESHOLD } from "./duplicateFinder";
+import { fromStoredPath } from "../DirectorioCache";
+import { readRootFolder } from "../mediaDb/relativePaths";
 
 import type { Dialog, BrowserWindow } from "electron";
 import type { StreamMediaItem } from "../types/domain";
@@ -72,7 +74,11 @@ export const compareImportedDatabase = (importedPath: string): CompareImportedDa
 
         const actualRows = compareImgStore.allBaseGreyRows();
         const actualPaths = new Set(actualRows.map((r) => r.localPath));
-        const importedRows = imported
+        // Its paths are relative to the folder it was exported from, which it
+        // records; an export from before that holds absolute paths, which
+        // fromStoredPath passes through unchanged whatever root it is given.
+        const importedRoot = readRootFolder(imported) ?? path.dirname(importedPath);
+        const importedRows = (imported
             .prepare(`
                 SELECT media.localPath AS localPath, items.baseGrey AS baseGrey
                 FROM media_item
@@ -80,7 +86,8 @@ export const compareImportedDatabase = (importedPath: string): CompareImportedDa
                 JOIN media ON media.id = media_item.mediaId
                 WHERE items.baseGrey IS NOT NULL
             `)
-            .all() as Array<{ localPath: string; baseGrey: Buffer }>;
+            .all() as Array<{ localPath: string; baseGrey: Buffer }>)
+            .map((row) => ({ ...row, localPath: fromStoredPath(row.localPath, importedRoot) }));
 
         // Videos contribute one row per extracted frame sharing a localPath,
         // so cache the on-disk check and accumulate matches per file.

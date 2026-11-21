@@ -3,6 +3,8 @@ import crypto from "crypto";
 import Database from "better-sqlite3";
 import { getDbDir, getDbPath } from "./cache";
 import { createMediaSchema } from "../mediaDb/mediaSchema";
+import { migrateToRelativePaths } from "../mediaDb/relativePaths";
+import { fromStoredPath } from "../DirectorioCache";
 import { blurMd5For } from "./pixelHash";
 
 // baseGrey (the raw cropped/greyscale pixel buffer) has no index:
@@ -258,6 +260,7 @@ export const ensureReady = (): void => {
     if (db) return;
     db = openDb();
     createSchema(db);
+    migrateToRelativePaths(db);
     verifyIntegrity();
 };
 
@@ -300,7 +303,8 @@ export const allBaseGreyRows = (): BaseGreyRow[] => db!
         JOIN media ON media.id = media_item.mediaId
         WHERE items.baseGrey IS NOT NULL
     `)
-    .all() as BaseGreyRow[];
+    .all()
+    .map((row) => ({ ...(row as BaseGreyRow), localPath: fromStoredPath((row as BaseGreyRow).localPath) }));
 
 // Every item linked to a media (1 for an image, up to the 4 frame positions
 // for a video/GIF - see mediaIndexer.js), for detectObjects to run per-item

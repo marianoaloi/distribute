@@ -282,14 +282,15 @@ d("lsr CLI (Electron integration)", () => {
         it("scans every media file, skipping non-media and nested tmp/", () => {
             expect(first.stdout).toMatch(/stage scan done in \S+: 3 folders, 5 media/)
             const rows = query(root, "select localPath, contentMd5, hasAudio, kind from media order by localPath")
-            expect(rows.map(r => path.relative(root, r.localPath))).toEqual(["a.png", "b.png", "sub/a-copy.png", "sub/deep/c.png", "v.mp4"])
+            // Stored relative to the opened folder, always with "/" separators.
+            expect(rows.map(r => r.localPath)).toEqual(["a.png", "b.png", "sub/a-copy.png", "sub/deep/c.png", "v.mp4"])
             expect(rows.every(r => typeof r.contentMd5 === "string" && r.contentMd5.length === 32)).toBe(true)
             expect(rows.find(r => r.localPath.endsWith("v.mp4")).hasAudio).toBe(1)
         })
         it("finds the exact duplicate pair", () => {
             expect(first.stdout).toMatch(/stage duplicates done in \S+: 1 duplicate groups/)
             const rows = query(root, "select d.groupId, m.localPath from items_duplicated d join media m on m.id = d.mediaId order by m.localPath")
-            expect(rows.map(r => path.relative(root, r.localPath))).toEqual(["a.png", "sub/a-copy.png"])
+            expect(rows.map(r => r.localPath)).toEqual(["a.png", "sub/a-copy.png"])
             expect(new Set(rows.map(r => r.groupId)).size).toBe(1)
         })
         it("writes a run log with the summary and releases the lock", () => {
@@ -462,7 +463,7 @@ d("lsr CLI (Electron integration)", () => {
         const dupGroups = (r: string): string[][] => {
             const rows = query(r, "select d.groupId, m.localPath from items_duplicated d join media m on m.id = d.mediaId")
             const by = new Map<string, string[]>()
-            for (const x of rows) { if (!by.has(x.groupId)) by.set(x.groupId, []); by.get(x.groupId)!.push(path.relative(r, x.localPath)) }
+            for (const x of rows) { if (!by.has(x.groupId)) by.set(x.groupId, []); by.get(x.groupId)!.push(x.localPath) }
             return [...by.values()].map(g => g.sort()).sort((a, b) => a[0].localeCompare(b[0]))
         }
         const interruptAt = async (args: string[], linePattern: RegExp): Promise<RunResult> => {

@@ -36,7 +36,7 @@ import { readMaloi, applyMaloi } from "../objectDetection/maloi";
 import { backfillContentMd5 } from "../mediaDb/backfill";
 import { transformDataStreaming } from "../util";
 import { getDbPath, getFramesDir } from "../compareImg/cache";
-import { hashFor } from "../thumbnails/cache";
+import { mediaIdFor } from "../thumbnails/cache";
 
 const [folder, maloiPath, movedDirArg] = process.argv.slice(2).filter(a => !a.startsWith("--"));
 if (!folder || !maloiPath) {
@@ -121,10 +121,10 @@ const main = async (): Promise<void> => {
     for (const suffix of ["", "-wal", "-shm"]) fs.rmSync(dbPath + suffix, { force: true });
     console.log("Deleted database", dbPath);
 
-    // Frames are cached per source path (<md5(path)>_<position>.jpg); drop the
-    // ones of the files about to be moved so frame extraction really has to
-    // read them, like on a first-ever load.
-    const victimHashes = pickVictims().map(hashFor);
+    // Frames are cached per media id (<mediaIdFor(path)>_<position>.jpg); drop
+    // the ones of the files about to be moved so frame extraction really has
+    // to read them, like on a first-ever load.
+    const victimHashes = pickVictims().map(p => mediaIdFor(p));
     const framesDir = getFramesDir();
     if (fs.existsSync(framesDir)) {
         for (const file of fs.readdirSync(framesDir).filter(f => victimHashes.some(h => f.startsWith(h)))) {

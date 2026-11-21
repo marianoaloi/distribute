@@ -3,8 +3,10 @@ import fs from "fs";
 import path from "path";
 
 import type { MediaRow, UpsertMediaInput, MediaMissingMd5Row, MediaAwaitingSortRow, DetectionBox, DetectionRow, DetectMediaRef, ItemDetectionState } from "../types/domain";
-import { getCacheDir, hashFor } from "../thumbnails/cache";
+import { getCacheDir, mediaIdFor } from "../thumbnails/cache";
+import { fromStoredPath, toStoredPath } from "../DirectorioCache";
 import { parseClassExpr, type ClassExpr } from "./classExpr";
+import { resolveStoredPaths } from "./relativePaths";
 
 export const ensureReady = (): void => HashStore.ensureReady();
 
@@ -38,9 +40,10 @@ export const upsertMedia = (row: UpsertMediaInput): void => {
     stmt.run({
         mime: null,
         contentMd5: null,
-        thumbPath: null,
         updatedAt: Date.now(),
         ...row,
+        localPath: toStoredPath(row.localPath),
+        thumbPath: row.thumbPath ? toStoredPath(row.thumbPath) : null,
         hasAudio: row.hasAudio ? 1 : 0,
     });
 };
@@ -52,7 +55,7 @@ export const setContentMd5 = (id: string, contentMd5: string): void => {
 
 export const setThumbPath = (id: string, thumbPath: string): void => {
     const db = HashStore.getDb();
-    db.prepare("UPDATE media SET thumbPath = ?, updatedAt = ? WHERE id = ?").run(thumbPath, Date.now(), id);
+    db.prepare("UPDATE media SET thumbPath = ?, updatedAt = ? WHERE id = ?").run(toStoredPath(thumbPath), Date.now(), id);
 };
 
 // Records where a media ended up after a successful move, or clears it back to
@@ -64,12 +67,12 @@ export const setThumbPath = (id: string, thumbPath: string): void => {
 export const setFuturePosition = (id: string, futurePosition: string | null, moveBatchId: string | null): void => {
     const db = HashStore.getDb();
     db.prepare("UPDATE media SET futurePosition = ?, movedAt = ?, moveBatchId = ?, updatedAt = ? WHERE id = ?")
-        .run(futurePosition, futurePosition ? Date.now() : null, futurePosition ? moveBatchId : null, Date.now(), id);
+        .run(futurePosition ? toStoredPath(futurePosition) : null, futurePosition ? Date.now() : null, futurePosition ? moveBatchId : null, Date.now(), id);
 };
 
 // Makes newLocalPath the file's home: used after organize/sortMediaByKind.ts
 // moves a filed media, so the invariant "futurePosition IS NULL -> the file is
-// at localPath" holds again. media.id is md5(localPath) (util.ts), so the id
+// at localPath" holds again. media.id is mediaIdFor(localPath) (util.ts), so the id
 // changes with the path - otherwise the next folder load would compute a new
 // id for this file and collide with this row on the UNIQUE localPath index.
 // media_item and items_duplicated hold media ids too and are re-keyed in the
@@ -78,12 +81,13 @@ export const setFuturePosition = (id: string, futurePosition: string | null, mov
 // null when a stale row already holds that id/path - the caller logs and moves on.
 export const relocateMedia = (id: string, newLocalPath: string): string | null => {
     const db = HashStore.getDb();
-    const newId = hashFor(newLocalPath);
+    const newId = mediaIdFor(newLocalPath);
+    const storedPath = toStoredPath(newLocalPath);
     const relocate = db.transaction(() => {
-        const taken = db.prepare("SELECT 1 FROM media WHERE (id = ? OR localPath = ?) AND id <> ?").get(newId, newLocalPath, id);
+        const taken = db.prepare("SELECT 1 FROM media WHERE (id = ? OR localPath = ?) AND id <> ?").get(newId, storedPath, id);
         if (taken) return null;
         db.prepare(`UPDATE media SET id = ?, localPath = ?, filename = ?, futurePosition = NULL, movedAt = NULL, moveBatchId = NULL, updatedAt = ?
-                    WHERE id = ?`).run(newId, newLocalPath, path.basename(newLocalPath), Date.now(), id);
+                    WHERE id = ?`).run(newId, storedPath, path.basename(newLocalPath), Date.now(), id);
         db.prepare("UPDATE media_item SET mediaId = ? WHERE mediaId = ?").run(newId, id);
         db.prepare("UPDATE items_duplicated SET mediaId = ? WHERE mediaId = ?").run(newId, id);
         return newId;
@@ -102,7 +106,7 @@ export const findMediaWithFuturePosition = (): MediaAwaitingSortRow[] => {
         SELECT id, localPath, filename, kind, hasAudio, futurePosition
         FROM media
         WHERE futurePosition IS NOT NULL
-    `).all() as MediaAwaitingSortRow[];
+    `).all().map((row) => resolveStoredPaths(row as MediaAwaitingSortRow));
 };
 
 // SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 999, so ids are looked up in
@@ -120,7 +124,7 @@ export const findMediaByIds = (ids: string[]): Map<string, MediaRow> => {
         const rows = db.prepare(
             `SELECT ${MEDIA_SELECT_COLUMNS} FROM media WHERE id IN (${placeholders})`
         ).all(...chunk) as MediaRow[];
-        for (const row of rows) result.set(row.id, row);
+        for (const row of rows) result.set(row.id, resolveStoredPaths(row));
     }
     return result;
 };
@@ -177,6 +181,7 @@ export const classListKey = (classNames: string[]): string => classNames.join(",
 export const findAllMediaThatExists = (): MediaRow[] => {
     const db = HashStore.getDb();
     return (db.prepare(`SELECT ${MEDIA_SELECT_COLUMNS} FROM media`).all() as MediaRow[])
+        .map(row => resolveStoredPaths(row))
         .filter(row => fs.existsSync(row.localPath));
 };
 
@@ -202,7 +207,7 @@ export const findAllItemsExists = (): DetectMediaRef[] => {
                 return { 
                     id: row.idMedia, 
                     itemId: row.idItem,
-                    media: row.kind === "image" ? row.localPath : path.join(getCacheDir(),`${row.idItem}.jpg`), 
+                    media: row.kind === "image" ? fromStoredPath(row.localPath) : path.join(getCacheDir(),`${row.idItem}.jpg`), 
                     mime: row.mime,
                     kind: row.kind,
                     contentMd5: row.contentMd5,
@@ -232,7 +237,8 @@ export const findAllDetectionExists = (): Map<string, ItemDetectionState[]> => {
 // behind them. afterRowid is the last row of the previous batch.
 export const mediaMissingContentMd5 = (limit: number, afterRowid = 0): MediaMissingMd5Row[] => {
     const db = HashStore.getDb();
-    return db.prepare("SELECT rowid, id, localPath, kind FROM media WHERE contentMd5 IS NULL AND rowid > ? ORDER BY rowid LIMIT ?").all(afterRowid, limit) as MediaMissingMd5Row[];
+    return (db.prepare("SELECT rowid, id, localPath, kind FROM media WHERE contentMd5 IS NULL AND rowid > ? ORDER BY rowid LIMIT ?").all(afterRowid, limit) as MediaMissingMd5Row[])
+        .map(row => resolveStoredPaths(row));
 };
 
 // Upfront total for backfillContentMd5's progress reporting - mediaMissingContentMd5
