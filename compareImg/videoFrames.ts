@@ -75,8 +75,8 @@ interface Timestamps {
 
 // Spec: 10s after begin, 10s before end, 50% and 10% of duration
 const timestampsFor = (duration: number): Timestamps => ({
-    start10s: Math.min(10, duration),
-    end10s: Math.max(duration - 10, 0),
+    start10s: Math.min(10, duration * 0.95),
+    end10s: Math.max(duration - 10, duration * 0.05),
     pct50: duration * 0.5,
     pct10: duration * 0.1,
 });
