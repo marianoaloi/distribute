@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { execFile, execFileSync, ExecFileException } from "child_process";
 import { getFramesDir, ensureFramesDir } from "./cache";
-import { hashFor } from "../thumbnails/cache";
+import { mediaIdFor } from "../thumbnails/cache";
 import { ffmpegPath } from "./ffmpegBinary";
 import { memoryAwareLimit, TASK_MEMORY_ESTIMATE } from "../system/resourceLimits";
 import * as childProcs from "../system/childProcs";
@@ -75,15 +75,17 @@ interface Timestamps {
 
 // Spec: 10s after begin, 10s before end, 50% and 10% of duration
 const timestampsFor = (duration: number): Timestamps => ({
-    start10s: Math.min(10, duration),
-    end10s: Math.max(duration - 10, 0),
+    start10s: Math.min(10, duration * 0.95),
+    end10s: Math.max(duration - 10, duration * 0.05),
     pct50: duration * 0.5,
     pct10: duration * 0.1,
 });
 
 export const FRAME_POSITIONS = ["start10s", "end10s", "pct50", "pct10"] as const;
 
-export const framePathFor = (input: string, position: string): string => path.join(getFramesDir(), `${hashFor(input)}_${position}.jpg`);
+// Named after the media id, so a frame file is also its item id + ".jpg"
+// (MediaStore.findAllItemsExists and mediaPages.itemRefsForMedia rely on it).
+export const framePathFor = (input: string, position: string): string => path.join(getFramesDir(), `${mediaIdFor(input)}_${position}.jpg`);
 
 
 const extractFramesFFMPEG = (

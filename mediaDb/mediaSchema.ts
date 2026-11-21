@@ -50,6 +50,9 @@ export const createMediaSchema = (database: Database.Database): void => {
             updatedAt      INTEGER NOT NULL DEFAULT 0
         );
     `);
+    // localPath, futurePosition and thumbPath are stored relative to the
+    // opened folder (DirectorioCache's toStoredPath) - see relativePaths.ts
+    // for the one-time conversion of databases that predate that.
     database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_media_localPath ON media(localPath);");
     database.exec("CREATE INDEX IF NOT EXISTS idx_media_contentMd5 ON media(contentMd5);");
     // CREATE TABLE IF NOT EXISTS is a no-op on a table that predates these
@@ -57,6 +60,17 @@ export const createMediaSchema = (database: Database.Database): void => {
     ensureColumn(database, "media", "futurePosition", "TEXT");
     ensureColumn(database, "media", "movedAt", "INTEGER");
     ensureColumn(database, "media", "moveBatchId", "TEXT");
+
+    // Facts about the database itself rather than about any media:
+    // rootPath (the absolute folder the stored paths were last relative to,
+    // so dbImport can resolve an exported copy's paths) and pathFormat
+    // (whether the relative-path conversion has run) - see relativePaths.ts.
+    database.exec(`
+        CREATE TABLE IF NOT EXISTS folder_meta (
+            key   TEXT PRIMARY KEY,
+            value TEXT
+        );
+    `);
 
     database.exec(`
         CREATE TABLE IF NOT EXISTS detection_class (

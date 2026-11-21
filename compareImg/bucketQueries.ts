@@ -5,6 +5,7 @@
 // more than one frame, then loads one bucket's rows at a time. Singleton
 // buckets can never produce a match, so they are never read at all.
 import * as HashStore from "./HashStore";
+import { fromStoredPath } from "../DirectorioCache";
 
 export interface BucketSize {
     // null = frames with no blur key (see duplicateFinder's notes).
@@ -53,4 +54,5 @@ export const baseGreyRowsForBucket = (key: string | null): HashStore.BaseGreyRow
         JOIN media ON media.id = media_item.mediaId
         WHERE items.baseGrey IS NOT NULL AND ${key === null ? "items.baseMd5Blur IS NULL" : "items.baseMd5Blur = ?"}
     `)
-    .all(...(key === null ? [] : [key])) as HashStore.BaseGreyRow[];
+    .all(...(key === null ? [] : [key]))
+    .map((row) => ({ ...(row as HashStore.BaseGreyRow), localPath: fromStoredPath((row as HashStore.BaseGreyRow).localPath) }));

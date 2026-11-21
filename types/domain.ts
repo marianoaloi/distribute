@@ -5,7 +5,11 @@
 
 export type MediaKind = "image" | "video" | "gif";
 
-/** Row shape from the `media` table (mediaDb/mediaSchema.ts). */
+/**
+ * Row shape from the `media` table (mediaDb/mediaSchema.ts). Paths are
+ * absolute here: the table stores them relative to the opened folder, and
+ * MediaStore/mediaPages resolve them on read (mediaDb/relativePaths.ts).
+ */
 export interface MediaRow {
     id: string;
     localPath: string;
