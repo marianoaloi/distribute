@@ -95,7 +95,7 @@ export const GridDuplicates = (() => {
     // Paged by GROUP, not by media, so a group is never split across pages.
     // Select-all/unselect/auto-select and the split move act on this page only.
     const [page, setPage] = useState(0)
-    const [groupsPerPage, setGroupsPerPage] = useState(1000)
+    const [groupsPerPage, setGroupsPerPage] = useState(100)
     const pagedGroups = groups.slice(page * groupsPerPage, (page + 1) * groupsPerPage)
     const pagedMedias = pagedGroups.flat()
     const totalPages = totalPagesFor(groups.length, groupsPerPage)
