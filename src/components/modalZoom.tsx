@@ -107,14 +107,21 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         // ev.key, told apart by ev.code) and Ctrl+'+' / Ctrl+'-' are left alone -
         // those are the grid thumbnail zoom menu accelerators (app.ts) - and so
         // is typing in a text field (e.g. FoldersZoom's new-folder name).
+        // 5 plays the video at 10x speed and 1 back at normal speed (main row
+        // or numpad). The grids' own "1" (toggle the video controls) still runs.
         useEffect(() => {
             if (!openModal || !mediaWithPreview.mime.includes('video')) return
             const onKeyDown = (ev: KeyboardEvent) => {
                 if (ev.ctrlKey || ev.altKey || ev.metaKey) return
-                if (ev.key !== '+' && ev.key !== '-') return
-                if (ev.code.startsWith('Numpad')) return
                 const target = ev.target as HTMLElement | null
                 if (target?.closest?.('input:not([type="checkbox"]), textarea, [contenteditable="true"]')) return
+                const playbackRate = ev.key === '5' ? 10 : ev.key === '1' ? 1 : undefined
+                if (playbackRate !== undefined) {
+                    if (videoRef.current) videoRef.current.playbackRate = playbackRate
+                    return
+                }
+                if (ev.key !== '+' && ev.key !== '-') return
+                if (ev.code.startsWith('Numpad')) return
                 stepVolume(ev.key === '+' ? 1 : -1)
                 ev.preventDefault()
             }
