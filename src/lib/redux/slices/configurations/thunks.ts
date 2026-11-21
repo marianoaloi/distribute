@@ -44,6 +44,14 @@ export const setVideoVolume = createAction(
     })
 )
 
+// Same as setVideoVolume, for the playback speed (keys 5 / 1 in the zoom modal).
+export const setVideoPlaybackRate = createAction(
+    'config/setVideoPlaybackRate',
+    (playbackRate: number) => ({
+        payload: playbackRate
+    })
+)
+
 export const setPage = createAction(
     'config/setPage',
     (page: number) => ({

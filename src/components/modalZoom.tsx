@@ -6,7 +6,7 @@ import { IconButton, Slider, Modal } from "@mui/material"
 import { toMediaUrl } from "../lib/mediaUrl"
 import { ArrowBackIos, ArrowForwardIos, CleaningServices, Label, ContentCopy, Check, Image } from "@mui/icons-material"
 import { updateArrayItem, useDispatch, useSelector, selectDetections, selectMediaFrames, selectMediaFrameBoxes, GetMediaFrames } from "../lib/redux"
-import { configurationsSelector, setVideoVolume } from "../lib/redux/slices/configurations"
+import { configurationsSelector, setVideoPlaybackRate, setVideoVolume } from "../lib/redux/slices/configurations"
 import { DetectionBoxOutline, DetectionBoxLabel } from "./objectDetectionGrid.styled"
 import { classCounts, useClassResumeMark } from "./classFilter"
 
@@ -44,6 +44,13 @@ const nextVolumeLevel = (volume: number, direction: 1 | -1): number => {
     return direction > 0
         ? VOLUME_LEVELS.find(level => level > volume + eps) ?? VOLUME_LEVELS[VOLUME_LEVELS.length - 1]
         : VOLUME_LEVELS.filter(level => level < volume - eps).pop() ?? VOLUME_LEVELS[0]
+}
+
+// defaultPlaybackRate too: loading the next video into the same <video>
+// resets playbackRate to it.
+const applyPlaybackRate = (video: HTMLVideoElement, playbackRate: number): void => {
+    video.defaultPlaybackRate = playbackRate
+    video.playbackRate = playbackRate
 }
 
 const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
@@ -108,7 +115,8 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         // those are the grid thumbnail zoom menu accelerators (app.ts) - and so
         // is typing in a text field (e.g. FoldersZoom's new-folder name).
         // 5 plays the video at 10x speed and 1 back at normal speed (main row
-        // or numpad). The grids' own "1" (toggle the video controls) still runs.
+        // or numpad), kept for the next video like the volume (saveVideoPlaybackRate).
+        // The grids' own "1" (toggle the video controls) still runs.
         useEffect(() => {
             if (!openModal || !mediaWithPreview.mime.includes('video')) return
             const onKeyDown = (ev: KeyboardEvent) => {
@@ -117,7 +125,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                 if (target?.closest?.('input:not([type="checkbox"]), textarea, [contenteditable="true"]')) return
                 const playbackRate = ev.key === '5' ? 10 : ev.key === '1' ? 1 : undefined
                 if (playbackRate !== undefined) {
-                    if (videoRef.current) videoRef.current.playbackRate = playbackRate
+                    if (videoRef.current) applyPlaybackRate(videoRef.current, playbackRate)
                     return
                 }
                 if (ev.key !== '+' && ev.key !== '-') return
@@ -250,6 +258,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             const video = event.currentTarget
             if (!video) return
             event.currentTarget.volume = config.videoVolume
+            applyPlaybackRate(video, config.videoPlaybackRate)
             setDuration(video.duration)
         }
 
@@ -257,6 +266,11 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             const volume = event.currentTarget.volume
             setVolumeLevel(volume)
             dispatch(setVideoVolume(volume))
+        }
+
+        // Keys 5 / 1 and the native controls' speed menu alike.
+        function saveVideoPlaybackRate(event: SyntheticEvent<HTMLVideoElement, Event>): void {
+            dispatch(setVideoPlaybackRate(event.currentTarget.playbackRate))
         }
 
         function updateVideoTime(event: SyntheticEvent<HTMLVideoElement, Event>): void {
@@ -426,6 +440,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                     <VideoPresentation ref={videoRef} src={toMediaUrl(mediaWithPreview.path)}
                                         onLoadedMetadata={startVid}
                                         onVolumeChange={saveVideoVolume}
+                                        onRateChange={saveVideoPlaybackRate}
                                         onTimeUpdate={updateVideoTime}
                                         style={{ transform: `scale(${videoZoom})`, transformOrigin: 'top left' }}
                                         autoPlay title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></VideoPresentation>
