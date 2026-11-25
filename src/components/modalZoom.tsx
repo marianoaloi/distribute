@@ -4,11 +4,12 @@ import { prettifySizeF } from "./media"
 import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, ImgWrapper, MediaControllersCSS, FoldersZoom, MuteIcon, InfoBox, ZoomHeader, VideoProgress, FramesPanel, FrameTile, ZoomClassesResume } from "./modalZoom.styled"
 import { IconButton, Slider, Modal } from "@mui/material"
 import { toMediaUrl } from "../lib/mediaUrl"
-import { ArrowBackIos, ArrowForwardIos, CleaningServices, Label, ContentCopy, Check, Image } from "@mui/icons-material"
+import { ArrowBackIos, ArrowForwardIos, CleaningServices, Label, ContentCopy, Check, Image, CenterFocusStrong, FilterCenterFocus } from "@mui/icons-material"
 import { updateArrayItem, useDispatch, useSelector, selectDetections, selectMediaFrames, selectMediaFrameBoxes, GetMediaFrames } from "../lib/redux"
 import { configurationsSelector, setVideoPlaybackRate, setVideoVolume } from "../lib/redux/slices/configurations"
 import { DetectionBoxOutline, DetectionBoxLabel } from "./objectDetectionGrid.styled"
 import { classCounts, useClassResumeMark } from "./classFilter"
+import { useClassesFocus } from "./zoomClassesFocus"
 
 interface ModalZoomMethods {
     chamgeImageClass: () => void,
@@ -101,6 +102,9 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         // never snaps it back to 1. Same per-media reset as videoZoom.
         const [imageZoom, setImageZoom] = useState(1)
         useEffect(() => { setVideoZoom(1); setImageZoom(1) }, [mediaWithPreview.id])
+        // Header toggles / W (all classes) and E (.maloi focus classes only), kept in the configuration so they
+        // carry to the next media: show only the area spanned by those boxes, zoom slider / Ctrl+wheel on top. Images/GIFs only.
+        const classesFocus = useClassesFocus(!!openModal, detectedObjects, toMediaUrl(mediaWithPreview.path), imageZoom)
 
         // Floor of 0.001 (0.1%) rather than 0, same as minVolume: a 0 would be
         // persisted (saveVideoVolume) and open every next video silent.
@@ -146,7 +150,6 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             })
         }
 
-
         useImperativeHandle(ref, () => ({
             chamgeImageClass() {
                 if (imgRef.current)
@@ -183,8 +186,6 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             }
         }));
 
-
-
         // One 0.2 wheel notch, rounded to the sliders' 0.1 step and clamped to
         // their range (image 0.3-10, video 1-10).
         const stepZoom = (zoom: number, deltaY: number, min: number): number =>
@@ -213,8 +214,6 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             }
             zoomMedia(event)
         }
-
-
 
         const filters: any = {}
 
@@ -287,8 +286,6 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             return hours > 0 ? `${pad(hours)}:${pad(minutes)}:${pad(secs)}` : `${pad(minutes)}:${pad(secs)}`
         }
 
-
-
         function dragControlVideo(event: any): void {
             const duration = videoRef.current ? videoRef.current.duration : 0
             if (event.ctrlKey && videoRef.current && !isNaN(duration)) {
@@ -315,7 +312,6 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
 
         const MediaControllers = () => {
             return <MediaControllersCSS onWheel={zoomMedia}>
-
 
                 {mediaWithPreview.mime.includes('video') ?
                     <>
@@ -372,7 +368,6 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                         />
                     </>}
 
-
             </MediaControllersCSS>
         }
 
@@ -382,8 +377,6 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             dispatch(updateArrayItem(aux))
             handleExternalClose();
         }
-
-
 
         return (
             <Modal
@@ -405,6 +398,10 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                             title={detectedObjects.length > 0 ? `${showDetections ? "Hide" : "Show"} ${detectedObjects.length} detected object(s)` : "No objects detected for this media"}>
                             <Label />
                         </IconButton>
+                        {(['all', 'focus'] as const).map(mode =>
+                            <IconButton key={mode} onClick={() => classesFocus.toggle(mode)} color={classesFocus.mode === mode ? "primary" : "default"} title={classesFocus.titles[mode]}>
+                                {mode === 'all' ? <CenterFocusStrong /> : <FilterCenterFocus />}
+                            </IconButton>)}
                         {isAnimated &&
                             <IconButton onClick={() => setShowDetectionFrames(v => !v)}
                                 color={showDetectionFrames ? "primary" : "default"}
@@ -430,7 +427,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                 </FrameTile>
                             ))}
                         </FramesPanel>}
-                    <MediaPresentation style={showFramesPanel ? { width: '80%', left: '40%' } : undefined} onDoubleClick={changeCheckbox}
+                    <MediaPresentation ref={classesFocus.containerRef} style={showFramesPanel ? { width: '80%', left: '40%' } : undefined} onDoubleClick={changeCheckbox}
                         onWheel={mediaWithPreview.mime.includes('video') ? wheelOnVideo : zoomMedia}
                     >
                         {
@@ -460,10 +457,13 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                 </>
                                 :
                                 <>
-                                    <ImgWrapper ref={divImgRef} >
+                                    {/* Always rendered so toggling the mode doesn't remount the image (and drop its contrast/brightness filter). */}
+                                    <div style={classesFocus.styles?.viewport ?? { display: 'contents' }}>
+                                    <ImgWrapper ref={divImgRef} style={classesFocus.styles?.wrapper}>
                                         <ImgPresentation
                                             draggable={false}
-                                            style={{ zoom: imageZoom }}
+                                            style={classesFocus.styles?.image ?? { zoom: imageZoom }}
+                                            onLoad={classesFocus.onImageLoad}
                                             ref={imgRef} src={toMediaUrl(mediaWithPreview.path)}
                                             alt={mediaWithPreview.path} title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></ImgPresentation>
                                         {showDetections && detectedObjects.map((box, idx) => (
@@ -472,6 +472,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                             </DetectionBoxOutline>
                                         ))}
                                     </ImgWrapper>
+                                    </div>
                                     <InfoBox>
                                         <IconButton onClick={copyPathToClipboard} title={pathCopied ? "Copied!" : "Copy file path to clipboard"}>
                                             {pathCopied ? <Check color="success" /> : <ContentCopy />}

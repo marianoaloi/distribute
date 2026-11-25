@@ -1,5 +1,5 @@
 import { createReducer } from "@reduxjs/toolkit"
-import { mediaLoadComplete, mediaLoadStart, setClassFilter, setClassPresence, setMediaType, setPage, setPostsPerPage, setScrollPosition, setVideoPlaybackRate, setVideoVolume, zoomIn, zoomOut } from "./thunks"
+import { mediaLoadComplete, mediaLoadStart, setClassFilter, setClassPresence, setMediaType, setPage, setPostsPerPage, setScrollPosition, setVideoPlaybackRate, setVideoVolume, setZoomToClasses, ZoomToClassesMode, zoomIn, zoomOut } from "./thunks"
 import { populateArray } from "../media/media.reduce"
 import { loadPersistedConfig } from "./persistConfig"
 import { ClassFilter, ClassPresence } from "../../../../entity/FilterMedia"
@@ -14,6 +14,7 @@ interface Config {
     scrollPosition: number
     videoVolume: number
     videoPlaybackRate: number
+    zoomToClasses: ZoomToClassesMode
     classFilter: ClassFilter
     classPresence: ClassPresence
 }
@@ -26,6 +27,7 @@ const initialState: Config = {
     scrollPosition: 0,
     videoVolume: 0.05,
     videoPlaybackRate: 1,
+    zoomToClasses: 'off',
     classFilter: [],
     classPresence: '',
     ...loadPersistedConfig(),
@@ -63,6 +65,10 @@ export const ConfigReduce = createReducer(initialState, (build) => {
     build.addCase(setVideoPlaybackRate, (state, action) => ({
         ...state,
         videoPlaybackRate: action.payload
+    }))
+    build.addCase(setZoomToClasses, (state, action) => ({
+        ...state,
+        zoomToClasses: action.payload
     }))
     build.addCase(setPage, (state, action) => ({
         ...state,
