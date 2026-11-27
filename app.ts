@@ -20,7 +20,7 @@ protocol.registerSchemesAsPrivileged([
 
 import os from 'os';
 import * as util from "./util";
-import { setActiveFolder, TMP_FOLDER_NAME } from "./DirectorioCache";
+import { moveTargetFor, setActiveFolder, TMP_FOLDER_NAME } from "./DirectorioCache";
 import * as duplicateFinder from "./compareImg/duplicateFinder";
 import * as compareImgStore from "./compareImg/HashStore";
 import * as dbImport from "./compareImg/dbImport";
@@ -456,8 +456,10 @@ const chooseOnnxModelDialog = async (): Promise<boolean> => {
                 // A bare .onnx carries no reshape hint - clear any override
                 // left by a previously-picked .maloi so it doesn't get
                 // reused against an unrelated model (risking the exact
-                // native crash the override exists to avoid).
+                // native crash the override exists to avoid). Same for its
+                // mean/std, which would silently skew a classifier's scores.
                 onnxDetector.setModelSize(null);
+                onnxDetector.setNormalization(null);
             }
         }
         mainWindow!.webContents.send("onnxModelChosen", { path: onnxDetector.getModelPath(), size: onnxDetector.getSize() });
@@ -845,12 +847,11 @@ const moveFile = (bol: boolean, dest: string, onlyCopy: boolean, data: MoveFileE
     // feature) — they exist only to inform the move decision, never to be
     // moved themselves.
     data.filter(f => f.checked === bol && !f.imported).forEach(media => {
-        // let completeDestine = path.join(path.dirname(media.path), dest);
-        const completeDestine = path.join(fileGlobal as string, TMP_FOLDER_NAME, dest);
-        if (!fs.existsSync(completeDestine)) {
-            fs.mkdirSync(completeDestine);
-        }
-        const destination = path.join(completeDestine, path.basename(media.path));
+        // <folder>/tmp/<dest>/<subfolder below the opened folder>/<file>, so
+        // same-named files from different subfolders of a recursive load never
+        // overwrite each other (family/2006/a.jpg -> tmp/L/family/2006/a.jpg).
+        const destination = moveTargetFor(fileGlobal as string, dest, media.path);
+        fs.mkdirSync(path.dirname(destination), { recursive: true });
         const report = (error?: NodeJS.ErrnoException | Error | null) =>
             reportFileProcessed(media, onlyCopy, destination, dest, batchId, error);
 

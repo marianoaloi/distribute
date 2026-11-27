@@ -14,15 +14,17 @@ type TheMediaProps = {
     isLastSeen?: boolean
     isOpened?: boolean
 }
-// "t" jumps the grid to the last-seen (white star) tile. Shared by both grids
+// Plain key presses that jump the grid to a tile: "t" the last-seen (white
+// star) tile, "y" the last-clicked one (image grid only). Shared by both grids
 // so they agree on when the key must be left alone: typing in a field, a
 // modifier chord, or an open dialog (the zoom modal is a MUI Modal).
-export const isScrollToLastSeenKey = (ev: KeyboardEvent): boolean => {
-    if (ev.key !== "t" || ev.ctrlKey || ev.altKey || ev.metaKey) return false
+export const isGridJumpKey = (ev: KeyboardEvent, key: string): boolean => {
+    if (ev.key !== key || ev.ctrlKey || ev.altKey || ev.metaKey) return false
     const target = ev.target as HTMLElement | null
     if (target?.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])")) return false
     return !document.querySelector('[role="dialog"], .MuiModal-root')
 }
+export const isScrollToLastSeenKey = (ev: KeyboardEvent): boolean => isGridJumpKey(ev, "t")
 
 export const scrollToMedia = (id: string): boolean => {
     const el = document.getElementById(`media-${id}`)

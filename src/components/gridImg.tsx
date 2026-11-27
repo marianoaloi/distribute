@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { OpenDirectory, OpenDirectoryRecursive, selectDetectionClassNames, selectDetectionGroups, selectDetections, selectMedias, selectPipelineRunning, updateManyArrayItem, useSelector } from "../lib/redux"
 import { ImgGrid, NoMediaFound, Qtd, Resume } from "./gridImg.styled"
-import { MediaIMG, isScrollToLastSeenKey, scrollToMedia } from "./media"
+import { MediaIMG, isGridJumpKey, isScrollToLastSeenKey, scrollToMedia } from "./media"
 import { Media } from "../entity/Media"
 import { useDispatch } from "react-redux"
 import { IconButton } from "@mui/material"
@@ -90,25 +90,28 @@ export const GridIMGs = (() => {
         setOpenedIds(prev => prev.has(lastZoom.id) ? prev : new Set(prev).add(lastZoom.id))
     }, [lastZoom])
 
-    // "t": bring the last-seen tile into view. The tile may sit on another
-    // page, so switch page first and let the effect below scroll once that
-    // page has rendered. The ref keeps the window listener on the latest render.
+    // "t": bring the last-seen tile into view, "y": the last-clicked one. The
+    // tile may sit on another page, so switch page first and let the effect
+    // below scroll once that page has rendered. The ref keeps the window
+    // listener on the latest render.
     const pendingScrollId = useRef<string | null>(null)
-    const scrollToLastSeen = () => {
-        if (!lastZoom) return;
-        const absIdx = medias.findIndex(m => m.id === lastZoom.id)
+    const scrollToTile = (tile?: Media) => {
+        if (!tile) return;
+        const absIdx = medias.findIndex(m => m.id === tile.id)
         if (absIdx === -1) return;
         const page = Math.floor(absIdx / postsPerPage)
-        if (page === currentPage) { scrollToMedia(lastZoom.id); return; }
-        pendingScrollId.current = lastZoom.id
+        if (page === currentPage) { scrollToMedia(tile.id); return; }
+        pendingScrollId.current = tile.id
         setCurrentPage(page)
     }
-    const scrollToLastSeenRef = useRef(scrollToLastSeen)
-    scrollToLastSeenRef.current = scrollToLastSeen
+    const onJumpKey = (ev: KeyboardEvent) => {
+        if (isScrollToLastSeenKey(ev)) scrollToTile(lastZoom)
+        else if (isGridJumpKey(ev, "y")) scrollToTile(lastClick)
+    }
+    const onJumpKeyRef = useRef(onJumpKey)
+    onJumpKeyRef.current = onJumpKey
     useEffect(() => {
-        const onKeyUp = (ev: KeyboardEvent) => {
-            if (isScrollToLastSeenKey(ev)) scrollToLastSeenRef.current()
-        }
+        const onKeyUp = (ev: KeyboardEvent) => onJumpKeyRef.current(ev)
         window.addEventListener('keyup', onKeyUp)
         return () => window.removeEventListener('keyup', onKeyUp)
     }, [])

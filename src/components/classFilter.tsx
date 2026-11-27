@@ -114,12 +114,20 @@ export function classCounts(items: { id: string }[], detections: Record<string, 
     return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
 }
 
+// The .maloi "focus" ids resolved to the class names detections carry; ids
+// past the class list (stale after it was edited) are dropped.
+export function useFocusClassNames(): Set<string> {
+    const classNames = useSelector(selectDetectionClassNames)
+    const focus = useSelector(selectDetectionFocus)
+    return new Set(focus.map(id => classNames[id]).filter(Boolean))
+}
+
 // CSS class for a class resume line: the .maloi "focus" / "unfocus" ids,
 // resolved to the names detections carry (focus wins if a name is in both).
 export function useClassResumeMark(): (className: string) => "focus" | "unfocus" | undefined {
     const classNames = useSelector(selectDetectionClassNames)
     const toNames = (ids: number[]) => new Set(ids.map(id => classNames[id]).filter(Boolean))
-    const focus = toNames(useSelector(selectDetectionFocus))
+    const focus = useFocusClassNames()
     const unfocus = toNames(useSelector(selectDetectionUnfocus))
     return className => focus.has(className) ? "focus" : unfocus.has(className) ? "unfocus" : undefined
 }

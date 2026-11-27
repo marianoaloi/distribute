@@ -4,11 +4,12 @@ import { prettifySizeF } from "./media"
 import { ModalBox, MediaPresentation, VideoPresentation, ImgPresentation, ImgWrapper, MediaControllersCSS, FoldersZoom, MuteIcon, InfoBox, ZoomHeader, VideoProgress, FramesPanel, FrameTile, ZoomClassesResume } from "./modalZoom.styled"
 import { IconButton, Slider, Modal } from "@mui/material"
 import { toMediaUrl } from "../lib/mediaUrl"
-import { ArrowBackIos, ArrowForwardIos, CleaningServices, Label, ContentCopy, Check, Image } from "@mui/icons-material"
+import { ArrowBackIos, ArrowForwardIos, CleaningServices, Label, ContentCopy, Check, Image, CenterFocusStrong, FilterCenterFocus } from "@mui/icons-material"
 import { updateArrayItem, useDispatch, useSelector, selectDetections, selectMediaFrames, selectMediaFrameBoxes, GetMediaFrames } from "../lib/redux"
-import { configurationsSelector, setVideoVolume } from "../lib/redux/slices/configurations"
+import { configurationsSelector, setVideoPlaybackRate, setVideoVolume } from "../lib/redux/slices/configurations"
 import { DetectionBoxOutline, DetectionBoxLabel } from "./objectDetectionGrid.styled"
 import { classCounts, useClassResumeMark } from "./classFilter"
+import { useClassesFocus } from "./zoomClassesFocus"
 
 interface ModalZoomMethods {
     chamgeImageClass: () => void,
@@ -44,6 +45,13 @@ const nextVolumeLevel = (volume: number, direction: 1 | -1): number => {
     return direction > 0
         ? VOLUME_LEVELS.find(level => level > volume + eps) ?? VOLUME_LEVELS[VOLUME_LEVELS.length - 1]
         : VOLUME_LEVELS.filter(level => level < volume - eps).pop() ?? VOLUME_LEVELS[0]
+}
+
+// defaultPlaybackRate too: loading the next video into the same <video>
+// resets playbackRate to it.
+const applyPlaybackRate = (video: HTMLVideoElement, playbackRate: number): void => {
+    video.defaultPlaybackRate = playbackRate
+    video.playbackRate = playbackRate
 }
 
 const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
@@ -94,6 +102,9 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         // never snaps it back to 1. Same per-media reset as videoZoom.
         const [imageZoom, setImageZoom] = useState(1)
         useEffect(() => { setVideoZoom(1); setImageZoom(1) }, [mediaWithPreview.id])
+        // Header toggles / W (all classes) and E (.maloi focus classes only), kept in the configuration so they
+        // carry to the next media: show only the area spanned by those boxes, zoom slider / Ctrl+wheel on top. Images/GIFs only.
+        const classesFocus = useClassesFocus(!!openModal, detectedObjects, toMediaUrl(mediaWithPreview.path), imageZoom)
 
         // Floor of 0.001 (0.1%) rather than 0, same as minVolume: a 0 would be
         // persisted (saveVideoVolume) and open every next video silent.
@@ -107,14 +118,22 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
         // ev.key, told apart by ev.code) and Ctrl+'+' / Ctrl+'-' are left alone -
         // those are the grid thumbnail zoom menu accelerators (app.ts) - and so
         // is typing in a text field (e.g. FoldersZoom's new-folder name).
+        // 5 plays the video at 10x speed and 1 back at normal speed (main row
+        // or numpad), kept for the next video like the volume (saveVideoPlaybackRate).
+        // The grids' own "1" (toggle the video controls) still runs.
         useEffect(() => {
             if (!openModal || !mediaWithPreview.mime.includes('video')) return
             const onKeyDown = (ev: KeyboardEvent) => {
                 if (ev.ctrlKey || ev.altKey || ev.metaKey) return
-                if (ev.key !== '+' && ev.key !== '-') return
-                if (ev.code.startsWith('Numpad')) return
                 const target = ev.target as HTMLElement | null
                 if (target?.closest?.('input:not([type="checkbox"]), textarea, [contenteditable="true"]')) return
+                const playbackRate = ev.key === '5' ? 10 : ev.key === '1' ? 1 : undefined
+                if (playbackRate !== undefined) {
+                    if (videoRef.current) applyPlaybackRate(videoRef.current, playbackRate)
+                    return
+                }
+                if (ev.key !== '+' && ev.key !== '-') return
+                if (ev.code.startsWith('Numpad')) return
                 stepVolume(ev.key === '+' ? 1 : -1)
                 ev.preventDefault()
             }
@@ -130,7 +149,6 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                 console.error("Failed to copy media path to clipboard", error)
             })
         }
-
 
         useImperativeHandle(ref, () => ({
             chamgeImageClass() {
@@ -168,8 +186,6 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             }
         }));
 
-
-
         // One 0.2 wheel notch, rounded to the sliders' 0.1 step and clamped to
         // their range (image 0.3-10, video 1-10).
         const stepZoom = (zoom: number, deltaY: number, min: number): number =>
@@ -199,8 +215,6 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             zoomMedia(event)
         }
 
-
-
         const filters: any = {}
 
         const changeFilter = () => {
@@ -227,7 +241,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                 return
             if (!imgCurrent)
                 return
-            if (imgCurrent.classList.contains("imageAddaptScreen")){
+            if (imgCurrent.classList.contains("imageAddaptScreen")) {
                 imgCurrent.classList.remove("imageAddaptScreen")
                 divImgCurrent.classList.remove("divAddaptScreen")
             } else {
@@ -243,6 +257,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             const video = event.currentTarget
             if (!video) return
             event.currentTarget.volume = config.videoVolume
+            applyPlaybackRate(video, config.videoPlaybackRate)
             setDuration(video.duration)
         }
 
@@ -250,6 +265,11 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             const volume = event.currentTarget.volume
             setVolumeLevel(volume)
             dispatch(setVideoVolume(volume))
+        }
+
+        // Keys 5 / 1 and the native controls' speed menu alike.
+        function saveVideoPlaybackRate(event: SyntheticEvent<HTMLVideoElement, Event>): void {
+            dispatch(setVideoPlaybackRate(event.currentTarget.playbackRate))
         }
 
         function updateVideoTime(event: SyntheticEvent<HTMLVideoElement, Event>): void {
@@ -265,8 +285,6 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             const pad = (n: number) => n.toString().padStart(2, "0")
             return hours > 0 ? `${pad(hours)}:${pad(minutes)}:${pad(secs)}` : `${pad(minutes)}:${pad(secs)}`
         }
-
-
 
         function dragControlVideo(event: any): void {
             const duration = videoRef.current ? videoRef.current.duration : 0
@@ -294,7 +312,6 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
 
         const MediaControllers = () => {
             return <MediaControllersCSS onWheel={zoomMedia}>
-
 
                 {mediaWithPreview.mime.includes('video') ?
                     <>
@@ -351,7 +368,6 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                         />
                     </>}
 
-
             </MediaControllersCSS>
         }
 
@@ -361,8 +377,6 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
             dispatch(updateArrayItem(aux))
             handleExternalClose();
         }
-
-
 
         return (
             <Modal
@@ -384,6 +398,10 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                             title={detectedObjects.length > 0 ? `${showDetections ? "Hide" : "Show"} ${detectedObjects.length} detected object(s)` : "No objects detected for this media"}>
                             <Label />
                         </IconButton>
+                        {(['all', 'focus'] as const).map(mode =>
+                            <IconButton key={mode} onClick={() => classesFocus.toggle(mode)} color={classesFocus.mode === mode ? "primary" : "default"} title={classesFocus.titles[mode]}>
+                                {mode === 'all' ? <CenterFocusStrong /> : <FilterCenterFocus />}
+                            </IconButton>)}
                         {isAnimated &&
                             <IconButton onClick={() => setShowDetectionFrames(v => !v)}
                                 color={showDetectionFrames ? "primary" : "default"}
@@ -393,7 +411,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                         <FoldersZoom mediaOnlyCopy={mediaWithPreview} handleExternalClose={handleExternalClose} />
                     </ZoomHeader>
                     {mediaWithPreview.mime.includes('video') &&
-                        <VideoProgress  value={duration > 0 ? (currentTime / duration) * 100 : 0} />
+                        <VideoProgress value={duration > 0 ? (currentTime / duration) * 100 : 0} />
                     }
                     {showFramesPanel &&
                         <FramesPanel>
@@ -409,15 +427,17 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                 </FrameTile>
                             ))}
                         </FramesPanel>}
-                    <MediaPresentation style={showFramesPanel ? { width: '80%', left: '40%' } : undefined} onDoubleClick={changeCheckbox}>
+                    <MediaPresentation ref={classesFocus.containerRef} style={showFramesPanel ? { width: '80%', left: '40%' } : undefined} onDoubleClick={changeCheckbox}
+                        onWheel={mediaWithPreview.mime.includes('video') ? wheelOnVideo : zoomMedia}
+                    >
                         {
                             mediaWithPreview.mime.includes('video')
                                 ?
                                 <>
                                     <VideoPresentation ref={videoRef} src={toMediaUrl(mediaWithPreview.path)}
                                         onLoadedMetadata={startVid}
-                                        onWheel={wheelOnVideo}
                                         onVolumeChange={saveVideoVolume}
+                                        onRateChange={saveVideoPlaybackRate}
                                         onTimeUpdate={updateVideoTime}
                                         style={{ transform: `scale(${videoZoom})`, transformOrigin: 'top left' }}
                                         autoPlay title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></VideoPresentation>
@@ -437,10 +457,13 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                 </>
                                 :
                                 <>
-                                    <ImgWrapper ref={divImgRef} onWheel={zoomMedia}>
+                                    {/* Always rendered so toggling the mode doesn't remount the image (and drop its contrast/brightness filter). */}
+                                    <div style={classesFocus.styles?.viewport ?? { display: 'contents' }}>
+                                    <ImgWrapper ref={divImgRef} style={classesFocus.styles?.wrapper}>
                                         <ImgPresentation
                                             draggable={false}
-                                            style={{ zoom: imageZoom }}
+                                            style={classesFocus.styles?.image ?? { zoom: imageZoom }}
+                                            onLoad={classesFocus.onImageLoad}
                                             ref={imgRef} src={toMediaUrl(mediaWithPreview.path)}
                                             alt={mediaWithPreview.path} title={`${mediaWithPreview.path}\n${prettifySizeF(mediaWithPreview.size)}`} ></ImgPresentation>
                                         {showDetections && detectedObjects.map((box, idx) => (
@@ -449,6 +472,7 @@ const ModalZoom = forwardRef<ModalZoomMethods, ModalZoomProps>(
                                             </DetectionBoxOutline>
                                         ))}
                                     </ImgWrapper>
+                                    </div>
                                     <InfoBox>
                                         <IconButton onClick={copyPathToClipboard} title={pathCopied ? "Copied!" : "Copy file path to clipboard"}>
                                             {pathCopied ? <Check color="success" /> : <ContentCopy />}

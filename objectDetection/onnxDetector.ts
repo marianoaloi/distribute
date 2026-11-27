@@ -3,14 +3,14 @@ import { Jimp, ResizeStrategy } from "jimp";
 import * as ort from "onnxruntime-node";
 
 import type { DetectionBox } from "../types/domain";
+import type { Normalization } from "./maloi";
+import { CONF, IOU, decodeDetections, type LetterboxGeometry } from "./yoloDecode";
 
 // Set by the renderer's "choose model" file dialog (see app.js's
 // chooseOnnxModel handler) - no longer a fixed path under ./xcxv.
 let modelPath: string | null = null;
 
 const DEFAULT_SIZE = 640;
-const CONF = 0.25;
-const IOU = 0.45;
 
 // Letterbox/tensor input resolution. Two independent overrides, checked in
 // this order (see getSize below):
@@ -76,8 +76,9 @@ const getSession = (): Promise<ort.InferenceSession> => {
 
 export const isAvailable = (): boolean => Boolean(modelPath && fs.existsSync(modelPath));
 
-// Two model shapes are supported, told apart by the first output's rank:
-//   - YOLOv5 detector (e.g. best.onnx): [1, anchors, 5 + classes] -> boxes.
+// Two model kinds are supported, told apart by the first output's rank:
+//   - YOLO detector, rank 3 -> boxes. YOLOv5 and YOLOv8/11/26 (e.g. the
+//     YOLO26x best.onnx) output layouts alike; yoloDecode.ts tells them apart.
 //   - Hugging Face image classifier (e.g. food.onnx, a Swin fine-tuned on
 //     Food-101): [batch, classes] logits -> one label for the whole image.
 const isClassifier = (session: ort.InferenceSession): boolean => {
@@ -86,9 +87,15 @@ const isClassifier = (session: ort.InferenceSession): boolean => {
 };
 
 // Normalization Hugging Face's image processor applies for Swin/most
-// ImageNet-pretrained backbones.
-const IMAGENET_MEAN = [0.485, 0.456, 0.406];
-const IMAGENET_STD = [0.229, 0.224, 0.225];
+// ImageNet-pretrained backbones - the classifier default.
+const IMAGENET: Normalization = { mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225] };
+
+// Set from the chosen .maloi's "mean"/"std" (applyMaloi), for classifiers
+// trained with another one - e.g. a ViT fine-tuned from
+// google/vit-base-patch16-224-in21k wants 0.5 / 0.5. null = IMAGENET.
+let normalization: Normalization | null = null;
+
+export const setNormalization = (value: Normalization | null): void => { normalization = value; };
 
 // Jimp.read(path) drops decode options for local files (only its
 // Buffer/URL branches forward them - see @jimp/core's fromBuffer), so
@@ -102,13 +109,8 @@ const readImage = async (input: string) => {
     return Jimp.fromBuffer(buffer, { "image/jpeg": JPEG_DECODE_OPTIONS });
 };
 
-interface LetterboxContext {
+interface LetterboxContext extends LetterboxGeometry {
     chw: Float32Array;
-    scale: number;
-    padX: number;
-    padY: number;
-    origWidth: number;
-    origHeight: number;
 }
 
 // Resizes onto a centered size x size canvas preserving aspect ratio (the
@@ -142,92 +144,23 @@ const letterbox = async (input: string, size: number): Promise<LetterboxContext>
 
 // Classifier preprocessing, as Hugging Face's image processor does it: a
 // plain bicubic stretch to size x size (no letterbox), then mean/std
-// normalization. size must be what the model was exported for (224 for
-// food.onnx - its Swin windows break on anything else, see the .maloi
-// "reshape" note at the top).
+// normalization (IMAGENET unless the .maloi set one). size must be what the
+// model was exported for (224 for food.onnx - its Swin windows break on
+// anything else, see the .maloi "reshape" note at the top).
 const resizeNormalize = async (input: string, size: number): Promise<Float32Array> => {
     const image = await readImage(input);
     image.resize({ w: size, h: size, mode: ResizeStrategy.BICUBIC });
 
+    const { mean, std } = normalization ?? IMAGENET;
     const { data } = image.bitmap; // RGBA, size*size*4
     const plane = size * size;
     const chw = new Float32Array(3 * plane);
     for (let i = 0; i < plane; i++) {
         for (let c = 0; c < 3; c++) {
-            chw[plane * c + i] = (data[i * 4 + c] / 255 - IMAGENET_MEAN[c]) / IMAGENET_STD[c];
+            chw[plane * c + i] = (data[i * 4 + c] / 255 - mean[c]) / std[c];
         }
     }
     return chw;
-};
-
-const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
-
-const iou = (a: DetectionBox, b: DetectionBox): number => {
-    const ax2 = a.x + a.w, ay2 = a.y + a.h;
-    const bx2 = b.x + b.w, by2 = b.y + b.h;
-    const ix1 = Math.max(a.x, b.x), iy1 = Math.max(a.y, b.y);
-    const ix2 = Math.min(ax2, bx2), iy2 = Math.min(ay2, by2);
-    const iw = Math.max(0, ix2 - ix1), ih = Math.max(0, iy2 - iy1);
-    const inter = iw * ih;
-    const union = a.w * a.h + b.w * b.h - inter;
-    return union <= 0 ? 0 : inter / union;
-};
-
-// Greedy NMS, class-aware: boxes of different classes never suppress
-// each other, matching standard YOLO postprocessing.
-const nms = (boxes: DetectionBox[]): DetectionBox[] => {
-    const kept: DetectionBox[] = [];
-    const sorted = [...boxes].sort((a, b) => b.score - a.score);
-    for (const box of sorted) {
-        const overlaps = kept.some(k => k.classId === box.classId && iou(k, box) > IOU);
-        if (!overlaps) kept.push(box);
-    }
-    return kept;
-};
-
-// Output rows are YOLOv5-style: [cx, cy, w, h, objectness, ...classScores]
-// in pixel coordinates of the SIZE x SIZE letterboxed input (not normalized).
-const decode = (output: ArrayLike<number>, dims: readonly number[], ctx: LetterboxContext): DetectionBox[] => {
-    const [, numAnchors, numCols] = dims;
-    const numClasses = numCols - 5;
-    const boxes: DetectionBox[] = [];
-
-    for (let a = 0; a < numAnchors; a++) {
-        const base = a * numCols;
-        const objectness = output[base + 4];
-        if (objectness < CONF) continue;
-
-        let bestClass = 0, bestScore = 0;
-        for (let c = 0; c < numClasses; c++) {
-            const score = output[base + 5 + c];
-            if (score > bestScore) { bestScore = score; bestClass = c; }
-        }
-        const confidence = objectness * bestScore;
-        if (confidence < CONF) continue;
-
-        const cx = output[base], cy = output[base + 1];
-        const w = output[base + 2], h = output[base + 3];
-
-        // Undo the letterbox pad/scale, then normalize to a 0-1 fraction of
-        // the original image so the frontend can position an overlay
-        // without needing to know the displayed pixel size.
-        const x1 = ((cx - w / 2) - ctx.padX) / ctx.scale;
-        const y1 = ((cy - h / 2) - ctx.padY) / ctx.scale;
-        const x2 = ((cx + w / 2) - ctx.padX) / ctx.scale;
-        const y2 = ((cy + h / 2) - ctx.padY) / ctx.scale;
-
-        boxes.push({
-            classId: bestClass,
-            className: classNameFor(bestClass),
-            score: confidence,
-            x: clamp01(x1 / ctx.origWidth),
-            y: clamp01(y1 / ctx.origHeight),
-            w: clamp01((x2 - x1) / ctx.origWidth),
-            h: clamp01((y2 - y1) / ctx.origHeight),
-        });
-    }
-
-    return nms(boxes);
 };
 
 // Softmax over a classifier's logits. The top class becomes a box covering
@@ -258,7 +191,7 @@ export const detect = async (imagePath: string): Promise<DetectionBox[]> => {
     const tensor = new ort.Tensor("float32", ctx.chw, [1, 3, size, size]);
     const results = await session.run({ [session.inputNames[0]]: tensor });
     const output = results[session.outputNames[0]];
-    return decode(output.data as ArrayLike<number>, output.dims, ctx);
+    return decodeDetections(output.data as ArrayLike<number>, output.dims, size, ctx, classNameFor);
 };
 
 export { DEFAULT_SIZE, CONF, IOU };

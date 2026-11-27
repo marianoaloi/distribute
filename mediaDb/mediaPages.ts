@@ -9,6 +9,7 @@
 import path from "path";
 import * as HashStore from "../compareImg/HashStore";
 import { getCacheDir } from "../thumbnails/cache";
+import { resolveStoredPaths } from "./relativePaths";
 import type { DetectMediaRef, MediaRow } from "../types/domain";
 
 const MEDIA_COLUMNS = "rowid, id, localPath, contentMd5, size, mtimeMs, hasAudio, thumbPath, mime, kind, futurePosition";
@@ -27,9 +28,10 @@ export const countMedia = (): number =>
     (HashStore.getDb().prepare("SELECT COUNT(*) AS n FROM media").get() as { n: number }).n;
 
 export const listMediaPage = (afterRowid: number, limit: number): PagedMediaRow[] =>
-    HashStore.getDb()
+    (HashStore.getDb()
         .prepare(`SELECT ${MEDIA_COLUMNS} FROM media WHERE rowid > ? ORDER BY rowid LIMIT ?`)
-        .all(afterRowid, limit) as PagedMediaRow[];
+        .all(afterRowid, limit) as PagedMediaRow[])
+        .map(row => resolveStoredPaths(row));
 
 // The rows of findAllItemsExists for the given media: each media with each of
 // its linked items (a media with no item yet comes back once, itemId null).

@@ -44,6 +44,28 @@ export const setVideoVolume = createAction(
     })
 )
 
+// Same as setVideoVolume, for the playback speed (keys 5 / 1 in the zoom modal).
+export const setVideoPlaybackRate = createAction(
+    'config/setVideoPlaybackRate',
+    (playbackRate: number) => ({
+        payload: playbackRate
+    })
+)
+
+// 'off': whole picture; 'all': the area of every detected box (W);
+// 'focus': only the .maloi focus classes' boxes (E).
+export type ZoomToClassesMode = 'off' | 'all' | 'focus'
+
+// The zoom modal's "zoom to classes" mode: show only the part of the image
+// spanned by its detected boxes (topmost to bottommost, leftmost to rightmost)
+// instead of the whole picture. Kept here so it carries to the next media.
+export const setZoomToClasses = createAction(
+    'config/setZoomToClasses',
+    (zoomToClasses: ZoomToClassesMode) => ({
+        payload: zoomToClasses
+    })
+)
+
 export const setPage = createAction(
     'config/setPage',
     (page: number) => ({
