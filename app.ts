@@ -456,8 +456,10 @@ const chooseOnnxModelDialog = async (): Promise<boolean> => {
                 // A bare .onnx carries no reshape hint - clear any override
                 // left by a previously-picked .maloi so it doesn't get
                 // reused against an unrelated model (risking the exact
-                // native crash the override exists to avoid).
+                // native crash the override exists to avoid). Same for its
+                // mean/std, which would silently skew a classifier's scores.
                 onnxDetector.setModelSize(null);
+                onnxDetector.setNormalization(null);
             }
         }
         mainWindow!.webContents.send("onnxModelChosen", { path: onnxDetector.getModelPath(), size: onnxDetector.getSize() });

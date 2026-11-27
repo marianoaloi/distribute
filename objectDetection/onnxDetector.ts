@@ -3,6 +3,7 @@ import { Jimp, ResizeStrategy } from "jimp";
 import * as ort from "onnxruntime-node";
 
 import type { DetectionBox } from "../types/domain";
+import type { Normalization } from "./maloi";
 import { CONF, IOU, decodeDetections, type LetterboxGeometry } from "./yoloDecode";
 
 // Set by the renderer's "choose model" file dialog (see app.js's
@@ -86,9 +87,15 @@ const isClassifier = (session: ort.InferenceSession): boolean => {
 };
 
 // Normalization Hugging Face's image processor applies for Swin/most
-// ImageNet-pretrained backbones.
-const IMAGENET_MEAN = [0.485, 0.456, 0.406];
-const IMAGENET_STD = [0.229, 0.224, 0.225];
+// ImageNet-pretrained backbones - the classifier default.
+const IMAGENET: Normalization = { mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225] };
+
+// Set from the chosen .maloi's "mean"/"std" (applyMaloi), for classifiers
+// trained with another one - e.g. a ViT fine-tuned from
+// google/vit-base-patch16-224-in21k wants 0.5 / 0.5. null = IMAGENET.
+let normalization: Normalization | null = null;
+
+export const setNormalization = (value: Normalization | null): void => { normalization = value; };
 
 // Jimp.read(path) drops decode options for local files (only its
 // Buffer/URL branches forward them - see @jimp/core's fromBuffer), so
@@ -137,19 +144,20 @@ const letterbox = async (input: string, size: number): Promise<LetterboxContext>
 
 // Classifier preprocessing, as Hugging Face's image processor does it: a
 // plain bicubic stretch to size x size (no letterbox), then mean/std
-// normalization. size must be what the model was exported for (224 for
-// food.onnx - its Swin windows break on anything else, see the .maloi
-// "reshape" note at the top).
+// normalization (IMAGENET unless the .maloi set one). size must be what the
+// model was exported for (224 for food.onnx - its Swin windows break on
+// anything else, see the .maloi "reshape" note at the top).
 const resizeNormalize = async (input: string, size: number): Promise<Float32Array> => {
     const image = await readImage(input);
     image.resize({ w: size, h: size, mode: ResizeStrategy.BICUBIC });
 
+    const { mean, std } = normalization ?? IMAGENET;
     const { data } = image.bitmap; // RGBA, size*size*4
     const plane = size * size;
     const chw = new Float32Array(3 * plane);
     for (let i = 0; i < plane; i++) {
         for (let c = 0; c < 3; c++) {
-            chw[plane * c + i] = (data[i * 4 + c] / 255 - IMAGENET_MEAN[c]) / IMAGENET_STD[c];
+            chw[plane * c + i] = (data[i * 4 + c] / 255 - mean[c]) / std[c];
         }
     }
     return chw;

@@ -2,7 +2,7 @@
 import fs from "fs"
 import os from "os"
 import path from "path"
-import { applyMaloi, LoadedMaloi, MaloiDetector, MaloiStore, parseMaloiFocus, parseMaloiGroups, parseMaloiUnfocus, parseReshape, readMaloi, RESHAPE_MAX, RESHAPE_MIN, splitClassNames } from "../../objectDetection/maloi"
+import { applyMaloi, LoadedMaloi, MaloiDetector, MaloiStore, parseMaloiFocus, parseMaloiGroups, parseMaloiUnfocus, parseNormalization, parseReshape, readMaloi, RESHAPE_MAX, RESHAPE_MIN, splitClassNames } from "../../objectDetection/maloi"
 
 let dir: string
 const write = (name: string, content: string): string => {
@@ -182,17 +182,17 @@ describe("applyMaloi", () => {
         const calls: string[] = []
         const args: Record<string, unknown> = {}
         const rec = (name: string) => (a?: unknown) => { calls.push(name); args[name] = a; return 1 }
-        const detector: MaloiDetector = { setModelPath: rec("setModelPath"), setClassNames: rec("setClassNames"), setModelSize: rec("setModelSize") }
+        const detector: MaloiDetector = { setModelPath: rec("setModelPath"), setClassNames: rec("setClassNames"), setModelSize: rec("setModelSize"), setNormalization: rec("setNormalization") }
         const store: MaloiStore = { ensureReady: rec("ensureReady"), getOrCreateModelPath: rec("getOrCreateModelPath") as any, saveDetectionClasses: rec("saveDetectionClasses"), saveDetectionGroups: rec("saveDetectionGroups"), saveDetectionFocus: rec("saveDetectionFocus"), saveDetectionUnfocus: rec("saveDetectionUnfocus") }
         return { calls, args, detector, store }
     }
-    const loaded: LoadedMaloi = { onnxPath: "/m/x.onnx", classNames: ["a", "b"], groups: [], focus: [1], unfocus: [0], reshape: null }
+    const loaded: LoadedMaloi = { onnxPath: "/m/x.onnx", classNames: ["a", "b"], groups: [], focus: [1], unfocus: [0], reshape: null, normalization: null }
 
     it("calls store.ensureReady first and applies everything", () => {
         const { calls, args, detector, store } = setup()
         applyMaloi(loaded, detector, store)
         expect(calls[0]).toBe("ensureReady")
-        expect(new Set(calls)).toEqual(new Set(["ensureReady", "setModelPath", "getOrCreateModelPath", "saveDetectionClasses", "saveDetectionGroups", "saveDetectionFocus", "saveDetectionUnfocus", "setClassNames", "setModelSize"]))
+        expect(new Set(calls)).toEqual(new Set(["ensureReady", "setModelPath", "getOrCreateModelPath", "saveDetectionClasses", "saveDetectionGroups", "saveDetectionFocus", "saveDetectionUnfocus", "setClassNames", "setModelSize", "setNormalization"]))
         expect(args.setModelPath).toBe("/m/x.onnx")
         expect(args.getOrCreateModelPath).toBe("/m/x.onnx")
         expect(args.saveDetectionClasses).toEqual(["a", "b"])
@@ -211,6 +211,18 @@ describe("applyMaloi", () => {
         const { args, detector, store } = setup()
         applyMaloi({ ...loaded, reshape: 1280 }, detector, store)
         expect(args.setModelSize).toBe(1280)
+    })
+    it("calls setNormalization(null) when there is no mean/std", () => {
+        const { calls, args, detector, store } = setup()
+        applyMaloi(loaded, detector, store)
+        expect(calls).toContain("setNormalization")
+        expect(args.setNormalization).toBeNull()
+    })
+    it("passes mean/std through when set", () => {
+        const { args, detector, store } = setup()
+        const normalization = { mean: [0.5, 0.5, 0.5], std: [0.5, 0.5, 0.5] }
+        applyMaloi({ ...loaded, normalization }, detector, store)
+        expect(args.setNormalization).toEqual(normalization)
     })
     it("does not touch the detector if ensureReady throws", () => {
         const { calls, detector, store } = setup()
@@ -250,5 +262,40 @@ describe("readMaloi reshape validation", () => {
     })
     it("a huge reshape in exponent notation is rejected", () => {
         expect(() => readMaloi(write("rb6.maloi", '{"onnx":"m.onnx","reshape":1e6}'))).toThrow(/reshape/)
+    })
+})
+
+describe("parseNormalization", () => {
+    it("is null when neither mean nor std is given (detector default)", () => {
+        expect(parseNormalization(undefined, undefined, "x.maloi")).toBeNull()
+        expect(parseNormalization(null, null, "x.maloi")).toBeNull()
+    })
+    it("accepts two RGB triples with positive std", () => {
+        expect(parseNormalization([0.5, 0.5, 0.5], [0.5, 0.5, 0.5], "x.maloi")).toEqual({ mean: [0.5, 0.5, 0.5], std: [0.5, 0.5, 0.5] })
+        expect(parseNormalization([-1, 0, 2], [0.229, 0.224, 0.225], "x.maloi")).toEqual({ mean: [-1, 0, 2], std: [0.229, 0.224, 0.225] })
+    })
+    it.each([
+        ["only mean", [0.5, 0.5, 0.5], undefined],
+        ["only std", undefined, [0.5, 0.5, 0.5]],
+        ["too few values", [0.5, 0.5], [0.5, 0.5, 0.5]],
+        ["too many values", [0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5]],
+        ["a string value", ["0.5", 0.5, 0.5], [0.5, 0.5, 0.5]],
+        ["a non-finite value", [0.5, NaN, 0.5], [0.5, 0.5, Infinity]],
+        ["a zero std", [0.5, 0.5, 0.5], [0.5, 0, 0.5]],
+        ["a negative std", [0.5, 0.5, 0.5], [0.5, -0.5, 0.5]],
+        ["a scalar", 0.5, 0.5],
+    ])("rejects %s with a message naming mean/std and the file", (_label, mean, std) => {
+        expect(() => parseNormalization(mean, std, "/p/x.maloi")).toThrow(/x\.maloi.*"mean"\/"std"/)
+    })
+})
+
+describe("readMaloi mean/std", () => {
+    it("reads them, and is null without them", () => {
+        const p = write("n1.maloi", JSON.stringify({ onnx: "m.onnx", mean: [0.5, 0.5, 0.5], std: [0.5, 0.5, 0.5] }))
+        expect(readMaloi(p).normalization).toEqual({ mean: [0.5, 0.5, 0.5], std: [0.5, 0.5, 0.5] })
+        expect(readMaloi(write("n2.maloi", JSON.stringify({ onnx: "m.onnx" }))).normalization).toBeNull()
+    })
+    it("throws on an invalid one", () => {
+        expect(() => readMaloi(write("n3.maloi", JSON.stringify({ onnx: "m.onnx", mean: [0.5, 0.5, 0.5] })))).toThrow(/"mean"\/"std"/)
     })
 })

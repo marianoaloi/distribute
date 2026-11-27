@@ -1,5 +1,5 @@
 // .maloi model-set files: a small JSON sidecar of the shape
-// { "onnx": "<path>", "classes": "a,b,c", "reshape"?: n, "group"?: [...], "focus"?: [ids], "unfocus"?: [ids] }
+// { "onnx": "<path>", "classes": "a,b,c", "reshape"?: n, "mean"?: [r,g,b], "std"?: [r,g,b], "group"?: [...], "focus"?: [ids], "unfocus"?: [ids] }
 // that sets the ONNX model *and* its class list (plus optional class-filter
 // groups and a letterbox size override) in one pick.
 //
@@ -22,6 +22,13 @@ export interface MaloiFile {
     // bakes a Reshape op sized for a specific input resolution other than
     // the 640 default.
     reshape?: number;
+    // Per-channel (R, G, B) normalization for image-classifier models - the
+    // "image_mean" / "image_std" of the model's Hugging Face
+    // preprocessor_config.json (onnxDetector.ts's setNormalization). Both or
+    // neither; without them classifiers keep the ImageNet default. YOLO
+    // detectors don't normalize and ignore it. Untrusted until parseNormalization.
+    mean?: unknown;
+    std?: unknown;
     // Predefined class-filter groups, untrusted until parseMaloiGroups. Each is
     // { name, expr } with expr a boolean expression over 0-based positions in
     // the "classes" list, e.g. "(6 || 7) && !(1 || 2)". The legacy
@@ -44,6 +51,12 @@ export interface LoadedMaloi {
     focus: number[];
     unfocus: number[];
     reshape: number | null;
+    normalization: Normalization | null;
+}
+
+export interface Normalization {
+    mean: number[];
+    std: number[];
 }
 
 export const splitClassNames = (raw: string): string[] =>
@@ -118,9 +131,25 @@ export const parseReshape = (raw: unknown, maloiPath: string): number | null => 
     return raw;
 };
 
+const isChannelTriple = (value: unknown): value is number[] =>
+    Array.isArray(value) && value.length === 3 && value.every((n) => typeof n === "number" && Number.isFinite(n));
+
+// Absent (or null) "mean" and "std" = the detector's default. Anything else
+// invalid throws, like an out-of-range "reshape", rather than being skipped:
+// a classifier fed the wrong normalization still answers, just with skewed
+// scores nobody would notice.
+export const parseNormalization = (rawMean: unknown, rawStd: unknown, maloiPath: string): Normalization | null => {
+    if (rawMean == null && rawStd == null) return null;
+    if (!isChannelTriple(rawMean) || !isChannelTriple(rawStd) || rawStd.some((s) => s <= 0)) {
+        throw new Error(`.maloi file ${maloiPath} has an invalid "mean"/"std": expected both, each an array of 3 numbers (R, G, B), every "std" above 0`);
+    }
+    return { mean: rawMean, std: rawStd };
+};
+
 // Pure parse of a .maloi file: the onnx path is resolved relative to the
 // .maloi's own folder. Throws an Error with a clear message on unreadable
-// files, bad JSON, a missing "onnx" field or an out-of-range "reshape".
+// files, bad JSON, a missing "onnx" field, an out-of-range "reshape" or an
+// invalid "mean"/"std".
 export const readMaloi = (maloiPath: string): LoadedMaloi => {
     let raw: string;
     try {
@@ -149,6 +178,7 @@ export const readMaloi = (maloiPath: string): LoadedMaloi => {
         focus,
         unfocus: parseMaloiUnfocus(maloi.unfocus, classNames.length, focus),
         reshape: parseReshape(maloi.reshape, maloiPath),
+        normalization: parseNormalization(maloi.mean, maloi.std, maloiPath),
     };
 };
 
@@ -156,6 +186,7 @@ export interface MaloiDetector {
     setModelPath(newPath: string): void;
     setClassNames(names: string[]): void;
     setModelSize(size: number | null | undefined): void;
+    setNormalization(normalization: Normalization | null): void;
 }
 
 export interface MaloiStore {
@@ -185,4 +216,6 @@ export const applyMaloi = (loaded: LoadedMaloi, detector: MaloiDetector, store: 
     // .maloi with no "reshape" field would silently inherit whatever override
     // an earlier .maloi pick left behind, for a model it has nothing to do with.
     detector.setModelSize(loaded.reshape);
+    // Same: a .maloi without "mean"/"std" must not inherit the last one's.
+    detector.setNormalization(loaded.normalization);
 };
